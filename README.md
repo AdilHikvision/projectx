@@ -36,7 +36,7 @@ Sistem aşağıdakı funksiyaları yerinə yetirməlidir:
 ## Backend
 
 - ASP.NET Core Web API
-- Hikvision SDK (C++ wrapper və ya P/Invoke vasitəsilə)
+- Hikvision SDK (birbaşa C# üzərindən P/Invoke və ya rəsmi .NET wrapper vasitəsilə)
 - PostgreSQL
 - Background Services (Hosted Services)
 - Real-time üçün WebSocket / SignalR
@@ -46,4 +46,5 @@ Sistem aşağıdakı funksiyaları yerinə yetirməlidir:
 
 - React + Vite
 - SignalR klienti
+- Role-based UI (rol əsaslı interfeys)
 - Role-based UI (rol əsaslı interfeys)
