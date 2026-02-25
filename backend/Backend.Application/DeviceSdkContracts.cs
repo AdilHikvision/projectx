@@ -27,7 +27,13 @@ public sealed record DeviceConnection(
     string IpAddress,
     int Port,
     DeviceConnectivityStatus Status,
-    DateTime ConnectedUtc);
+    DateTime ConnectedUtc,
+    DateTime? LastSeenUtc);
+
+public sealed record DeviceRealtimeStatus(
+    string DeviceIdentifier,
+    DeviceConnectivityStatus Status,
+    DateTime? LastSeenUtc);
 
 public sealed record DeviceEvent(
     string DeviceIdentifier,
@@ -44,7 +50,10 @@ public interface IDeviceConnectionManager
 {
     Task<DeviceConnection> ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default);
     Task DisconnectAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
-    Task<DeviceConnectivityStatus> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
+    Task<DeviceRealtimeStatus> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<DeviceRealtimeStatus>> GetStatusesAsync(CancellationToken cancellationToken = default);
+    Task TouchHeartbeatAsync(string deviceIdentifier, DateTime occurredUtc, CancellationToken cancellationToken = default);
+    Task MarkStaleConnectionsOfflineAsync(TimeSpan staleAfter, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<DeviceConnection>> GetActiveConnectionsAsync(CancellationToken cancellationToken = default);
 }
 

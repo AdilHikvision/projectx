@@ -32,10 +32,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         {
             entity.ToTable("devices");
             entity.HasKey(x => x.Id);
+            entity.Property(x => x.DeviceIdentifier).HasMaxLength(120).IsRequired();
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.IpAddress).HasMaxLength(120).IsRequired();
             entity.Property(x => x.Location).HasMaxLength(255);
             entity.Property(x => x.DeviceType).HasConversion<int>().IsRequired();
+            entity.Property(x => x.LastSeenUtc);
+            entity.HasIndex(x => x.DeviceIdentifier).IsUnique();
             entity.HasOne(x => x.DeviceStatus).WithMany(x => x.Devices).HasForeignKey(x => x.DeviceStatusId);
         });
 

@@ -13,6 +13,7 @@ public sealed class EventListenerService(
 {
     private readonly ConcurrentQueue<DeviceEvent> _buffer = new();
     private const int MaxBufferSize = 1000;
+    private static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(10);
 
     public Task<IReadOnlyCollection<DeviceEvent>> ReadRecentEventsAsync(int take = 100, CancellationToken cancellationToken = default)
     {
@@ -40,9 +41,12 @@ public sealed class EventListenerService(
                     var rawEvents = await sdkClient.PullEventsAsync(deviceIds, stoppingToken);
                     foreach (var rawEvent in rawEvents)
                     {
+                        await connectionManager.TouchHeartbeatAsync(rawEvent.DeviceIdentifier, rawEvent.OccurredUtc, stoppingToken);
                         Enqueue(MapEvent(rawEvent));
                     }
                 }
+
+                await connectionManager.MarkStaleConnectionsOfflineAsync(HeartbeatTimeout, stoppingToken);
             }
             catch (Exception ex)
             {

@@ -6,6 +6,7 @@ using Backend.Infrastructure.Identity;
 using Backend.Infrastructure.Initialization;
 using Backend.Infrastructure.Persistence;
 using Backend.Infrastructure.Security;
+using Backend.Infrastructure.System;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -39,6 +40,7 @@ public static class DependencyInjection
 
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<SeedAdminOptions>(configuration.GetSection("SeedAdmin"));
+        services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
 
         services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionBuilder.ConnectionString));
 
@@ -56,6 +58,8 @@ public static class DependencyInjection
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
+        services.AddScoped<ISystemStatusService, SystemStatusService>();
+        services.AddSingleton<IServiceControlManager, WindowsServiceControlManager>();
 
         return services;
     }

@@ -23,11 +23,13 @@ public sealed class DeviceStatus : BaseEntity
 
 public sealed class Device : BaseEntity
 {
+    public string DeviceIdentifier { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string IpAddress { get; set; } = string.Empty;
     public int Port { get; set; } = 8000;
     public string? Location { get; set; }
     public DeviceType DeviceType { get; set; } = DeviceType.AccessController;
+    public DateTime? LastSeenUtc { get; set; }
 
     public Guid DeviceStatusId { get; set; }
     public DeviceStatus? DeviceStatus { get; set; }
