@@ -162,3 +162,27 @@ td {
   padding: 8px 0;
   border-bottom: 1px solid #2d2d2d;
 }
+
+.sdk-paths {
+  display: grid;
+  gap: 6px;
+  word-break: break-all;
+}
+
+.sdk-paths code {
+  display: inline-block;
+  background: #111;
+  border: 1px solid #2d2d2d;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.sdk-error-block {
+  display: grid;
+  gap: 4px;
+}
+
+.sdk-error-hint {
+  color: #9ca3af;
+  line-height: 1.35;
+}

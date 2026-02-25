@@ -33,6 +33,14 @@ interface DeviceEvent {
   payload: string
 }
 
+interface DiscoveredDevice {
+  deviceIdentifier: string
+  name: string
+  ipAddress: string
+  port: number
+  model?: string | null
+}
+
 interface DeviceFormState {
   deviceIdentifier: string
   name: string
@@ -67,9 +75,13 @@ export function DevicesPage() {
   const [events, setEvents] = useState<DeviceEvent[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isDiscovering, setIsDiscovering] = useState(false)
+  const [isAddingDiscovered, setIsAddingDiscovered] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [hubStatus, setHubStatus] = useState<'connecting' | 'connected' | 'polling'>('connecting')
   const [form, setForm] = useState<DeviceFormState>(DEFAULT_FORM_STATE)
+  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([])
 
   const authToken = token
 
@@ -189,6 +201,7 @@ export function DevicesPage() {
 
     setIsSubmitting(true)
     setError(null)
+    setInfo(null)
     try {
       await apiRequest<Device>('/api/devices', {
         method: 'POST',
@@ -205,6 +218,7 @@ export function DevicesPage() {
 
       setForm(DEFAULT_FORM_STATE)
       await loadData()
+      setInfo('Устройство добавлено')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось добавить устройство')
     } finally {
@@ -216,12 +230,14 @@ export function DevicesPage() {
     if (!authToken) return
 
     setError(null)
+    setInfo(null)
     try {
       await apiRequest<void>(`/api/devices/${deviceId}`, {
         method: 'DELETE',
         token: authToken,
       })
       setDevices((prev) => prev.filter((device) => device.id !== deviceId))
+      setInfo('Устройство удалено')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось удалить устройство')
     }
@@ -232,14 +248,71 @@ export function DevicesPage() {
     const action = device.status === 'Online' ? 'disconnect' : 'connect'
 
     setError(null)
+    setInfo(null)
     try {
       const updated = await apiRequest<Device>(`/api/devices/${device.id}/${action}`, {
         method: 'POST',
         token: authToken,
       })
       setDevices((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      setInfo(action === 'connect' ? 'Устройство подключено' : 'Устройство отключено')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось изменить состояние подключения')
+    }
+  }
+
+  async function handleDiscoverDevices() {
+    if (!authToken) return
+    setIsDiscovering(true)
+    setError(null)
+    setInfo(null)
+    try {
+      const discovered = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token: authToken })
+      setDiscoveredDevices(discovered)
+      setInfo(discovered.length > 0 ? `Найдено устройств: ${discovered.length}` : 'Устройства не найдены')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось выполнить поиск устройств')
+    } finally {
+      setIsDiscovering(false)
+    }
+  }
+
+  function handleFillFormFromDiscovered(device: DiscoveredDevice) {
+    setForm({
+      deviceIdentifier: device.deviceIdentifier,
+      name: device.name,
+      ipAddress: device.ipAddress,
+      port: String(device.port),
+      location: '',
+      deviceType: '1',
+    })
+    setInfo(`Поля формы заполнены из ${device.ipAddress}:${device.port}`)
+  }
+
+  async function handleAddDiscovered(device: DiscoveredDevice) {
+    if (!authToken) return
+    setIsAddingDiscovered(`${device.ipAddress}:${device.port}`)
+    setError(null)
+    setInfo(null)
+    try {
+      await apiRequest<Device>('/api/devices', {
+        method: 'POST',
+        token: authToken,
+        body: JSON.stringify({
+          deviceIdentifier: device.deviceIdentifier,
+          name: device.name,
+          ipAddress: device.ipAddress,
+          port: device.port,
+          location: null,
+          deviceType: 1,
+        }),
+      })
+      await loadData()
+      setInfo(`Найденное устройство добавлено: ${device.ipAddress}:${device.port}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось добавить найденное устройство')
+    } finally {
+      setIsAddingDiscovered(null)
     }
   }
 
@@ -264,6 +337,7 @@ export function DevicesPage() {
       </header>
 
       {error ? <div className="error-box">{error}</div> : null}
+      {info ? <div className="info-box">{info}</div> : null}
 
       <section className="card">
         <h2>Добавить устройство</h2>
@@ -307,6 +381,70 @@ export function DevicesPage() {
             {isSubmitting ? 'Сохранение...' : 'Добавить'}
           </button>
         </form>
+      </section>
+
+      <section className="card">
+        <div className="topbar">
+          <div>
+            <h2>Поиск устройств в LAN</h2>
+            <p className="muted">Сканирование подсети через backend + SDK</p>
+          </div>
+          <button onClick={handleDiscoverDevices} disabled={isDiscovering}>
+            {isDiscovering ? 'Сканирование...' : 'Сканировать LAN'}
+          </button>
+        </div>
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Identifier</th>
+                <th>IP</th>
+                <th>Model</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {discoveredDevices.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>Нажмите "Сканировать LAN", чтобы получить список устройств</td>
+                </tr>
+              ) : (
+                discoveredDevices.map((device) => {
+                  const inRegistry = devices.some(
+                    (existing) =>
+                      existing.deviceIdentifier === device.deviceIdentifier ||
+                      (existing.ipAddress === device.ipAddress && existing.port === device.port),
+                  )
+                  const rowKey = `${device.ipAddress}:${device.port}`
+
+                  return (
+                    <tr key={rowKey}>
+                      <td>{device.name}</td>
+                      <td>{device.deviceIdentifier}</td>
+                      <td>
+                        {device.ipAddress}:{device.port}
+                      </td>
+                      <td>{device.model ?? '-'}</td>
+                      <td className="actions-cell">
+                        <button onClick={() => handleFillFormFromDiscovered(device)} disabled={isAddingDiscovered === rowKey}>
+                          В форму
+                        </button>
+                        <button
+                          onClick={() => handleAddDiscovered(device)}
+                          disabled={inRegistry || isAddingDiscovered === rowKey}
+                        >
+                          {inRegistry ? 'Уже добавлено' : isAddingDiscovered === rowKey ? 'Добавление...' : 'Добавить'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="card">

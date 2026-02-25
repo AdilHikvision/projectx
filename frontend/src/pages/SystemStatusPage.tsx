@@ -21,9 +21,20 @@ interface ServiceControlResponse {
   message: string
 }
 
+interface SdkHealthResponse {
+  initialized: boolean
+  platform: string
+  connectedDevices: number
+  lastErrorCode?: string | null
+  lastErrorMessage?: string | null
+  lastErrorHint?: string | null
+  librarySearchPaths: string[]
+}
+
 export function SystemStatusPage() {
   const { token } = useAuth()
   const [status, setStatus] = useState<SystemStatusResponse | null>(null)
+  const [sdkHealth, setSdkHealth] = useState<SdkHealthResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,10 +45,12 @@ export function SystemStatusPage() {
 
   const loadStatus = useCallback(async () => {
     if (!authToken) return
-    const response = await apiRequest<SystemStatusResponse>('/api/system/status', {
-      token: authToken,
-    })
-    setStatus(response)
+    const [systemResponse, sdkResponse] = await Promise.all([
+      apiRequest<SystemStatusResponse>('/api/system/status', { token: authToken }),
+      apiRequest<SdkHealthResponse>('/api/health/sdk'),
+    ])
+    setStatus(systemResponse)
+    setSdkHealth(sdkResponse)
   }, [authToken])
 
   useEffect(() => {
@@ -162,6 +175,49 @@ export function SystemStatusPage() {
         <p className="muted">
           Команды принимаются только с loopback-адреса. Опционально можно включить ключ `X-Local-Control-Key`.
         </p>
+      </section>
+
+      <section className="card">
+        <h2>Диагностика SDK</h2>
+        {!sdkHealth ? (
+          <div className="page-message">Загрузка...</div>
+        ) : (
+          <div className="status-grid">
+            <div className="status-row">
+              <span>SDK initialized</span>
+              <strong>{sdkHealth.initialized ? 'Yes' : 'No'}</strong>
+            </div>
+            <div className="status-row">
+              <span>Platform</span>
+              <strong>{sdkHealth.platform}</strong>
+            </div>
+            <div className="status-row">
+              <span>Connected devices</span>
+              <strong>{sdkHealth.connectedDevices}</strong>
+            </div>
+            <div className="status-row">
+              <span>Last error</span>
+              <div className="sdk-error-block">
+                <strong>
+                  {sdkHealth.lastErrorCode
+                    ? `${sdkHealth.lastErrorCode}: ${sdkHealth.lastErrorMessage ?? 'Unknown'}`
+                    : 'No errors'}
+                </strong>
+                {sdkHealth.lastErrorCode && sdkHealth.lastErrorHint ? (
+                  <small className="sdk-error-hint">{sdkHealth.lastErrorHint}</small>
+                ) : null}
+              </div>
+            </div>
+            <div className="status-row">
+              <span>Library search paths</span>
+              <div className="sdk-paths">
+                {sdkHealth.librarySearchPaths.length === 0
+                  ? '-'
+                  : sdkHealth.librarySearchPaths.map((path) => <code key={path}>{path}</code>)}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   )

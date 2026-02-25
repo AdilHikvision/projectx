@@ -36,6 +36,29 @@
 }
 ```
 
+### 1.1) SDK Health
+
+- **Method:** `GET`
+- **Path:** `/api/health/sdk`
+- **Auth:** не требуется
+- **Назначение:** диагностика состояния Hikvision SDK (инициализация, активные сессии, последний код ошибки, пути поиска библиотек).
+- **Response 200:**
+
+```json
+{
+  "initialized": true,
+  "platform": "Microsoft Windows 10.0.26200",
+  "connectedDevices": 2,
+  "lastErrorCode": "29",
+  "lastErrorMessage": "Device is unreachable.",
+  "lastErrorHint": "Check IP address, port, NAT, and whether service is running on device.",
+  "librarySearchPaths": [
+    "C:\\projectx\\winSDK\\lib",
+    "C:\\projectx\\artifacts\\installer\\backend-publish"
+  ]
+}
+```
+
 ### 2) Регистрация пользователя
 
 - **Method:** `POST`

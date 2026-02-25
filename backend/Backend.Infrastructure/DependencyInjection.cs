@@ -49,7 +49,8 @@ public static class DependencyInjection
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AppDbContext>();
 
-        services.AddSingleton<IHikvisionSdkClient, MockHikvisionSdkClient>();
+        services.AddSingleton<HikvisionSdkClient>();
+        services.AddSingleton<IHikvisionSdkClient>(provider => provider.GetRequiredService<HikvisionSdkClient>());
         services.AddSingleton<IDeviceConnectionManager, DeviceConnectionManager>();
         services.AddSingleton<IDeviceDiscoveryService, DeviceDiscoveryService>();
         services.AddSingleton<EventListenerService>();

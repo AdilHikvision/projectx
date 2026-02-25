@@ -4,6 +4,7 @@ using Backend.Application.Security;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure;
+using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Identity;
 using Backend.Infrastructure.Persistence;
 using Backend.Infrastructure.System;
@@ -81,6 +82,11 @@ app.MapGet("/api/health/db", async (ISystemStatusService systemStatusService, Ca
 {
     var dbHealth = await systemStatusService.GetDatabaseHealthAsync(cancellationToken);
     return Results.Ok(dbHealth);
+});
+app.MapGet("/api/health/sdk", (HikvisionSdkClient sdkClient) =>
+{
+    var health = sdkClient.GetHealth();
+    return Results.Ok(health);
 });
 
 app.MapPost("/api/auth/register", async (

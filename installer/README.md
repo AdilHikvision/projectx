@@ -8,12 +8,28 @@ From repository root:
 powershell -ExecutionPolicy Bypass -File .\installer\build-artifacts.ps1
 ```
 
+Linux artifacts (example):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\build-artifacts.ps1 -Runtime linux-x64
+```
+
 This script:
 
 - builds frontend (`npm ci`, `npm run build`)
 - copies frontend `dist` to backend `wwwroot`
 - publishes backend single-file (`win-x64`, self-contained)
+- copies Hikvision native SDK dependencies to publish output:
+  - `win-*` runtime: `*.dll` + `HCNetSDKCom`
+  - `linux-*` runtime: `*.so*` + `HCNetSDKCom`
 - places output to `artifacts\installer\backend-publish`
+
+SDK source priority for copy:
+
+1. `HIKVISION_SDK_PATH` environment variable (if set)
+2. runtime-based repository path:
+   - `win-*` -> `winSDK\lib`
+   - `linux-*` -> `linuxSDK\lib`
 
 ## 2) Build Windows installer
 
