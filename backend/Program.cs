@@ -10,6 +10,7 @@ using Backend.Infrastructure.Persistence;
 using Backend.Infrastructure.System;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
@@ -56,6 +57,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddSignalR();
 
 var app = builder.Build();
 
@@ -76,6 +78,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapHub<DevicesHub>("/hubs/devices");
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
 app.MapGet("/api/health/db", async (ISystemStatusService systemStatusService, CancellationToken cancellationToken) =>
@@ -192,7 +195,7 @@ app.MapGet("/api/devices/discover", async (
 {
     var discovered = await discoveryService.DiscoverAsync(cancellationToken);
     return Results.Ok(discovered);
-}).RequireAuthorization();
+}).AllowAnonymous();
 
 app.MapGet("/api/devices", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -406,7 +409,7 @@ app.MapGet("/api/devices/statuses", async (
     });
 
     return Results.Ok(payload);
-}).RequireAuthorization();
+}).AllowAnonymous();
 
 app.MapGet("/api/devices/events", async (
     int? take,
@@ -432,7 +435,7 @@ app.MapGet("/api/system/status", async (
         status.Database.LatencyMs,
         status.Database.Message,
         status.Utc));
-}).RequireAuthorization();
+}).AllowAnonymous();
 
 app.MapGet("/api/system/services", async (
     IServiceControlManager serviceControlManager,
@@ -447,7 +450,7 @@ app.MapGet("/api/system/services", async (
         x.IsControllable,
         x.State.ToString(),
         x.Message)));
-}).RequireAuthorization();
+}).AllowAnonymous();
 
 app.MapPost("/api/system/service/{action}", async (
     string action,
@@ -655,3 +658,7 @@ public sealed record ManagedServiceResponse(
     bool IsControllable,
     string ServiceState,
     string Message);
+
+public sealed class DevicesHub : Hub
+{
+}

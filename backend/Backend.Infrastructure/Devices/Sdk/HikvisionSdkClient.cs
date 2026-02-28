@@ -1,6 +1,11 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Reflection;
+using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -24,9 +29,11 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
     private readonly ConcurrentDictionary<string, SdkSession> _sessions = new();
     private readonly object _sdkInitLock = new();
     private readonly object _nativeCfgLock = new();
+    private readonly object _dllResolverLock = new();
     private readonly List<string> _librarySearchPaths = [];
     private bool _sdkInitialized;
     private bool _nativeConfigured;
+    private bool _dllResolverConfigured;
     private bool _disposed;
 
     public HikvisionSdkClient(IConfiguration configuration, ILogger<HikvisionSdkClient> logger)
@@ -43,8 +50,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
     public Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default)
     {
-        EnsureSdkReady();
-        return ScanLanViaSadpOrFallbackAsync(cancellationToken);
+        return ScanLanViaIsapiAsync(cancellationToken);
     }
 
     public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default)
@@ -173,6 +179,252 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
     {
         var discovered = TryScanViaSadp(cancellationToken);
         return Task.FromResult(discovered);
+    }
+
+    private async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaIsapiAsync(CancellationToken cancellationToken)
+    {
+        var hosts = ResolveLocalSubnetHosts(maxHostsPerSubnet: 256).ToArray();
+        if (hosts.Length == 0)
+        {
+            _logger.LogWarning("ISAPI discovery skipped: no eligible local IPv4 subnets were found.");
+            return [];
+        }
+
+        var ports = ResolveDiscoveryPorts();
+        var discovered = new ConcurrentDictionary<string, SdkDiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
+
+        var digestCredential = new NetworkCredential(_username, _password);
+        using var httpClient = CreateIsapiHttpClient(digestCredential, useHttps: false);
+        using var httpsClient = CreateIsapiHttpClient(digestCredential, useHttps: true);
+        using var throttler = new SemaphoreSlim(64);
+
+        var tasks = hosts
+            .SelectMany(ip => ports.Select(port => ProbeIsapiAsync(ip, port, httpClient, httpsClient, discovered, throttler, cancellationToken)))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+        return discovered.Values.OrderBy(x => x.IpAddress).ThenBy(x => x.Port).ToArray();
+    }
+
+    private async Task ProbeIsapiAsync(
+        string ipAddress,
+        int port,
+        HttpClient httpClient,
+        HttpClient httpsClient,
+        ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
+        SemaphoreSlim throttler,
+        CancellationToken cancellationToken)
+    {
+        await throttler.WaitAsync(cancellationToken);
+        try
+        {
+            var primaryScheme = port == 443 ? "https" : "http";
+            var primaryClient = port == 443 ? httpsClient : httpClient;
+            var candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, primaryScheme, primaryClient, cancellationToken);
+            if (candidate is null && port != 443)
+            {
+                // Some devices expose ISAPI over HTTPS on non-standard ports.
+                candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, "https", httpsClient, cancellationToken);
+            }
+
+            if (candidate is null)
+            {
+                return;
+            }
+
+            discovered.TryAdd($"{candidate.IpAddress}:{candidate.Port}", candidate);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Probe timeout for a single host/port should not fail the whole discovery.
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "ISAPI probe failed for {Ip}:{Port}.", ipAddress, port);
+        }
+        finally
+        {
+            throttler.Release();
+        }
+    }
+
+    private async Task<SdkDiscoveredDevice?> TryReadIsapiDeviceInfoAsync(
+        string ipAddress,
+        int port,
+        string scheme,
+        HttpClient client,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(1500));
+
+        var uri = new Uri($"{scheme}://{ipAddress}:{port}/ISAPI/System/deviceInfo");
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var response = await client.SendAsync(request, timeoutCts.Token);
+        if (response.StatusCode == HttpStatusCode.NotFound ||
+            response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            return null;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            // Endpoint exists, but credentials are invalid.
+            var fallbackId = $"ISAPI-{ipAddress.Replace('.', '-')}-{port}";
+            return new SdkDiscoveredDevice(fallbackId, $"Hikvision {ipAddress}", ipAddress, port, "Unauthorized");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var content = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+        return BuildDeviceFromIsapiXml(content, ipAddress, port);
+    }
+
+    private static HttpClient CreateIsapiHttpClient(NetworkCredential credential, bool useHttps)
+    {
+        var handler = new HttpClientHandler
+        {
+            Credentials = credential,
+            PreAuthenticate = false,
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+
+        if (useHttps)
+        {
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+        }
+
+        return new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+    }
+
+    private static SdkDiscoveredDevice BuildDeviceFromIsapiXml(string xml, string ipAddress, int port)
+    {
+        var document = XDocument.Parse(xml);
+        var root = document.Root;
+
+        string? Value(string localName) =>
+            root?.Descendants().FirstOrDefault(x => string.Equals(x.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+
+        var serial = Value("serialNumber");
+        var model = Value("model");
+        var deviceName = Value("deviceName");
+        var identifier = string.IsNullOrWhiteSpace(serial) ? $"ISAPI-{ipAddress.Replace('.', '-')}-{port}" : serial;
+        var name = string.IsNullOrWhiteSpace(deviceName) ? $"Hikvision {ipAddress}" : deviceName;
+
+        return new SdkDiscoveredDevice(identifier, name, ipAddress, port, model);
+    }
+
+    private int[] ResolveDiscoveryPorts()
+    {
+        var raw = _configuration["Hikvision:DiscoveryPorts"]
+            ?? Environment.GetEnvironmentVariable("HIKVISION_DISCOVERY_PORTS")
+            ?? "80,443,8000";
+
+        var parsed = raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => int.TryParse(x, out var port) ? port : -1)
+            .Where(x => x is > 0 and <= 65535)
+            .Distinct()
+            .ToArray();
+
+        return parsed.Length == 0 ? [80, 443, 8000] : parsed;
+    }
+
+    private static IEnumerable<string> ResolveLocalSubnetHosts(int maxHostsPerSubnet)
+    {
+        var output = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up)
+            {
+                continue;
+            }
+
+            var ipProps = nic.GetIPProperties();
+            foreach (var uni in ipProps.UnicastAddresses)
+            {
+                if (uni.Address.AddressFamily != AddressFamily.InterNetwork || uni.IPv4Mask is null)
+                {
+                    continue;
+                }
+
+                var ip = uni.Address;
+                var mask = uni.IPv4Mask;
+                var prefixLength = CountMaskBits(mask);
+                if (prefixLength is < 16 or > 30)
+                {
+                    continue;
+                }
+
+                var ipUInt = ToUInt32(ip);
+                var maskUInt = ToUInt32(mask);
+                var network = ipUInt & maskUInt;
+                var broadcast = network | ~maskUInt;
+                var firstHost = network + 1;
+                var lastHost = broadcast - 1;
+                var emitted = 0;
+
+                for (var current = firstHost; current <= lastHost; current++)
+                {
+                    if (current == ipUInt)
+                    {
+                        continue;
+                    }
+
+                    output.Add(FromUInt32(current).ToString());
+                    emitted++;
+                    if (emitted >= maxHostsPerSubnet)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return output;
+    }
+
+    private static int CountMaskBits(IPAddress mask)
+    {
+        var bits = 0;
+        foreach (var b in mask.GetAddressBytes())
+        {
+            var value = b;
+            while (value != 0)
+            {
+                bits += value & 1;
+                value >>= 1;
+            }
+        }
+
+        return bits;
+    }
+
+    private static uint ToUInt32(IPAddress address)
+    {
+        var bytes = address.GetAddressBytes();
+        return ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+    }
+
+    private static IPAddress FromUInt32(uint value)
+    {
+        return new IPAddress(
+        [
+            (byte)(value >> 24),
+            (byte)(value >> 16),
+            (byte)(value >> 8),
+            (byte)value
+        ]);
     }
 
     private IReadOnlyCollection<SdkDiscoveredDevice> TryScanViaSadp(CancellationToken cancellationToken)
@@ -491,6 +743,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             var candidates = ResolveSdkDirectories();
             _librarySearchPaths.Clear();
             _librarySearchPaths.AddRange(candidates);
+            EnsureDllResolverConfigured(candidates);
 
             if (candidates.Count > 0)
             {
@@ -512,6 +765,65 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             }
 
             _nativeConfigured = true;
+        }
+    }
+
+    private void EnsureDllResolverConfigured(IReadOnlyCollection<string> candidates)
+    {
+        if (_dllResolverConfigured)
+        {
+            return;
+        }
+
+        lock (_dllResolverLock)
+        {
+            if (_dllResolverConfigured)
+            {
+                return;
+            }
+
+            NativeLibrary.SetDllImportResolver(typeof(HikvisionSdkClient).Assembly, (libraryName, assembly, searchPath) =>
+            {
+                var normalized = Path.GetFileNameWithoutExtension(libraryName);
+                if (!string.Equals(normalized, "hcnetsdk", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(normalized, "HPNetSDK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return IntPtr.Zero;
+                }
+
+                var names = OperatingSystem.IsWindows()
+                    ? new[] { libraryName, "HCNetSDK.dll", "HPNetSDK.dll", "hcnetsdk.dll" }
+                    : new[] { "libhcnetsdk.so", "libHPNetSDK.so" };
+
+                foreach (var dir in candidates)
+                {
+                    foreach (var name in names)
+                    {
+                        var path = Path.Combine(dir, name);
+                        if (!File.Exists(path))
+                        {
+                            continue;
+                        }
+
+                        if (NativeLibrary.TryLoad(path, out var handle))
+                        {
+                            return handle;
+                        }
+                    }
+                }
+
+                foreach (var name in names)
+                {
+                    if (NativeLibrary.TryLoad(name, assembly, searchPath, out var handle))
+                    {
+                        return handle;
+                    }
+                }
+
+                return IntPtr.Zero;
+            });
+
+            _dllResolverConfigured = true;
         }
     }
 
@@ -553,13 +865,15 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         result.Add(Path.Combine(baseDir, "HCNetSDKCom"));
         if (OperatingSystem.IsWindows())
         {
-            result.Add(Path.GetFullPath(Path.Combine(cwd, "..", "winSDK", "lib")));
-            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "winSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(cwd, "winSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(cwd, "winSDK", "lib", "HPNetSDK")));
+            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "winSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "winSDK", "lib", "HPNetSDK")));
         }
         else
         {
-            result.Add(Path.GetFullPath(Path.Combine(cwd, "..", "linuxSDK", "lib")));
-            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "linuxSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(cwd, "linuxSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "linuxSDK", "lib")));
         }
 
         return result

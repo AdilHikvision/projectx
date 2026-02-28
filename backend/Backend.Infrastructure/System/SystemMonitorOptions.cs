@@ -6,25 +6,7 @@ public sealed class SystemMonitorOptions
 
     public string ServiceName { get; set; } = "ProjectXBackend";
     public string? LocalControlKey { get; set; }
-    public List<ManagedServiceDefinition> ManagedServices { get; set; } =
-    [
-        new ManagedServiceDefinition
-        {
-            Key = "backend",
-            ServiceName = "ProjectXBackend",
-            DisplayName = "ProjectX Backend Service",
-            Port = "5055",
-            IsControllable = true
-        },
-        new ManagedServiceDefinition
-        {
-            Key = "postgres",
-            ServiceName = "postgresql-x64-16",
-            DisplayName = "PostgreSQL",
-            Port = "5432",
-            IsControllable = true
-        }
-    ];
+    public List<ManagedServiceDefinition> ManagedServices { get; set; } = [];
 }
 
 public sealed class ManagedServiceDefinition

@@ -5,11 +5,14 @@ namespace Backend.Infrastructure.System;
 
 public sealed class WindowsServiceControlManager(IOptions<SystemMonitorOptions> options) : IServiceControlManager
 {
-    private readonly string _serviceName = options.Value.ServiceName;
+    private readonly string _serviceName = string.IsNullOrWhiteSpace(options.Value.ServiceName)
+        ? "ProjectXBackend"
+        : options.Value.ServiceName;
     private readonly IReadOnlyDictionary<string, ManagedServiceDefinition> _managedServices =
         options.Value.ManagedServices
             .Where(x => !string.IsNullOrWhiteSpace(x.Key) && !string.IsNullOrWhiteSpace(x.ServiceName))
-            .ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.Last(), StringComparer.OrdinalIgnoreCase);
 
     public Task<ManagedServiceStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
