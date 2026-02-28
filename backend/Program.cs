@@ -434,6 +434,21 @@ app.MapGet("/api/system/status", async (
         status.Utc));
 }).RequireAuthorization();
 
+app.MapGet("/api/system/services", async (
+    IServiceControlManager serviceControlManager,
+    CancellationToken cancellationToken) =>
+{
+    var services = await serviceControlManager.GetManagedServicesAsync(cancellationToken);
+    return Results.Ok(services.Select(x => new ManagedServiceResponse(
+        x.Key,
+        x.ServiceName,
+        x.DisplayName,
+        x.Port,
+        x.IsControllable,
+        x.State.ToString(),
+        x.Message)));
+}).RequireAuthorization();
+
 app.MapPost("/api/system/service/{action}", async (
     string action,
     HttpContext httpContext,
@@ -441,19 +456,10 @@ app.MapPost("/api/system/service/{action}", async (
     IOptions<SystemMonitorOptions> options,
     CancellationToken cancellationToken) =>
 {
-    if (!IsLoopbackRequest(httpContext))
+    var guardResult = ValidateLocalControlRequest(httpContext, options.Value.LocalControlKey);
+    if (guardResult is not null)
     {
-        return Results.Forbid();
-    }
-
-    var localControlKey = options.Value.LocalControlKey;
-    if (!string.IsNullOrWhiteSpace(localControlKey))
-    {
-        var requestKey = httpContext.Request.Headers["X-Local-Control-Key"].ToString();
-        if (!string.Equals(requestKey, localControlKey, StringComparison.Ordinal))
-        {
-            return Results.Unauthorized();
-        }
+        return guardResult;
     }
 
     var operation = action.ToLowerInvariant();
@@ -475,6 +481,60 @@ app.MapPost("/api/system/service/{action}", async (
         result.Status.ServiceName,
         result.Status.State.ToString(),
         result.Status.Message));
+}).RequireAuthorization();
+
+app.MapPost("/api/system/services/{key}/{action}", async (
+    string key,
+    string action,
+    HttpContext httpContext,
+    IServiceControlManager serviceControlManager,
+    IOptions<SystemMonitorOptions> options,
+    CancellationToken cancellationToken) =>
+{
+    var guardResult = ValidateLocalControlRequest(httpContext, options.Value.LocalControlKey);
+    if (guardResult is not null)
+    {
+        return guardResult;
+    }
+
+    if (action is not ("start" or "stop" or "restart"))
+    {
+        return Results.BadRequest(new { message = "Action must be start|stop|restart." });
+    }
+
+    var result = await serviceControlManager.ControlByKeyAsync(key, action, cancellationToken);
+    return Results.Ok(new ServiceControlResponse(
+        result.Success,
+        result.Status.ServiceName,
+        result.Status.State.ToString(),
+        result.Status.Message));
+}).RequireAuthorization();
+
+app.MapPost("/api/system/services/{action}-all", async (
+    string action,
+    HttpContext httpContext,
+    IServiceControlManager serviceControlManager,
+    IOptions<SystemMonitorOptions> options,
+    CancellationToken cancellationToken) =>
+{
+    var guardResult = ValidateLocalControlRequest(httpContext, options.Value.LocalControlKey);
+    if (guardResult is not null)
+    {
+        return guardResult;
+    }
+
+    if (action is not ("start" or "stop" or "restart"))
+    {
+        return Results.BadRequest(new { message = "Action must be start|stop|restart." });
+    }
+
+    var results = await serviceControlManager.ControlAllAsync(action, cancellationToken);
+    var payload = results.Select(result => new ServiceControlResponse(
+        result.Success,
+        result.Status.ServiceName,
+        result.Status.State.ToString(),
+        result.Status.Message));
+    return Results.Ok(payload);
 }).RequireAuthorization();
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
@@ -508,6 +568,25 @@ static bool IsLoopbackRequest(HttpContext httpContext)
 {
     var remoteIp = httpContext.Connection.RemoteIpAddress;
     return remoteIp is not null && System.Net.IPAddress.IsLoopback(remoteIp);
+}
+
+static IResult? ValidateLocalControlRequest(HttpContext httpContext, string? localControlKey)
+{
+    if (!IsLoopbackRequest(httpContext))
+    {
+        return Results.Forbid();
+    }
+
+    if (!string.IsNullOrWhiteSpace(localControlKey))
+    {
+        var requestKey = httpContext.Request.Headers["X-Local-Control-Key"].ToString();
+        if (!string.Equals(requestKey, localControlKey, StringComparison.Ordinal))
+        {
+            return Results.Unauthorized();
+        }
+    }
+
+    return null;
 }
 
 public sealed record RegisterRequest(
@@ -565,5 +644,14 @@ public sealed record SystemStatusResponse(
 public sealed record ServiceControlResponse(
     bool Success,
     string ServiceName,
+    string ServiceState,
+    string Message);
+
+public sealed record ManagedServiceResponse(
+    string Key,
+    string ServiceName,
+    string DisplayName,
+    string? Port,
+    bool IsControllable,
     string ServiceState,
     string Message);

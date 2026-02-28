@@ -1,4 +1,7 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || 'https://localhost:7055'
+const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
+const API_BASE_URL =
+  configuredApiBaseUrl ||
+  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5055')
 
 export interface ApiRequestOptions extends RequestInit {
   token?: string | null

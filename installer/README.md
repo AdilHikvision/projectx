@@ -53,11 +53,18 @@ Installer wizard:
 4. generates `appsettings.Production.json`
 5. installs Windows service `ProjectXBackend`
 6. starts service
+7. creates tray monitor icon (`ProjectX Tray Monitor`) with quick actions
 
 Default URL after install:
 
 - `http://localhost:5055`
 - dashboard page: `http://localhost:5055/system`
+
+Tray monitor behavior:
+
+- shows server state in Windows tray tooltip
+- left click opens local service manager page
+- context menu: `Start Server`, `Stop Server`, `Restart Server`, `Open Service Manager`
 
 ## 4) Update flow
 
@@ -76,6 +83,7 @@ powershell -ExecutionPolicy Bypass -File .\installer\uninstall-service.ps1
 ```
 
 This script stops/removes service and deletes installation directory.
+It also removes tray monitor shortcuts from Startup and Start Menu.
 
 ## 6) Recovery / troubleshooting
 

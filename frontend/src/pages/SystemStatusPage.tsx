@@ -21,6 +21,16 @@ interface ServiceControlResponse {
   message: string
 }
 
+interface ManagedServiceResponse {
+  key: string
+  serviceName: string
+  displayName: string
+  port?: string | null
+  isControllable: boolean
+  serviceState: string
+  message: string
+}
+
 interface SdkHealthResponse {
   initialized: boolean
   platform: string
@@ -35,6 +45,7 @@ export function SystemStatusPage() {
   const { token } = useAuth()
   const [status, setStatus] = useState<SystemStatusResponse | null>(null)
   const [sdkHealth, setSdkHealth] = useState<SdkHealthResponse | null>(null)
+  const [services, setServices] = useState<ManagedServiceResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,12 +56,14 @@ export function SystemStatusPage() {
 
   const loadStatus = useCallback(async () => {
     if (!authToken) return
-    const [systemResponse, sdkResponse] = await Promise.all([
+    const [systemResponse, sdkResponse, servicesResponse] = await Promise.all([
       apiRequest<SystemStatusResponse>('/api/system/status', { token: authToken }),
       apiRequest<SdkHealthResponse>('/api/health/sdk'),
+      apiRequest<ManagedServiceResponse[]>('/api/system/services', { token: authToken }),
     ])
     setStatus(systemResponse)
     setSdkHealth(sdkResponse)
+    setServices(servicesResponse)
   }, [authToken])
 
   useEffect(() => {
@@ -83,7 +96,7 @@ export function SystemStatusPage() {
     }
   }, [loadStatus])
 
-  async function controlService(action: 'start' | 'stop' | 'restart') {
+  async function controlMainService(action: 'start' | 'stop' | 'restart') {
     if (!authToken) return
     setIsSubmitting(true)
     setError(null)
@@ -99,6 +112,51 @@ export function SystemStatusPage() {
       await loadStatus()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Операция над службой завершилась ошибкой')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function controlServiceByKey(key: string, action: 'start' | 'stop' | 'restart') {
+    if (!authToken) return
+    setIsSubmitting(true)
+    setError(null)
+    setActionMessage(null)
+    try {
+      const response = await apiRequest<ServiceControlResponse>(`/api/system/services/${key}/${action}`, {
+        method: 'POST',
+        token: authToken,
+        headers: localControlKey ? { 'X-Local-Control-Key': localControlKey } : undefined,
+      })
+      setActionMessage(response.message)
+      await loadStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Операция над сервисом завершилась ошибкой')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function controlAll(action: 'start' | 'stop' | 'restart') {
+    if (!authToken) return
+    setIsSubmitting(true)
+    setError(null)
+    setActionMessage(null)
+    try {
+      const response = await apiRequest<ServiceControlResponse[]>(`/api/system/services/${action}-all`, {
+        method: 'POST',
+        token: authToken,
+        headers: localControlKey ? { 'X-Local-Control-Key': localControlKey } : undefined,
+      })
+      const failed = response.filter((x) => !x.success)
+      setActionMessage(
+        failed.length === 0
+          ? `Команда ${action.toUpperCase()} ALL выполнена успешно`
+          : `${action.toUpperCase()} ALL: ${failed.length} сервис(ов) завершились с ошибкой`,
+      )
+      await loadStatus()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Массовая операция завершилась ошибкой')
     } finally {
       setIsSubmitting(false)
     }
@@ -162,19 +220,89 @@ export function SystemStatusPage() {
       <section className="card">
         <h2>Управление службой</h2>
         <div className="actions-cell">
-          <button onClick={() => controlService('start')} disabled={isSubmitting}>
+          <button onClick={() => controlMainService('start')} disabled={isSubmitting}>
             Start
           </button>
-          <button onClick={() => controlService('stop')} disabled={isSubmitting}>
+          <button onClick={() => controlMainService('stop')} disabled={isSubmitting}>
             Stop
           </button>
-          <button onClick={() => controlService('restart')} disabled={isSubmitting}>
+          <button onClick={() => controlMainService('restart')} disabled={isSubmitting}>
             Restart
           </button>
         </div>
         <p className="muted">
           Команды принимаются только с loopback-адреса. Опционально можно включить ключ `X-Local-Control-Key`.
         </p>
+      </section>
+
+      <section className="card">
+        <h2>Service Manager</h2>
+        <div className="actions-cell">
+          <button onClick={() => controlAll('start')} disabled={isSubmitting}>
+            Start All
+          </button>
+          <button onClick={() => controlAll('stop')} disabled={isSubmitting}>
+            Stop All
+          </button>
+          <button onClick={() => controlAll('restart')} disabled={isSubmitting}>
+            Restart All
+          </button>
+        </div>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Service Name</th>
+                <th>Port</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th>Operation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {services.map((service) => (
+                <tr key={service.key}>
+                  <td>{service.displayName || service.serviceName}</td>
+                  <td>{service.port ?? '-'}</td>
+                  <td>
+                    <span
+                      className={`status-pill ${
+                        service.serviceState === 'Running'
+                          ? 'online'
+                          : service.serviceState === 'Stopped'
+                            ? 'offline'
+                            : ''
+                      }`}
+                    >
+                      {service.serviceState}
+                    </span>
+                  </td>
+                  <td>{service.message}</td>
+                  <td className="actions-cell">
+                    <button
+                      disabled={isSubmitting || !service.isControllable}
+                      onClick={() => controlServiceByKey(service.key, 'start')}
+                    >
+                      Start
+                    </button>
+                    <button
+                      disabled={isSubmitting || !service.isControllable}
+                      onClick={() => controlServiceByKey(service.key, 'stop')}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      disabled={isSubmitting || !service.isControllable}
+                      onClick={() => controlServiceByKey(service.key, 'restart')}
+                    >
+                      Restart
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="card">

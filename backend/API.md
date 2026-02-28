@@ -329,3 +329,36 @@
 - **Path:** `/api/health/db`
 - **Auth:** не требуется
 - **Назначение:** отдельная проверка доступности БД для установщика/мониторинга.
+
+### 11) Service Manager (как в панели сервисов)
+
+- **Method:** `GET`
+- **Path:** `/api/system/services`
+- **Auth:** требуется JWT Bearer
+- **Response 200:** список управляемых сервисов с текущим состоянием.
+
+```json
+[
+  {
+    "key": "backend",
+    "serviceName": "ProjectXBackend",
+    "displayName": "ProjectX Backend Service",
+    "port": "5055",
+    "isControllable": true,
+    "serviceState": "Running",
+    "message": "Service status resolved."
+  }
+]
+```
+
+- **Method:** `POST`
+- **Path:** `/api/system/services/{key}/{action}`
+- **Auth:** требуется JWT Bearer
+- **Action:** `start | stop | restart`
+- **Ограничения:** loopback + `X-Local-Control-Key` (если включен).
+
+- **Method:** `POST`
+- **Path:** `/api/system/services/{action}-all`
+- **Auth:** требуется JWT Bearer
+- **Action:** `start | stop | restart`
+- **Назначение:** массовая операция по всем `isControllable=true` сервисам.

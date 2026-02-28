@@ -24,7 +24,6 @@ Source: "..\installer\install-postgres.ps1"; DestDir: "{tmp}"; Flags: deleteafte
 
 [Icons]
 Name: "{group}\ProjectX Dashboard"; Filename: "http://localhost:5055/system"
-Name: "{group}\Uninstall ProjectX Service"; Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\uninstall-service.ps1"""; Flags: runminimized
 
 [Code]
 var
@@ -210,7 +209,8 @@ begin
       ' -DbUser "' + DbUserEdit.Text + '"' +
       ' -DbPassword "' + DbPasswordEdit.Text + '"' +
       ' -JwtKey "' + JwtKeyEdit.Text + '"' +
-      ' -LocalControlKey "' + LocalControlKeyEdit.Text + '"';
+      ' -LocalControlKey "' + LocalControlKeyEdit.Text + '"' +
+      ' -LogPath "' + ExpandConstant('{app}\install-service.log') + '"';
 
     if not Exec('powershell.exe', Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
     begin

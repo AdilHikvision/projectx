@@ -7,8 +7,13 @@ $ErrorActionPreference = "Stop"
 try {
     winget --version | Out-Null
     Write-Host "Installing PostgreSQL via winget..."
-    winget install --id PostgreSQL.PostgreSQL --silent --accept-package-agreements --accept-source-agreements
-    Write-Host "PostgreSQL installation command completed."
+    $packageId = "PostgreSQL.PostgreSQL.$Version"
+    winget install --id $packageId --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw "winget install failed for package '$packageId' (exit code: $LASTEXITCODE)."
+    }
+
+    Write-Host "PostgreSQL installation command completed for package: $packageId"
 }
 catch {
     Write-Warning "Automatic PostgreSQL install failed: $($_.Exception.Message)"
