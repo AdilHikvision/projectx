@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Work Hours Tracking - Access Control</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#aa9ad4',
+                        'bg-light': '#f8f9fa',
+                        'dark': '#111827',
+                        'muted': '#6b7280',
+                    },
+                    fontFamily: {
+                        'sans': ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
+        }
+
+        .chart-bar {
+            background-color: #aa9ad4;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+
+        .chart-bar:hover {
+            opacity: 1;
+        }
+    </style>
+</head>
+
+<body class="font-sans antialiased text-dark bg-white md:bg-bg-light min-h-screen">
+
+    <div class="flex flex-col md:flex-row min-h-screen">
+
+        <!-- Desktop Sidebar -->
+        <aside class="hidden md:flex flex-col w-[80px] bg-white border-r border-gray-100 py-6 items-center">
+            <div class="mb-10 text-primary">
+                <span class="material-symbols-outlined text-3xl">fingerprint</span>
+            </div>
+            <nav class="flex-1 space-y-8">
+                <a href="#" class="text-muted hover:text-primary transition-colors block">
+                    <span class="material-symbols-outlined text-2xl">grid_view</span>
+                </a>
+                <a href="#" class="text-primary block bg-primary/10 p-2 rounded-lg">
+                    <span class="material-symbols-outlined text-2xl">schedule</span>
+                </a>
+                <a href="#" class="text-muted hover:text-primary transition-colors block">
+                    <span class="material-symbols-outlined text-2xl">door_front</span>
+                </a>
+                <a href="#" class="text-muted hover:text-primary transition-colors block">
+                    <span class="material-symbols-outlined text-2xl">sensors</span>
+                </a>
+                <a href="#" class="text-muted hover:text-primary transition-colors block">
+                    <span class="material-symbols-outlined text-2xl">history</span>
+                </a>
+                <a href="#" class="text-muted hover:text-primary transition-colors block">
+                    <span class="material-symbols-outlined text-2xl">settings</span>
+                </a>
+            </nav>
+            <div class="mt-auto space-y-8 pb-4">
+                <span class="material-symbols-outlined text-muted cursor-pointer">notifications</span>
+                <div
+                    class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
+                    JD</div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0">
+
+            <!-- Desktop Header -->
+            <header
+                class="hidden md:flex items-center justify-between px-8 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
+                <div class="flex items-center gap-4">
+                    <h2 class="text-xl font-bold">Work Hours Tracking</h2>
+                    <span
+                        class="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded uppercase tracking-wider">MANAGEMENT</span>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div class="relative w-80">
+                        <span
+                            class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted">search</span>
+                        <input type="text" placeholder="Search logs, employees..."
+                            class="w-full pl-10 pr-4 py-2 bg-gray-50 border-none rounded-lg text-[13px] focus:ring-0">
+                    </div>
+                    <button
+                        class="bg-primary text-white px-5 py-2 rounded-lg text-[13px] font-bold flex items-center gap-2 shadow-lg shadow-primary/20 hover:opacity-90">
+                        <span class="material-symbols-outlined text-lg">download</span>
+                        Export Report
+                    </button>
+                    <div
+                        class="w-8 h-8 rounded-full bg-orange-100 border border-orange-200 flex items-center justify-center text-[11px] font-bold text-orange-600">
+                        JD</div>
+                </div>
+            </header>
+
+            <!-- Mobile Header -->
+            <header
+                class="md:hidden flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
+                <span class="material-symbols-outlined text-dark text-2xl">menu</span>
+                <h2 class="text-xl font-bold">Work Hours</h2>
+                <div class="flex items-center gap-4">
+                    <div class="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-muted">
+                        <span class="material-symbols-outlined">search</span>
+                    </div>
+                    <div class="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
+                        <span class="material-symbols-outlined">person</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Content -->
+            <div class="flex-1 overflow-y-auto p-6 md:p-10 space-y-8">
+
+                <!-- Stats Row (Grid) -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                    <div
+                        class="bg-white p-5 md:p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                        <div class="flex justify-between items-start mb-4">
+                            <div
+                                class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                                <span class="material-symbols-outlined">timer</span>
+                            </div>
+                            <span
+                                class="text-[10px] font-bold text-green-500 bg-green-50 px-2 py-0.5 rounded">+12.4%</span>
+                        </div>
+                        <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">Total Work Hours</p>
+                        <p class="text-3xl font-bold mt-1">1,240.5</p>
+                        <p class="text-[10px] font-medium text-muted mt-2">Current billing cycle</p>
+                    </div>
+                    <div
+                        class="bg-white p-5 md:p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                        <div class="flex justify-between items-start mb-4">
+                            <div
+                                class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                                <span class="material-symbols-outlined">group</span>
+                            </div>
+                            <span class="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">+2</span>
+                        </div>
+                        <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">Active Employees</p>
+                        <p class="text-3xl font-bold mt-1">128</p>
+                        <p class="text-[10px] font-medium text-muted mt-2">Currently on premise: 42</p>
+                    </div>
+                    <div
+                        class="bg-white p-5 md:p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                        <div class="flex justify-between items-start mb-4">
+                            <div
+                                class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                                <span class="material-symbols-outlined">calendar_today</span>
+                            </div>
+                            <span
+                                class="text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded">-5.1%</span>
+                        </div>
+                        <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">Overtime Hours</p>
+                        <p class="text-3xl font-bold mt-1">45.2</p>
+                        <p class="text-[10px] font-medium text-muted mt-2">Target: < 50h/week</p>
+                    </div>
+                    <div
+                        class="hidden md:block bg-white p-6 rounded-2xl border border-gray-100 shadow-sm relative overflow-hidden">
+                        <div class="flex justify-between items-start mb-4">
+                            <div
+                                class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                                <span class="material-symbols-outlined">history</span>
+                            </div>
+                            <span
+                                class="text-[10px] font-bold text-muted bg-gray-50 px-2 py-0.5 rounded uppercase">Stable</span>
+                        </div>
+                        <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">Avg. Daily Attendance
+                        </p>
+                        <p class="text-3xl font-bold mt-1">8.4h</p>
+                        <p class="text-[10px] font-medium text-muted mt-2">Per employee average</p>
+                    </div>
+                </div>
+
+                <!-- Main Layout (Calendar + Chart) -->
+                <div class="flex flex-col xl:flex-row gap-6">
+
+                    <!-- Date Range / Calendar Card -->
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm xl:w-[320px]">
+                        <div class="flex justify-between items-center mb-10">
+                            <h4 class="text-lg font-bold">Date Range Selector</h4>
+                            <div class="flex gap-4">
+                                <span
+                                    class="material-symbols-outlined text-muted cursor-pointer hover:text-dark">chevron_left</span>
+                                <span
+                                    class="material-symbols-outlined text-muted cursor-pointer hover:text-dark">chevron_right</span>
+                            </div>
+                        </div>
+                        <div class="text-center font-bold text-sm mb-6">October 2023</div>
+                        <div class="grid grid-cols-7 gap-y-4 text-center text-[11px] font-bold">
+                            <span class="text-muted">S</span><span class="text-muted">M</span><span
+                                class="text-muted">T</span><span class="text-muted">W</span><span
+                                class="text-muted">T</span><span class="text-muted">F</span><span
+                                class="text-muted">S</span>
+                            <span class="py-2 text-gray-200">28</span><span class="py-2 text-gray-200">29</span><span
+                                class="py-2 text-gray-200">30</span><span class="py-2">1</span><span
+                                class="py-2">2</span><span class="py-2">3</span><span class="py-2">4</span>
+                            <span class="py-2 bg-primary/20 text-primary rounded-lg relative">5 <div
+                                    class="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-primary rounded-full">
+                                </div></span>
+                            <span class="py-2 bg-gray-50 text-muted rounded-lg">6</span><span
+                                class="py-2 bg-gray-50 text-muted rounded-lg">7</span><span
+                                class="py-2 bg-gray-50 text-muted rounded-lg">8</span><span
+                                class="py-2 bg-gray-50 text-muted rounded-lg">9</span>
+                            <span class="py-2 bg-gray-50 text-dark rounded-lg">10</span><span
+                                class="py-2 bg-gray-50 text-muted rounded-lg">11</span>
+                        </div>
+                        <button class="w-full mt-10 text-[13px] font-bold text-primary hover:underline">Select Custom
+                            Range</button>
+                    </div>
+
+                    <!-- Chart Card -->
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex-1">
+                        <div class="flex justify-between items-center mb-12">
+                            <div>
+                                <h4 class="text-lg font-bold">Weekly Performance Trends <span
+                                        class="md:hidden text-sm font-medium text-muted block mt-1">Last 7 Days</span>
+                                </h4>
+                                <p class="hidden md:block text-xs text-muted font-medium mt-1">Cumulative hours across
+                                    all departments</p>
+                            </div>
+                            <div class="flex gap-4 text-[10px] font-bold text-muted uppercase tracking-widest">
+                                <span class="flex items-center gap-1.5">
+                                    <div class="w-2 h-2 rounded-full bg-primary/60"></div> THIS WEEK
+                                </span>
+                                <span class="flex items-center gap-1.5">
+                                    <div class="w-2 h-2 rounded-full bg-gray-200"></div> LAST WEEK
+                                </span>
+                            </div>
+                        </div>
+                        <!-- Bar Chart Placeholder -->
+                        <div class="flex items-end justify-between h-48 gap-3 md:gap-6 relative">
+                            <!-- Helper Lines -->
+                            <div class="absolute inset-x-0 bottom-0 h-px bg-gray-100"></div>
+                            <div class="absolute inset-x-0 top-1/2 h-px bg-gray-100 border-dashed border-t"></div>
+
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 70%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">MON</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 60%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">TUE</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 85%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">WED</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 45%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">THU</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 90%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">FRI</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end opacity-20">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 15%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">SAT</span>
+                            </div>
+                            <div
+                                class="flex flex-col flex-1 items-center gap-2 group cursor-pointer h-full justify-end opacity-20 text-center">
+                                <div class="chart-bar w-full md:w-16 rounded-t-lg" style="height: 10%"></div>
+                                <span class="text-[10px] font-bold text-muted uppercase">SUN</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs List Card -->
+                <div class="bg-white border md:border-gray-200 rounded-2xl md:shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                        <h4 class="text-xl md:text-lg font-bold">Detailed Access Logs <span
+                                class="md:hidden block text-sm font-medium text-muted mt-1 uppercase">Recent Logs</span>
+                        </h4>
+                        <div class="hidden md:flex gap-4">
+                            <div class="relative">
+                                <select
+                                    class="pl-4 pr-10 py-1.5 bg-gray-50 border-none rounded-lg text-[13px] font-bold appearance-none">
+                                    <option>All Departments</option>
+                                </select>
+                                <span
+                                    class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-muted text-sm px-1">expand_more</span>
+                            </div>
+                            <button
+                                class="flex items-center gap-2 text-[11px] font-bold text-muted hover:text-dark uppercase tracking-widest">
+                                <span class="material-symbols-outlined text-lg">filter_list</span>
+                                More Filters
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Table (Desktop) / Cards (Mobile) -->
+                    <div class="divide-y divide-gray-100">
+                        <!-- Desktop Header -->
+                        <div
+                            class="hidden md:grid grid-cols-8 px-6 py-4 bg-gray-50/50 text-[10px] font-extrabold text-muted tracking-widest uppercase">
+                            <div class="col-span-2">EMPLOYEE</div>
+                            <div>DATE</div>
+                            <div>CLOCK IN</div>
+                            <div>CLOCK OUT</div>
+                            <div>TOTAL HOURS</div>
+                            <div>STATUS</div>
+                            <div class="col-span-1 text-right">LOCATION</div>
+                        </div>
+
+                        <!-- Log 1 -->
+                        <div
+                            class="p-6 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 md:grid md:grid-cols-8 items-center flex justify-between relative hover:bg-gray-50/50 transition-colors">
+                            <div class="col-span-2 flex items-center gap-4">
+                                <div
+                                    class="w-14 h-14 md:w-10 md:h-10 bg-primary/10 rounded-xl md:rounded flex items-center justify-center text-primary">
+                                    <span class="md:hidden material-symbols-outlined text-2xl">login</span>
+                                    <img src="https://lh3.googleusercontent.com/yagup/avatar1"
+                                        class="hidden md:block w-full h-full rounded-lg object-cover" alt="">
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[17px] md:text-[13px] font-bold">Alex Rivera</p>
+                                    <p class="text-[14px] md:text-[11px] text-muted font-medium md:font-normal">ID:
+                                        #88219 <span class="md:hidden text-primary ml-2">• Today, 08:30 AM</span></p>
+                                    <p class="md:hidden text-[13px] font-bold text-muted mt-1 uppercase">Main Entrance
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium">Oct 11, 2023</div>
+                            <div class="hidden md:block text-[13px] font-bold">08:45 AM</div>
+                            <div class="hidden md:block text-[13px] font-medium text-muted">05:30 PM</div>
+                            <div class="hidden md:block text-[13px] font-bold">8h 45m</div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-2 py-0.5 bg-green-50 text-green-500 text-[10px] font-bold rounded">COMPLETED</span>
+                            </div>
+                            <div class="hidden md:block col-span-1 text-right text-[12px] font-medium text-muted">Main
+                                Office (Entry A)</div>
+
+                            <div class="md:hidden font-bold text-[13px] text-muted tracking-widest uppercase">VERIFIED
+                            </div>
+                            <div class="hidden md:block ml-4 text-muted cursor-pointer"><span
+                                    class="material-symbols-outlined">more_vert</span></div>
+                        </div>
+
+                        <!-- Log 2 -->
+                        <div
+                            class="p-6 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 md:grid md:grid-cols-8 items-center flex justify-between relative hover:bg-gray-50/50 transition-colors">
+                            <div class="col-span-2 flex items-center gap-4">
+                                <div
+                                    class="w-14 h-14 md:w-10 md:h-10 bg-primary/5 rounded-xl md:rounded flex items-center justify-center text-primary">
+                                    <span class="md:hidden material-symbols-outlined text-2xl">door_open</span>
+                                    <div
+                                        class="hidden md:block w-full h-full rounded-lg bg-orange-100 flex items-center justify-center text-orange-600 font-bold">
+                                        SC</div>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[17px] md:text-[13px] font-bold">Sarah Chen</p>
+                                    <p class="text-[14px] md:text-[11px] text-muted font-medium md:font-normal">ID:
+                                        #88324 <span class="md:hidden text-primary ml-2">• Today, 10:15 AM</span></p>
+                                    <p class="md:hidden text-[13px] font-bold text-muted mt-1 uppercase">Conference Room
+                                        B</p>
+                                </div>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium">Oct 11, 2023</div>
+                            <div class="hidden md:block text-[13px] font-bold">09:12 AM</div>
+                            <div class="hidden md:block text-[13px] italic text-muted">—</div>
+                            <div class="hidden md:block text-[13px] font-bold italic text-primary">Active</div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded">CLOCKED
+                                    IN</span>
+                            </div>
+                            <div class="hidden md:block col-span-1 text-right text-[12px] font-medium text-muted">Floor
+                                4 (North Wing)</div>
+
+                            <div class="md:hidden font-bold text-[13px] text-muted tracking-widest uppercase">SUCCESS
+                            </div>
+                            <div class="hidden md:block ml-4 text-muted cursor-pointer"><span
+                                    class="material-symbols-outlined">more_vert</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mobile Bottom Nav -->
+            <nav
+                class="md:hidden flex items-center justify-around py-4 bg-white border-t border-gray-100 sticky bottom-0">
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">grid_view</span>
+                    <span class="text-[10px] font-bold uppercase">Dashboard</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-primary">
+                    <span class="material-symbols-outlined text-2xl !fill-1">schedule</span>
+                    <span class="text-[10px] font-bold uppercase">Hours</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">shield_person</span>
+                    <span class="text-[10px] font-bold uppercase">Access</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">settings</span>
+                    <span class="text-[10px] font-bold uppercase">Settings</span>
+                </div>
+            </nav>
+        </main>
+    </div>
+
+</body>
+
+</html>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { AppLayout } from '../components/AppLayout'
 import { apiRequest } from '../lib/api'
 
 interface SystemStatusResponse {
@@ -70,19 +70,19 @@ export function SystemStatusPage() {
     let isDisposed = false
     let timer: number | null = null
 
-    ;(async () => {
-      try {
-        await loadStatus()
-      } catch (e) {
-        if (!isDisposed) {
-          setError(e instanceof Error ? e.message : 'Не удалось загрузить статус системы')
+      ; (async () => {
+        try {
+          await loadStatus()
+        } catch (e) {
+          if (!isDisposed) {
+            setError(e instanceof Error ? e.message : 'Не удалось загрузить статус системы')
+          }
+        } finally {
+          if (!isDisposed) {
+            setIsLoading(false)
+          }
         }
-      } finally {
-        if (!isDisposed) {
-          setIsLoading(false)
-        }
-      }
-    })()
+      })()
 
     timer = window.setInterval(() => {
       loadStatus().catch(() => undefined)
@@ -163,14 +163,7 @@ export function SystemStatusPage() {
   }
 
   return (
-    <div className="page-container">
-      <header className="topbar">
-        <div>
-          <h1>Состояние системы</h1>
-          <p className="muted">Локальный мониторинг backend-службы и PostgreSQL</p>
-        </div>
-        <Link to="/devices">К устройствам</Link>
-      </header>
+    <AppLayout>
 
       {error ? <div className="error-box">{error}</div> : null}
       {actionMessage ? <div className="info-box">{actionMessage}</div> : null}
@@ -266,13 +259,12 @@ export function SystemStatusPage() {
                   <td>{service.port ?? '-'}</td>
                   <td>
                     <span
-                      className={`status-pill ${
-                        service.serviceState === 'Running'
-                          ? 'online'
-                          : service.serviceState === 'Stopped'
-                            ? 'offline'
-                            : ''
-                      }`}
+                      className={`status-pill ${service.serviceState === 'Running'
+                        ? 'online'
+                        : service.serviceState === 'Stopped'
+                          ? 'offline'
+                          : ''
+                        }`}
                     >
                       {service.serviceState}
                     </span>
@@ -347,6 +339,6 @@ export function SystemStatusPage() {
           </div>
         )}
       </section>
-    </div>
+    </AppLayout>
   )
 }

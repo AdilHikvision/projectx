@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>People Management - Access Control</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#aa9ad4',
+                        'bg-light': '#f8f9fa',
+                        'dark': '#111827',
+                        'muted': '#6b7280',
+                    },
+                    fontFamily: {
+                        'sans': ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 20;
+        }
+    </style>
+</head>
+
+<body class="font-sans antialiased text-dark bg-white md:bg-bg-light min-h-screen">
+
+    <div class="flex flex-col md:flex-row min-h-screen">
+
+        <!-- Desktop Sidebar -->
+        <aside class="hidden md:flex flex-col w-[260px] bg-white border-r border-gray-100 py-6">
+            <div class="px-6 mb-10 flex items-center gap-3">
+                <div class="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
+                    <span class="material-symbols-outlined text-2xl !fill-1">person_filled</span>
+                </div>
+                <div>
+                    <h1 class="text-sm font-bold leading-tight">UniFi Access</h1>
+                    <p class="text-[10px] text-muted font-bold tracking-widest uppercase">HQ CONSOLE</p>
+                </div>
+            </div>
+
+            <nav class="flex-1 px-3 space-y-1">
+                <a href="#"
+                    class="flex items-center gap-4 px-3 py-2.5 rounded-lg text-[13px] font-semibold text-muted hover:bg-gray-50 transition-colors">
+                    <span class="material-symbols-outlined shrink-0 text-xl">grid_view</span>
+                    Dashboard
+                </a>
+                <a href="#"
+                    class="flex items-center gap-4 px-3 py-2.5 rounded-lg text-[13px] font-semibold bg-primary/10 text-primary">
+                    <span class="material-symbols-outlined shrink-0 text-xl">group</span>
+                    People
+                </a>
+                <a href="#"
+                    class="flex items-center gap-4 px-3 py-2.5 rounded-lg text-[13px] font-semibold text-muted hover:bg-gray-50 transition-colors">
+                    <span class="material-symbols-outlined shrink-0 text-xl">sensors</span>
+                    Devices
+                </a>
+                <a href="#"
+                    class="flex items-center gap-4 px-3 py-2.5 rounded-lg text-[13px] font-semibold text-muted hover:bg-gray-50 transition-colors">
+                    <span class="material-symbols-outlined shrink-0 text-xl">list_alt</span>
+                    Activity Logs
+                </a>
+            </nav>
+
+            <div class="px-6 py-6 mb-4">
+                <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase mb-4">SYSTEM</p>
+                <nav class="space-y-1">
+                    <a href="#"
+                        class="flex items-center gap-4 py-2 text-[13px] font-semibold text-muted hover:text-dark transition-colors">
+                        <span class="material-symbols-outlined shrink-0 text-xl">settings</span>
+                        Settings
+                    </a>
+                    <a href="#"
+                        class="flex items-center gap-4 py-2 text-[13px] font-semibold text-muted hover:text-dark transition-colors">
+                        <span class="material-symbols-outlined shrink-0 text-xl">help</span>
+                        Support
+                    </a>
+                </nav>
+            </div>
+
+            <!-- Pro Plan Badge -->
+            <div class="mx-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                <p class="text-[9px] font-extrabold text-muted uppercase tracking-wider mb-2">PRO PLAN</p>
+                <p class="text-[11px] text-muted leading-relaxed mb-3">Access advanced scheduling and visitor
+                    management.</p>
+                <button
+                    class="w-full py-2 bg-primary/40 text-[11px] font-bold text-dark rounded-lg hover:bg-primary/50 transition-colors">Upgrade
+                    Now</button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col min-w-0">
+
+            <!-- Desktop Header -->
+            <header
+                class="hidden md:flex items-center justify-between px-8 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
+                <div class="flex items-center gap-2 text-[13px] font-semibold text-muted transition-colors">
+                    <span class="hover:text-dark cursor-pointer">Main Site</span>
+                    <span class="material-symbols-outlined text-sm">chevron_right</span>
+                    <span class="text-dark">People Management</span>
+                </div>
+                <div class="flex items-center gap-6">
+                    <button class="text-muted hover:text-dark"><span
+                            class="material-symbols-outlined">notifications</span></button>
+                    <div
+                        class="w-8 h-8 rounded-full bg-orange-100 border border-orange-200 flex items-center justify-center text-[11px] font-bold text-orange-600">
+                        JD</div>
+                </div>
+            </header>
+
+            <!-- Mobile Header -->
+            <header
+                class="md:hidden flex items-center justify-between px-4 py-4 bg-white border-b border-gray-100 sticky top-0 z-10">
+                <span class="material-symbols-outlined text-dark text-2xl">menu</span>
+                <h2 class="text-xl font-bold">Users & Access</h2>
+                <div class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                    <span class="material-symbols-outlined text-2xl">person_add</span>
+                </div>
+            </header>
+
+            <!-- Scrollable Content -->
+            <div class="flex-1 overflow-y-auto px-6 py-6 md:p-10 space-y-8">
+
+                <!-- Desktop Title & Top Actions -->
+                <div class="hidden md:flex items-center justify-between">
+                    <div>
+                        <h3 class="text-3xl font-extrabold tracking-tight">Users & Visitors</h3>
+                        <p class="text-muted mt-1 text-[15px]">Manage digital credentials and physical access points for
+                            your organization.</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <button
+                            class="flex items-center gap-2 px-5 py-2.5 border border-gray-200 rounded-lg text-[13px] font-bold hover:bg-gray-50 transition-colors">
+                            <span class="material-symbols-outlined text-lg">download</span>
+                            Export
+                        </button>
+                        <button
+                            class="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg text-[13px] font-bold shadow-lg shadow-primary/20 hover:bg-[#9788c4] transition-colors">
+                            <span class="material-symbols-outlined text-lg">person_add</span>
+                            Add User
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Desktop Search & Filters bar -->
+                <div class="hidden md:flex items-center gap-4 bg-white p-2 rounded-xl border border-gray-200">
+                    <div class="relative flex-1">
+                        <span
+                            class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted">search</span>
+                        <input type="text" placeholder="Search by name, email, or department..."
+                            class="w-full pl-10 pr-4 py-2 border-none bg-gray-50 rounded-lg text-[13px] focus:ring-0">
+                    </div>
+                    <div class="flex gap-2 p-1 bg-gray-50 rounded-lg">
+                        <button class="px-4 py-1.5 text-[12px] font-bold bg-white text-dark shadow-sm rounded-md">All
+                            Users</button>
+                        <button class="px-4 py-1.5 text-[12px] font-bold text-muted hover:text-dark">Employees</button>
+                        <button class="px-4 py-1.5 text-[12px] font-bold text-muted hover:text-dark">Visitors</button>
+                    </div>
+                    <div class="flex gap-2">
+                        <div class="relative">
+                            <select
+                                class="pl-4 pr-10 py-1.5 bg-white border border-gray-200 rounded-lg text-[12px] font-bold appearance-none outline-none">
+                                <option>Status</option>
+                            </select>
+                            <span
+                                class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-muted text-sm px-1">expand_more</span>
+                        </div>
+                        <div class="relative">
+                            <select
+                                class="pl-4 pr-10 py-1.5 bg-white border border-gray-200 rounded-lg text-[12px] font-bold appearance-none outline-none">
+                                <option>Department</option>
+                            </select>
+                            <span
+                                class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-muted text-sm px-1">expand_more</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mobile Search & Tabs -->
+                <div class="md:hidden space-y-6">
+                    <div class="relative">
+                        <span
+                            class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-muted text-2xl">search</span>
+                        <input type="text" placeholder="Search by name or email"
+                            class="w-full pl-12 pr-4 py-4 bg-[#f1f4f9] border-none rounded-xl text-lg placeholder:font-medium">
+                    </div>
+                    <div class="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+                        <button class="px-8 py-3 bg-primary/60 text-white font-bold rounded-xl whitespace-nowrap">All
+                            Users</button>
+                        <button
+                            class="px-8 py-3 bg-gray-100 text-muted font-bold rounded-xl whitespace-nowrap">Admins</button>
+                        <button
+                            class="px-8 py-3 bg-gray-100 text-muted font-bold rounded-xl whitespace-nowrap">Employees</button>
+                        <button
+                            class="px-8 py-3 bg-gray-100 text-muted font-bold rounded-xl whitespace-nowrap">Guests</button>
+                    </div>
+                </div>
+
+                <!-- User Directory (Table Desktop / Cards Mobile) -->
+                <div class="bg-white md:border md:border-gray-200 rounded-2xl md:shadow-sm">
+                    <!-- Desktop Table Header -->
+                    <div
+                        class="hidden md:grid grid-cols-6 px-6 py-4 bg-gray-50 border-b border-gray-100 text-[10px] font-extrabold text-muted tracking-widest uppercase">
+                        <div class="col-span-2">NAME & EMAIL</div>
+                        <div>STATUS</div>
+                        <div>DEPARTMENT</div>
+                        <div>ACCESS LEVEL</div>
+                        <div>LAST ACTIVITY</div>
+                        <div class="text-right">ACTIONS</div>
+                    </div>
+
+                    <!-- Row Items -->
+                    <div class="divide-y divide-gray-100">
+                        <!-- User 1 -->
+                        <div
+                            class="md:grid md:grid-cols-6 items-center px-4 py-5 md:px-6 md:py-4 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 hover:bg-gray-50 transition-colors flex justify-between relative">
+                            <div class="col-span-2 flex items-center gap-4">
+                                <div class="relative">
+                                    <div
+                                        class="w-14 h-14 md:w-10 md:h-10 rounded-full md:rounded-lg overflow-hidden border border-gray-100">
+                                        <img src="https://lh3.googleusercontent.com/aida-public/AGV0N_9f_f6x_6W7Fp7X7_6W7Fp7X7_6W7Fp7X7_6W7F"
+                                            alt="" class="w-full h-full object-cover">
+                                    </div>
+                                    <div
+                                        class="absolute -right-0.5 -bottom-0.5 w-3.5 h-3.5 md:w-3 md:h-3 rounded-full bg-green-500 border-2 border-white">
+                                    </div>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[17px] md:text-[13px] font-bold">Johnnathan Doe</p>
+                                    <p class="text-[14px] md:text-xs text-muted font-medium md:font-normal mt-0.5">
+                                        j.doe@company.com</p>
+                                    <p class="md:hidden text-[13px] text-muted font-medium mt-1">Super Admin • Main
+                                        Office</p>
+                                </div>
+                            </div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-3 py-1 bg-green-50 text-green-600 text-[11px] font-bold rounded-full">Active</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-dark">Engineering</div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-2 py-0.5 bg-gray-50 text-dark text-[11px] font-bold rounded border border-gray-100">Full
+                                    Access</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-muted">2 mins ago</div>
+                            <div class="hidden md:flex justify-end gap-3 text-muted">
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">edit</span>
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">more_vert</span>
+                            </div>
+                            <!-- Mobile row chevron -->
+                            <div class="md:hidden">
+                                <span class="material-symbols-outlined text-muted text-2xl">chevron_right</span>
+                            </div>
+                        </div>
+
+                        <!-- User 2 -->
+                        <div
+                            class="md:grid md:grid-cols-6 items-center px-4 py-5 md:px-6 md:py-4 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 hover:bg-gray-50 transition-colors flex justify-between relative">
+                            <div class="col-span-2 flex items-center gap-4">
+                                <div class="relative">
+                                    <div
+                                        class="w-14 h-14 md:w-10 md:h-10 bg-purple-100 rounded-full md:rounded-lg flex items-center justify-center text-purple-600 font-bold text-lg md:text-sm">
+                                        JS</div>
+                                    <div
+                                        class="absolute -right-0.5 -bottom-0.5 w-3.5 h-3.5 md:w-3 md:h-3 rounded-full bg-orange-500 border-2 border-white">
+                                    </div>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[17px] md:text-[13px] font-bold">Jane Smith</p>
+                                    <p class="text-[14px] md:text-xs text-muted font-medium md:font-normal mt-0.5">
+                                        jane.smith@design.io</p>
+                                    <p class="md:hidden text-[13px] text-muted font-medium mt-1">Security Staff • Gate 1
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-3 py-1 bg-orange-50 text-orange-600 text-[11px] font-bold rounded-full">Pending</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-dark">Marketing</div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-2 py-0.5 bg-gray-50 text-dark text-[11px] font-bold rounded border border-gray-100">Office
+                                    Only</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-muted">Never</div>
+                            <div class="hidden md:flex justify-end gap-3 text-muted">
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">mail</span>
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">more_vert</span>
+                            </div>
+                            <div class="md:hidden">
+                                <span class="material-symbols-outlined text-muted text-2xl">chevron_right</span>
+                            </div>
+                        </div>
+
+                        <!-- User 3 -->
+                        <div
+                            class="md:grid md:grid-cols-6 items-center px-4 py-5 md:px-6 md:py-4 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 hover:bg-gray-50 transition-colors flex justify-between relative">
+                            <div class="col-span-2 flex items-center gap-4">
+                                <div class="relative">
+                                    <div
+                                        class="w-14 h-14 md:w-10 md:h-10 bg-gray-100 rounded-full md:rounded-lg flex items-center justify-center text-muted font-bold text-lg md:text-sm">
+                                        RB</div>
+                                    <div
+                                        class="absolute -right-0.5 -bottom-0.5 w-3.5 h-3.5 md:w-3 md:h-3 rounded-full bg-gray-300 border-2 border-white">
+                                    </div>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-[17px] md:text-[13px] font-bold">Robert Brown</p>
+                                    <p class="text-[14px] md:text-xs text-muted font-medium md:font-normal mt-0.5">
+                                        r.brown@hr.corp</p>
+                                    <p class="md:hidden text-[13px] text-muted font-medium mt-1">Finance • 3rd Floor</p>
+                                </div>
+                            </div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-3 py-1 bg-gray-100 text-muted text-[11px] font-bold rounded-full">Disabled</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-dark">HR</div>
+                            <div class="hidden md:block">
+                                <span
+                                    class="px-2 py-0.5 bg-gray-50 text-dark text-[11px] font-bold rounded border border-gray-100">Restricted</span>
+                            </div>
+                            <div class="hidden md:block text-[13px] font-medium text-muted">Yesterday, 4:12 PM</div>
+                            <div class="hidden md:flex justify-end gap-3 text-muted">
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">toggle_off</span>
+                                <span
+                                    class="material-symbols-outlined text-[20px] cursor-pointer hover:text-dark">more_vert</span>
+                            </div>
+                            <div class="md:hidden">
+                                <span class="material-symbols-outlined text-muted text-2xl">chevron_right</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pagination (Desktop) -->
+                    <div
+                        class="hidden md:flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/20">
+                        <p class="text-[11px] font-bold text-muted uppercase tracking-widest">SHOWING 1-5 OF 24 RESULTS
+                        </p>
+                        <div class="flex gap-2">
+                            <button
+                                class="w-8 h-8 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary">
+                                <span class="material-symbols-outlined text-lg">chevron_left</span>
+                            </button>
+                            <button
+                                class="w-8 h-8 flex items-center justify-center bg-primary text-white rounded text-[11px] font-bold">1</button>
+                            <button
+                                class="w-8 h-8 flex items-center justify-center border border-gray-200 rounded text-[11px] font-bold text-muted hover:border-primary">2</button>
+                            <button
+                                class="w-8 h-8 flex items-center justify-center border border-gray-200 rounded text-[11px] font-bold text-muted hover:border-primary">3</button>
+                            <button
+                                class="w-8 h-8 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary">
+                                <span class="material-symbols-outlined text-lg">chevron_right</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer Stats Grid (Desktop) -->
+                <div class="hidden md:grid grid-cols-3 gap-8">
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-6">
+                        <div class="w-14 h-14 bg-green-50 rounded-xl flex items-center justify-center text-green-600">
+                            <span class="material-symbols-outlined text-3xl">how_to_reg</span>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">ACTIVE TODAY</p>
+                            <p class="text-3xl font-bold mt-1">18</p>
+                        </div>
+                    </div>
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-6">
+                        <div class="w-14 h-14 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600">
+                            <span class="material-symbols-outlined text-3xl">person_add</span>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">PENDING INVITES
+                            </p>
+                            <p class="text-3xl font-bold mt-1">4</p>
+                        </div>
+                    </div>
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-6">
+                        <div class="w-14 h-14 bg-purple-50 rounded-xl flex items-center justify-center text-primary">
+                            <span class="material-symbols-outlined text-3xl">meeting_room</span>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-extrabold text-muted tracking-widest uppercase">ACTIVE VISITORS
+                            </p>
+                            <p class="text-3xl font-bold mt-1">2</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Mobile Bottom Nav -->
+            <nav
+                class="md:hidden flex items-center justify-around py-4 bg-white border-t border-gray-100 sticky bottom-0">
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">grid_view</span>
+                    <span class="text-[10px] font-bold">DASHBOARD</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">sensors</span>
+                    <span class="text-[10px] font-bold">DEVICES</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-primary">
+                    <span class="material-symbols-outlined text-2xl !fill-1">group</span>
+                    <span class="text-[10px] font-bold">PEOPLE</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">history</span>
+                    <span class="text-[10px] font-bold">ACTIVITY</span>
+                </div>
+                <div class="flex flex-col items-center gap-1 text-muted">
+                    <span class="material-symbols-outlined text-2xl">settings</span>
+                    <span class="text-[10px] font-bold">SETTINGS</span>
+                </div>
+            </nav>
+        </main>
+    </div>
+
+</body>
+
+</html>

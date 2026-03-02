@@ -1,8 +1,7 @@
-import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
+import { AppLayout } from '../components/AppLayout'
 import { apiRequest, getApiBaseUrl } from '../lib/api'
 
 type DeviceStatus = 'Online' | 'Offline'
@@ -26,37 +25,12 @@ interface DeviceStatusResponse {
   lastSeenUtc?: string | null
 }
 
-interface DeviceEvent {
-  deviceIdentifier: string
-  eventType: string
-  occurredUtc: string
-  payload: string
-}
-
 interface DiscoveredDevice {
   deviceIdentifier: string
   name: string
   ipAddress: string
   port: number
   model?: string | null
-}
-
-interface DeviceFormState {
-  deviceIdentifier: string
-  name: string
-  ipAddress: string
-  port: string
-  location: string
-  deviceType: string
-}
-
-const DEFAULT_FORM_STATE: DeviceFormState = {
-  deviceIdentifier: '',
-  name: '',
-  ipAddress: '',
-  port: '8000',
-  location: '',
-  deviceType: '1',
 }
 
 function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
@@ -69,449 +43,298 @@ function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
 }
 
 export function DevicesPage() {
-  const { token, user, logout } = useAuth()
-
+  const { token } = useAuth()
   const [devices, setDevices] = useState<Device[]>([])
-  const [events, setEvents] = useState<DeviceEvent[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [isDiscovering, setIsDiscovering] = useState(false)
-  const [isAddingDiscovered, setIsAddingDiscovered] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
-  const [hubStatus, setHubStatus] = useState<'connecting' | 'connected' | 'polling'>('connecting')
-  const [form, setForm] = useState<DeviceFormState>(DEFAULT_FORM_STATE)
-  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([])
-
-  const authToken = token
 
   const loadData = useCallback(async () => {
-    if (!authToken) return
-
+    if (!token) return
     setError(null)
-    const [devicesResult, statusesResult, eventsResult] = await Promise.all([
-      apiRequest<Device[]>('/api/devices', { token: authToken }),
-      apiRequest<DeviceStatusResponse[]>('/api/devices/statuses', { token: authToken }),
-      apiRequest<DeviceEvent[]>('/api/devices/events?take=20', { token: authToken }),
-    ])
-
-    const statusesById = new Map(statusesResult.map((status) => [status.deviceId, status]))
-    setDevices(devicesResult.map((device) => mergeStatus(device, statusesById.get(device.id))))
-    setEvents(eventsResult)
-  }, [authToken])
+    try {
+      const [devicesResult, statusesResult] = await Promise.all([
+        apiRequest<Device[]>('/api/devices', { token }),
+        apiRequest<DeviceStatusResponse[]>('/api/devices/statuses', { token }),
+      ])
+      const statusesById = new Map(statusesResult.map((s) => [s.deviceId, s]))
+      setDevices(devicesResult.map((d) => mergeStatus(d, statusesById.get(d.id))))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load devices')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [token])
 
   const fetchStatuses = useCallback(async () => {
-    if (!authToken) return
-
-    const statuses = await apiRequest<DeviceStatusResponse[]>('/api/devices/statuses', { token: authToken })
-    const byDeviceId = new Map(statuses.map((status) => [status.deviceId, status]))
-    setDevices((prev) => prev.map((device) => mergeStatus(device, byDeviceId.get(device.id))))
-  }, [authToken])
+    if (!token) return
+    try {
+      const statuses = await apiRequest<DeviceStatusResponse[]>('/api/devices/statuses', { token })
+      const byDeviceId = new Map(statuses.map((s) => [s.deviceId, s]))
+      setDevices((prev) => prev.map((d) => mergeStatus(d, byDeviceId.get(d.id))))
+    } catch { /* ignore */ }
+  }, [token])
 
   useEffect(() => {
-    let cancelled = false
-
-    ;(async () => {
-      try {
-        await loadData()
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Не удалось загрузить устройства')
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false)
-        }
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
+    loadData()
   }, [loadData])
 
   useEffect(() => {
-    if (!authToken) return
-    const tokenForHub = authToken
-
+    if (!token) return
     let isDisposed = false
-    let hubConnection: HubConnection | null = null
+    let hub: HubConnection | null = null
     let pollTimer: number | null = null
 
     async function startConnection() {
       try {
-        setHubStatus('connecting')
-        hubConnection = new HubConnectionBuilder()
-          .withUrl(`${getApiBaseUrl()}/hubs/devices`, {
-            accessTokenFactory: () => tokenForHub,
-          })
+        hub = new HubConnectionBuilder()
+          .withUrl(`${getApiBaseUrl()}/hubs/devices`, { accessTokenFactory: () => token! })
           .withAutomaticReconnect()
           .configureLogging(LogLevel.Warning)
           .build()
 
-        hubConnection.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
-          setDevices((prev) =>
-            prev.map((device) => {
-              if (device.id !== payload.deviceId && device.deviceIdentifier !== payload.deviceIdentifier) {
-                return device
-              }
-              return mergeStatus(device, payload)
-            }),
-          )
+        hub.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
+          setDevices((prev) => prev.map((d) => (d.id === payload.deviceId || d.deviceIdentifier === payload.deviceIdentifier ? mergeStatus(d, payload) : d)))
         })
 
-        await hubConnection.start()
-        if (isDisposed) return
-        if (hubConnection.state === HubConnectionState.Connected) {
-          setHubStatus('connected')
-          return
-        }
-      } catch {
-        // fallback ниже
-      }
+        await hub.start()
+      } catch { /* fallback */ }
 
       if (!isDisposed) {
-        setHubStatus('polling')
-        pollTimer = window.setInterval(() => {
-          fetchStatuses().catch(() => undefined)
-        }, 5000)
+        pollTimer = window.setInterval(fetchStatuses, 5000)
       }
     }
 
-    startConnection().catch(() => undefined)
+    startConnection()
 
     return () => {
       isDisposed = true
-      if (pollTimer) {
-        window.clearInterval(pollTimer)
-      }
-      if (hubConnection) {
-        hubConnection.stop().catch(() => undefined)
-      }
+      if (pollTimer) window.clearInterval(pollTimer)
+      if (hub) hub.stop()
     }
-  }, [authToken, fetchStatuses])
+  }, [token, fetchStatuses])
 
-  const handleChange = useCallback((key: keyof DeviceFormState, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }))
-  }, [])
-
-  async function handleCreateDevice(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!authToken) return
-
-    setIsSubmitting(true)
-    setError(null)
-    setInfo(null)
-    try {
-      await apiRequest<Device>('/api/devices', {
-        method: 'POST',
-        token: authToken,
-        body: JSON.stringify({
-          deviceIdentifier: form.deviceIdentifier,
-          name: form.name,
-          ipAddress: form.ipAddress,
-          port: Number(form.port),
-          location: form.location || null,
-          deviceType: Number(form.deviceType),
-        }),
-      })
-
-      setForm(DEFAULT_FORM_STATE)
-      await loadData()
-      setInfo('Устройство добавлено')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось добавить устройство')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  async function handleDeleteDevice(deviceId: string) {
-    if (!authToken) return
-
-    setError(null)
-    setInfo(null)
-    try {
-      await apiRequest<void>(`/api/devices/${deviceId}`, {
-        method: 'DELETE',
-        token: authToken,
-      })
-      setDevices((prev) => prev.filter((device) => device.id !== deviceId))
-      setInfo('Устройство удалено')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось удалить устройство')
-    }
-  }
-
-  async function handleToggleConnection(device: Device) {
-    if (!authToken) return
-    const action = device.status === 'Online' ? 'disconnect' : 'connect'
-
-    setError(null)
-    setInfo(null)
-    try {
-      const updated = await apiRequest<Device>(`/api/devices/${device.id}/${action}`, {
-        method: 'POST',
-        token: authToken,
-      })
-      setDevices((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-      setInfo(action === 'connect' ? 'Устройство подключено' : 'Устройство отключено')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось изменить состояние подключения')
-    }
-  }
-
-  async function handleDiscoverDevices() {
-    if (!authToken) return
+  async function handleDiscover() {
+    if (!token) return
     setIsDiscovering(true)
     setError(null)
     setInfo(null)
     try {
-      const discovered = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token: authToken })
-      setDiscoveredDevices(discovered)
-      setInfo(discovered.length > 0 ? `Найдено устройств: ${discovered.length}` : 'Устройства не найдены')
+      const discovered = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token })
+      setInfo(discovered.length > 0 ? `Found ${discovered.length} devices.` : 'No devices found.')
+      if (discovered.length > 0) await loadData()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось выполнить поиск устройств')
+      setError(e instanceof Error ? e.message : 'Discovery failed')
     } finally {
       setIsDiscovering(false)
     }
   }
 
-  function handleFillFormFromDiscovered(device: DiscoveredDevice) {
-    setForm({
-      deviceIdentifier: device.deviceIdentifier,
-      name: device.name,
-      ipAddress: device.ipAddress,
-      port: String(device.port),
-      location: '',
-      deviceType: '1',
-    })
-    setInfo(`Поля формы заполнены из ${device.ipAddress}:${device.port}`)
-  }
-
-  async function handleAddDiscovered(device: DiscoveredDevice) {
-    if (!authToken) return
-    setIsAddingDiscovered(`${device.ipAddress}:${device.port}`)
+  async function handleToggleConnection(device: Device) {
+    if (!token) return
+    const action = device.status === 'Online' ? 'disconnect' : 'connect'
     setError(null)
-    setInfo(null)
     try {
-      await apiRequest<Device>('/api/devices', {
-        method: 'POST',
-        token: authToken,
-        body: JSON.stringify({
-          deviceIdentifier: device.deviceIdentifier,
-          name: device.name,
-          ipAddress: device.ipAddress,
-          port: device.port,
-          location: null,
-          deviceType: 1,
-        }),
-      })
-      await loadData()
-      setInfo(`Найденное устройство добавлено: ${device.ipAddress}:${device.port}`)
+      const updated = await apiRequest<Device>(`/api/devices/${device.id}/${action}`, { method: 'POST', token })
+      setDevices((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось добавить найденное устройство')
-    } finally {
-      setIsAddingDiscovered(null)
+      setError(e instanceof Error ? e.message : 'Failed to change connection state')
     }
   }
 
-  const sortedDevices = useMemo(
-    () => [...devices].sort((a, b) => a.name.localeCompare(b.name)),
-    [devices],
-  )
+  const onlineCount = devices.filter(d => d.status === 'Online').length
 
   return (
-    <div className="page-container">
-      <header className="topbar">
-        <div>
-          <h1>Устройства</h1>
-          <p className="muted">
-            Пользователь: {user?.email ?? '-'} · Realtime: {hubStatus === 'connected' ? 'SignalR' : 'Polling'}
-          </p>
-        </div>
-        <div className="actions-cell">
-          <Link to="/system">Система</Link>
-          <button onClick={logout}>Выйти</button>
-        </div>
-      </header>
+    <AppLayout>
+      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
 
-      {error ? <div className="error-box">{error}</div> : null}
-      {info ? <div className="info-box">{info}</div> : null}
-
-      <section className="card">
-        <h2>Добавить устройство</h2>
-        <form className="device-form" onSubmit={handleCreateDevice}>
-          <input
-            placeholder="DeviceIdentifier"
-            value={form.deviceIdentifier}
-            onChange={(event) => handleChange('deviceIdentifier', event.target.value)}
-            required
-          />
-          <input
-            placeholder="Name"
-            value={form.name}
-            onChange={(event) => handleChange('name', event.target.value)}
-            required
-          />
-          <input
-            placeholder="IP Address"
-            value={form.ipAddress}
-            onChange={(event) => handleChange('ipAddress', event.target.value)}
-            required
-          />
-          <input
-            type="number"
-            placeholder="Port"
-            value={form.port}
-            onChange={(event) => handleChange('port', event.target.value)}
-            required
-          />
-          <input
-            placeholder="Location"
-            value={form.location}
-            onChange={(event) => handleChange('location', event.target.value)}
-          />
-          <select value={form.deviceType} onChange={(event) => handleChange('deviceType', event.target.value)}>
-            <option value="1">AccessController</option>
-            <option value="2">Intercom</option>
-            <option value="3">AttendanceTerminal</option>
-          </select>
-          <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Сохранение...' : 'Добавить'}
-          </button>
-        </form>
-      </section>
-
-      <section className="card">
-        <div className="topbar">
-          <div>
-            <h2>Поиск устройств в LAN</h2>
-            <p className="muted">Сканирование подсети через backend + SDK</p>
-          </div>
-          <button onClick={handleDiscoverDevices} disabled={isDiscovering}>
-            {isDiscovering ? 'Сканирование...' : 'Сканировать LAN'}
-          </button>
-        </div>
-
-        <div className="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Identifier</th>
-                <th>IP</th>
-                <th>Model</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {discoveredDevices.length === 0 ? (
-                <tr>
-                  <td colSpan={5}>Нажмите "Сканировать LAN", чтобы получить список устройств</td>
-                </tr>
-              ) : (
-                discoveredDevices.map((device) => {
-                  const inRegistry = devices.some(
-                    (existing) =>
-                      existing.deviceIdentifier === device.deviceIdentifier ||
-                      (existing.ipAddress === device.ipAddress && existing.port === device.port),
-                  )
-                  const rowKey = `${device.ipAddress}:${device.port}`
-
-                  return (
-                    <tr key={rowKey}>
-                      <td>{device.name}</td>
-                      <td>{device.deviceIdentifier}</td>
-                      <td>
-                        {device.ipAddress}:{device.port}
-                      </td>
-                      <td>{device.model ?? '-'}</td>
-                      <td className="actions-cell">
-                        <button onClick={() => handleFillFormFromDiscovered(device)} disabled={isAddingDiscovered === rowKey}>
-                          В форму
-                        </button>
-                        <button
-                          onClick={() => handleAddDiscovered(device)}
-                          disabled={inRegistry || isAddingDiscovered === rowKey}
-                        >
-                          {inRegistry ? 'Уже добавлено' : isAddingDiscovered === rowKey ? 'Добавление...' : 'Добавить'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Таблица устройств</h2>
-        {isLoading ? (
-          <div className="page-message">Загрузка...</div>
-        ) : (
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Identifier</th>
-                  <th>IP</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>LastSeen</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedDevices.map((device) => (
-                  <tr key={device.id}>
-                    <td>{device.name}</td>
-                    <td>{device.deviceIdentifier}</td>
-                    <td>
-                      {device.ipAddress}:{device.port}
-                    </td>
-                    <td>{device.deviceType}</td>
-                    <td>
-                      <span className={`status-pill ${device.status === 'Online' ? 'online' : 'offline'}`}>
-                        {device.status}
-                      </span>
-                    </td>
-                    <td>{device.lastSeenUtc ? new Date(device.lastSeenUtc).toLocaleString() : '-'}</td>
-                    <td className="actions-cell">
-                      <button onClick={() => handleToggleConnection(device)}>
-                        {device.status === 'Online' ? 'Отключить' : 'Подключить'}
-                      </button>
-                      <button className="danger" onClick={() => handleDeleteDevice(device.id)}>
-                        Удалить
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <h2>Последние события</h2>
-        <div className="events-list">
-          {events.length === 0 ? (
-            <div className="page-message">Событий пока нет</div>
-          ) : (
-            events.map((eventItem, index) => (
-              <div className="event-row" key={`${eventItem.deviceIdentifier}-${eventItem.occurredUtc}-${index}`}>
-                <strong>{eventItem.eventType}</strong>
-                <span>{eventItem.deviceIdentifier}</span>
-                <span>{new Date(eventItem.occurredUtc).toLocaleString()}</span>
-              </div>
-            ))
+        {/* Desktop Title & Subnav */}
+        <div className="hidden md:block mb-8">
+          <h3 className="text-2xl font-bold">Devices Dashboard</h3>
+          <p className="text-muted mt-1">Manage and monitor your enterprise access control hardware fleet.</p>
+          {error && (
+            <div className="mt-4 p-4 bg-rose-50 text-rose-500 rounded-xl text-xs font-bold border border-rose-100 max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {error}
+            </div>
+          )}
+          {info && (
+            <div className="mt-4 p-4 bg-blue-50 text-blue-500 rounded-xl text-xs font-bold border border-blue-100 max-h-40 overflow-y-auto">
+              {info}
+            </div>
           )}
         </div>
-      </section>
-    </div>
+
+        {/* Tabs (Responsive Style) */}
+        <div className="flex border-b border-gray-100 mb-6 md:mb-8 overflow-x-auto no-scrollbar gap-6 md:gap-8">
+          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold border-b-2 border-primary text-primary whitespace-nowrap">
+            ALL DEVICES
+          </a>
+          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
+            CONTROLLERS
+          </a>
+          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
+            READERS
+          </a>
+          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
+            CAMERAS
+          </a>
+          {/* Mobile only 'Add Device' tab mimic */}
+          <a href="#" className="md:hidden pb-2.5 text-xs font-bold text-muted whitespace-nowrap" onClick={(e) => { e.preventDefault(); handleDiscover(); }}>
+            {isDiscovering ? 'Scanning...' : 'Add Device'}
+          </a>
+        </div>
+
+        {/* Stats Grid (Mobile version at top) */}
+        <div className="md:hidden grid grid-cols-2 gap-4 mb-8 bg-[#f9fafb] p-6 rounded-2xl border border-gray-100">
+          <div>
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">TOTAL DEVICES</p>
+            <p className="text-3xl font-bold mt-1">{devices.length}</p>
+            <p className="text-[10px] font-bold text-green-500 mt-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[10px]">trending_up</span> Stable
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">ONLINE</p>
+            <p className="text-3xl font-bold mt-1 text-green-500 font-mono">{onlineCount}</p>
+            <p className="text-[10px] font-bold text-muted mt-1">Active</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">OFFLINE</p>
+            <p className="text-3xl font-bold mt-1 text-rose-500 font-mono">{devices.length - onlineCount}</p>
+            <p className="text-[10px] font-bold text-muted mt-1">Requires Action</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">LAST ACTIVITY</p>
+            <p className="text-3xl font-bold mt-1">Just now</p>
+            <p className="text-[10px] font-bold text-muted mt-1">System sync</p>
+          </div>
+        </div>
+
+        {/* Devices List/Table */}
+        <div className="space-y-4 md:space-y-0">
+          {/* Mobile View Controls */}
+          <div className="md:hidden flex items-center justify-between mb-2">
+            <h4 className="text-sm font-bold text-dark uppercase tracking-wider">DEVICE DETAILS</h4>
+            <div className="flex items-center gap-4">
+              <span className="material-symbols-outlined text-muted text-xl">search</span>
+              <span className="material-symbols-outlined text-muted text-xl">filter_list</span>
+            </div>
+          </div>
+
+          {/* Table (Desktop) / Cards (Mobile) */}
+          <div className="bg-white md:border border-gray-200 rounded-2xl md:overflow-hidden">
+            {/* Desktop Table Header */}
+            <div className="hidden md:grid grid-cols-6 px-6 py-4 bg-gray-50 border-b border-gray-100 text-[10px] font-extrabold text-muted tracking-widest uppercase">
+              <div className="col-span-2">NAME</div>
+              <div>MODEL</div>
+              <div>IP ADDRESS</div>
+              <div>STATUS</div>
+              <div>UPTIME</div>
+              <div className="text-right">ACTIONS</div>
+            </div>
+
+            {/* Rows / Cards */}
+            <div className="divide-y divide-gray-100">
+              {isLoading ? (
+                <div className="p-8 text-center text-muted">Loading devices...</div>
+              ) : devices.length === 0 ? (
+                <div className="p-8 text-center text-muted italic">No devices found.</div>
+              ) : (
+                devices.map((device) => (
+                  <div key={device.id} className="md:grid grid-cols-6 items-center px-4 py-4 md:px-6 md:py-5 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 hover:bg-gray-50/50 transition-colors">
+                    <div className="col-span-2 flex items-center gap-4">
+                      <div className="w-12 h-12 md:w-10 md:h-10 bg-gray-50 rounded-full md:rounded-lg flex items-center justify-center text-primary">
+                        <span className="material-symbols-outlined !fill-1">{device.deviceType === '1' ? 'hub' : 'videocam'}</span>
+                      </div>
+                      <div>
+                        <p className="text-[15px] md:text-[13px] font-bold">{device.name}</p>
+                        <p className="md:hidden text-[10px] font-bold text-muted mt-0.5 tracking-tight">
+                          {device.deviceIdentifier} • LOCATION
+                        </p>
+                      </div>
+                      <div className="md:hidden ml-auto">
+                        <div className="flex flex-col items-end">
+                          {device.status === 'Online' ? (
+                            <>
+                              <span className="text-[13px] font-bold text-primary">Active</span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="w-10 h-1 bg-primary rounded-full"></div>
+                                <span className="text-[10px] font-extrabold text-green-500 tracking-tighter">ONLINE</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[13px] font-bold text-rose-500">Offline</span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <div className="w-10 h-1 bg-rose-500 rounded-full"></div>
+                                <span className="text-[10px] font-extrabold text-rose-500 tracking-tighter uppercase">FLAGGED</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="hidden md:block text-[13px] font-medium text-dark">{device.deviceType === '1' ? 'UA-Hub' : 'G5-Camera'}</div>
+                    <div className="hidden md:block text-[13px] font-medium text-muted">{device.ipAddress}</div>
+                    <div className="hidden md:block">
+                      <span className={`px-2 py-0.5 ${device.status === 'Online' ? 'bg-green-50 text-green-600' : 'bg-rose-50 text-rose-500'} text-[10px] font-bold rounded tracking-tighter uppercase`}>
+                        {device.status}
+                      </span>
+                    </div>
+                    <div className="hidden md:block text-[13px] font-medium text-dark">{device.status === 'Online' ? 'Active' : '0s'}</div>
+                    <div className="hidden md:flex justify-end gap-3 text-[11px] font-bold text-primary cursor-pointer hover:underline uppercase tracking-tighter" onClick={() => handleToggleConnection(device)}>
+                      {device.status === 'Online' ? 'DISCONNECT' : 'RECONNECT'}
+                    </div>
+                    {/* Mobile row chevron */}
+                    <div className="md:hidden absolute right-8 top-1/2 -translate-y-1/2" onClick={() => handleToggleConnection(device)}>
+                      <span className="material-symbols-outlined text-muted text-lg">chevron_right</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Table Pagination (Desktop) */}
+            <div className="hidden md:flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/30">
+              <p className="text-[11px] font-bold text-muted uppercase tracking-widest">SHOWING {devices.length} DEVICES</p>
+              <div className="flex gap-1.5">
+                <button className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary hover:text-primary transition-colors">
+                  <span className="material-symbols-outlined text-base">chevron_left</span>
+                </button>
+                <button className="w-7 h-7 flex items-center justify-center bg-primary text-white rounded text-[10px] font-bold">1</button>
+                <button className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary hover:text-primary transition-colors">
+                  <span className="material-symbols-outlined text-base">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Stats (Desktop Only) */}
+        <div className="hidden md:grid grid-cols-3 gap-6 mt-8">
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">SYSTEM LOAD</p>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-3xl font-bold">12%</p>
+              <div className="w-2 h-2 rounded-full bg-blue-100"></div>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">DEVICES HEALTHY</p>
+            <div className="flex items-center gap-3 mt-2">
+              <p className="text-3xl font-bold">{onlineCount} / {devices.length || 1}</p>
+              <span className="text-xs font-bold text-green-500">
+                {devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0}%
+              </span>
+            </div>
+          </div>
+          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">LAST SYNC</p>
+            <p className="text-3xl font-bold mt-2">Just now</p>
+          </div>
+        </div>
+      </div>
+    </AppLayout>
   )
 }

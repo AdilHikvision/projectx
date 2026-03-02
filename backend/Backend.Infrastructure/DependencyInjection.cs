@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace Backend.Infrastructure;
@@ -60,7 +61,13 @@ public static class DependencyInjection
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
         services.AddScoped<ISystemStatusService, SystemStatusService>();
-        services.AddSingleton<IServiceControlManager, WindowsServiceControlManager>();
+        services.AddSingleton<IServiceControlManager>(provider =>
+        {
+            var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();
+            return OperatingSystem.IsWindows()
+                ? new WindowsServiceControlManager(monitorOptions)
+                : new UnsupportedServiceControlManager(monitorOptions);
+        });
 
         return services;
     }

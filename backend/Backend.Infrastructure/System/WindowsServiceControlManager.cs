@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Options;
+using System.Runtime.Versioning;
 using System.ServiceProcess;
 
 namespace Backend.Infrastructure.System;
 
+[SupportedOSPlatform("windows")]
 public sealed class WindowsServiceControlManager(IOptions<SystemMonitorOptions> options) : IServiceControlManager
 {
     private readonly string _serviceName = string.IsNullOrWhiteSpace(options.Value.ServiceName)
