@@ -2,6 +2,7 @@ import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signal
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
+import { Card, Badge, Button, Avatar, PageHeader } from '../components/ui'
 import { apiRequest, getApiBaseUrl } from '../lib/api'
 
 type DeviceStatus = 'Online' | 'Offline'
@@ -149,189 +150,171 @@ export function DevicesPage() {
     <AppLayout>
       <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
 
-        {/* Desktop Title & Subnav */}
-        <div className="hidden md:block mb-8">
-          <h3 className="text-2xl font-bold">Devices Dashboard</h3>
-          <p className="text-muted mt-1">Manage and monitor your enterprise access control hardware fleet.</p>
-          {error && (
-            <div className="mt-4 p-4 bg-rose-50 text-rose-500 rounded-xl text-xs font-bold border border-rose-100 max-h-40 overflow-y-auto whitespace-pre-wrap">
-              {error}
-            </div>
-          )}
-          {info && (
-            <div className="mt-4 p-4 bg-blue-50 text-blue-500 rounded-xl text-xs font-bold border border-blue-100 max-h-40 overflow-y-auto">
-              {info}
-            </div>
-          )}
-        </div>
+        {/* Unified Page Header */}
+        <PageHeader
+          title="Devices Dashboard"
+          description="Manage and monitor your enterprise access control hardware fleet."
+          actions={
+            <>
+              <Button variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>Refresh</Button>
+              <Button size="sm" icon="add" onClick={handleDiscover} isLoading={isDiscovering}>
+                {isDiscovering ? 'Scanning...' : 'Add Device'}
+              </Button>
+            </>
+          }
+        />
+
+        {error && (
+          <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10 max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {error}
+          </div>
+        )}
+        {info && (
+          <div className="p-4 bg-primary/5 text-primary rounded-xl text-xs font-bold border border-primary/20 max-h-40 overflow-y-auto">
+            {info}
+          </div>
+        )}
 
         {/* Tabs (Responsive Style) */}
-        <div className="flex border-b border-gray-100 mb-6 md:mb-8 overflow-x-auto no-scrollbar gap-6 md:gap-8">
-          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold border-b-2 border-primary text-primary whitespace-nowrap">
-            ALL DEVICES
-          </a>
-          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
-            CONTROLLERS
-          </a>
-          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
-            READERS
-          </a>
-          <a href="#" className="pb-2.5 text-xs md:text-[12px] font-bold text-muted hover:text-dark border-b-2 border-transparent transition-colors whitespace-nowrap">
-            CAMERAS
-          </a>
-          {/* Mobile only 'Add Device' tab mimic */}
-          <a href="#" className="md:hidden pb-2.5 text-xs font-bold text-muted whitespace-nowrap" onClick={(e) => { e.preventDefault(); handleDiscover(); }}>
-            {isDiscovering ? 'Scanning...' : 'Add Device'}
-          </a>
+        <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
+          <button className="pb-2.5 text-xs font-black border-b-2 border-primary text-primary whitespace-nowrap uppercase tracking-widest">
+            All Devices
+          </button>
+          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
+            Controllers
+          </button>
+          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
+            Readers
+          </button>
+          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
+            Cameras
+          </button>
         </div>
 
-        {/* Stats Grid (Mobile version at top) */}
-        <div className="md:hidden grid grid-cols-2 gap-4 mb-8 bg-[#f9fafb] p-6 rounded-2xl border border-gray-100">
-          <div>
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">TOTAL DEVICES</p>
-            <p className="text-3xl font-bold mt-1">{devices.length}</p>
-            <p className="text-[10px] font-bold text-green-500 mt-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[10px]">trending_up</span> Stable
-            </p>
-          </div>
-          <div>
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">ONLINE</p>
-            <p className="text-3xl font-bold mt-1 text-green-500 font-mono">{onlineCount}</p>
-            <p className="text-[10px] font-bold text-muted mt-1">Active</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">OFFLINE</p>
-            <p className="text-3xl font-bold mt-1 text-rose-500 font-mono">{devices.length - onlineCount}</p>
-            <p className="text-[10px] font-bold text-muted mt-1">Requires Action</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">LAST ACTIVITY</p>
-            <p className="text-3xl font-bold mt-1">Just now</p>
-            <p className="text-[10px] font-bold text-muted mt-1">System sync</p>
-          </div>
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Total Fleet</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-3xl font-black text-text-dark">{devices.length}</p>
+              <span className="text-xs font-bold text-success-text flex items-center gap-0.5">
+                <span className="material-symbols-outlined text-[12px]">check_circle</span> stable
+              </span>
+            </div>
+          </Card>
+          <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Operational</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-3xl font-black text-success-text">{onlineCount}</p>
+              <span className="text-xs font-bold text-text-muted">Active Node</span>
+            </div>
+          </Card>
+          <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Fault Events</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-3xl font-black text-error-text">{devices.length - onlineCount}</p>
+              <span className="text-xs font-bold text-text-muted">Requires Sync</span>
+            </div>
+          </Card>
+          <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Status Sync</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-3xl font-black text-text-dark">99.8<span className="text-sm">%</span></p>
+              <span className="text-xs font-bold text-text-muted">Uptime Score</span>
+            </div>
+          </Card>
         </div>
 
         {/* Devices List/Table */}
-        <div className="space-y-4 md:space-y-0">
-          {/* Mobile View Controls */}
-          <div className="md:hidden flex items-center justify-between mb-2">
-            <h4 className="text-sm font-bold text-dark uppercase tracking-wider">DEVICE DETAILS</h4>
-            <div className="flex items-center gap-4">
-              <span className="material-symbols-outlined text-muted text-xl">search</span>
-              <span className="material-symbols-outlined text-muted text-xl">filter_list</span>
-            </div>
+        <Card noPadding className="overflow-hidden">
+          <div className="hidden md:grid grid-cols-6 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
+            <div className="col-span-2">Identity & Label</div>
+            <div>Hardware Profile</div>
+            <div>Network Node</div>
+            <div>Operational State</div>
+            <div className="text-right">Controls</div>
           </div>
 
-          {/* Table (Desktop) / Cards (Mobile) */}
-          <div className="bg-white md:border border-gray-200 rounded-2xl md:overflow-hidden">
-            {/* Desktop Table Header */}
-            <div className="hidden md:grid grid-cols-6 px-6 py-4 bg-gray-50 border-b border-gray-100 text-[10px] font-extrabold text-muted tracking-widest uppercase">
-              <div className="col-span-2">NAME</div>
-              <div>MODEL</div>
-              <div>IP ADDRESS</div>
-              <div>STATUS</div>
-              <div>UPTIME</div>
-              <div className="text-right">ACTIONS</div>
-            </div>
-
-            {/* Rows / Cards */}
-            <div className="divide-y divide-gray-100">
-              {isLoading ? (
-                <div className="p-8 text-center text-muted">Loading devices...</div>
-              ) : devices.length === 0 ? (
-                <div className="p-8 text-center text-muted italic">No devices found.</div>
-              ) : (
-                devices.map((device) => (
-                  <div key={device.id} className="md:grid grid-cols-6 items-center px-4 py-4 md:px-6 md:py-5 border border-gray-100 md:border-none rounded-2xl md:rounded-none mb-4 md:mb-0 hover:bg-gray-50/50 transition-colors">
-                    <div className="col-span-2 flex items-center gap-4">
-                      <div className="w-12 h-12 md:w-10 md:h-10 bg-gray-50 rounded-full md:rounded-lg flex items-center justify-center text-primary">
-                        <span className="material-symbols-outlined !fill-1">{device.deviceType === '1' ? 'hub' : 'videocam'}</span>
-                      </div>
-                      <div>
-                        <p className="text-[15px] md:text-[13px] font-bold">{device.name}</p>
-                        <p className="md:hidden text-[10px] font-bold text-muted mt-0.5 tracking-tight">
-                          {device.deviceIdentifier} • LOCATION
-                        </p>
-                      </div>
-                      <div className="md:hidden ml-auto">
-                        <div className="flex flex-col items-end">
-                          {device.status === 'Online' ? (
-                            <>
-                              <span className="text-[13px] font-bold text-primary">Active</span>
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className="w-10 h-1 bg-primary rounded-full"></div>
-                                <span className="text-[10px] font-extrabold text-green-500 tracking-tighter">ONLINE</span>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-[13px] font-bold text-rose-500">Offline</span>
-                              <div className="flex items-center gap-2 mt-1">
-                                <div className="w-10 h-1 bg-rose-500 rounded-full"></div>
-                                <span className="text-[10px] font-extrabold text-rose-500 tracking-tighter uppercase">FLAGGED</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="hidden md:block text-[13px] font-medium text-dark">{device.deviceType === '1' ? 'UA-Hub' : 'G5-Camera'}</div>
-                    <div className="hidden md:block text-[13px] font-medium text-muted">{device.ipAddress}</div>
-                    <div className="hidden md:block">
-                      <span className={`px-2 py-0.5 ${device.status === 'Online' ? 'bg-green-50 text-green-600' : 'bg-rose-50 text-rose-500'} text-[10px] font-bold rounded tracking-tighter uppercase`}>
-                        {device.status}
-                      </span>
-                    </div>
-                    <div className="hidden md:block text-[13px] font-medium text-dark">{device.status === 'Online' ? 'Active' : '0s'}</div>
-                    <div className="hidden md:flex justify-end gap-3 text-[11px] font-bold text-primary cursor-pointer hover:underline uppercase tracking-tighter" onClick={() => handleToggleConnection(device)}>
-                      {device.status === 'Online' ? 'DISCONNECT' : 'RECONNECT'}
-                    </div>
-                    {/* Mobile row chevron */}
-                    <div className="md:hidden absolute right-8 top-1/2 -translate-y-1/2" onClick={() => handleToggleConnection(device)}>
-                      <span className="material-symbols-outlined text-muted text-lg">chevron_right</span>
+          <div className="divide-y divide-border-light">
+            {isLoading ? (
+              <div className="p-12 text-center">
+                <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
+                <p className="mt-4 text-xs font-bold text-text-muted uppercase tracking-widest">Querying device manifest...</p>
+              </div>
+            ) : devices.length === 0 ? (
+              <div className="p-12 text-center text-text-muted italic text-sm">No hardware nodes registered. Run discovery to populate fleet.</div>
+            ) : (
+              devices.map((device) => (
+                <div key={device.id} className="flex flex-col md:grid grid-cols-6 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group">
+                  <div className="col-span-2 flex items-center gap-4">
+                    <Avatar icon={device.deviceType === '1' ? 'hub' : 'videocam'} variant="primary" size="lg" className="!rounded-xl shadow-sm" />
+                    <div>
+                      <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">{device.name}</p>
+                      <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight uppercase">
+                        {device.deviceIdentifier} • {device.location || 'SECURE ZONE'}
+                      </p>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
+                  <div className="hidden md:block text-sm font-bold text-text-dark">{device.deviceType === '1' ? 'UA-Hub Gen2' : 'G5-Enterprise'}</div>
+                  <div className="hidden md:block">
+                    <code className="text-xs bg-slate-75 text-text-muted px-2 py-0.5 rounded font-bold border border-border-base">{device.ipAddress}</code>
+                  </div>
+                  <div className="flex items-center gap-6 md:block">
+                    <Badge dot variant={device.status === 'Online' ? 'success' : 'error'}>
+                      {device.status}
+                    </Badge>
+                    <span className="md:hidden text-xs font-bold text-text-muted uppercase tracking-widest">{device.status === 'Online' ? 'Active 12d' : 'Offline'}</span>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-4 md:mt-0">
+                    <Button variant="outline" size="sm" className="font-black text-[10px] tracking-widest" onClick={() => handleToggleConnection(device)}>
+                      {device.status === 'Online' ? 'DROP' : 'START'}
+                    </Button>
+                    <Button variant="ghost" size="icon" icon="settings" className="text-text-muted hover:text-text-dark" />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
 
-            {/* Table Pagination (Desktop) */}
-            <div className="hidden md:flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/30">
-              <p className="text-[11px] font-bold text-muted uppercase tracking-widest">SHOWING {devices.length} DEVICES</p>
-              <div className="flex gap-1.5">
-                <button className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary hover:text-primary transition-colors">
-                  <span className="material-symbols-outlined text-base">chevron_left</span>
-                </button>
-                <button className="w-7 h-7 flex items-center justify-center bg-primary text-white rounded text-[10px] font-bold">1</button>
-                <button className="w-7 h-7 flex items-center justify-center border border-gray-200 rounded text-muted hover:border-primary hover:text-primary transition-colors">
-                  <span className="material-symbols-outlined text-base">chevron_right</span>
-                </button>
+          <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
+            <p className="text-xs font-black text-text-muted uppercase tracking-widest">Sync cycle active • {devices.length} nodes indexed</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" icon="chevron_left" className="h-7 w-7 p-0" />
+              <Button variant="outline" size="sm" icon="chevron_right" className="h-7 w-7 p-0" />
+            </div>
+          </div>
+        </Card>
+
+        {/* Bottom Metrics (Desktop) */}
+        <div className="hidden lg:grid grid-cols-3 gap-8 mt-4 pt-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary/10 rounded-xl text-primary">
+              <span className="material-symbols-outlined text-2xl">sensors</span>
+            </div>
+            <div>
+              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Controller Load</p>
+              <div className="w-32 h-1.5 bg-slate-75 rounded-full mt-1 overflow-hidden">
+                <div className="h-full bg-primary" style={{ width: '45%' }}></div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Bottom Stats (Desktop Only) */}
-        <div className="hidden md:grid grid-cols-3 gap-6 mt-8">
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">SYSTEM LOAD</p>
-            <div className="flex items-center gap-3 mt-2">
-              <p className="text-3xl font-bold">12%</p>
-              <div className="w-2 h-2 rounded-full bg-blue-100"></div>
+          <div className="flex items-center gap-4 border-x border-border-base px-8">
+            <div className="p-3 bg-success-bg rounded-xl text-success-text">
+              <span className="material-symbols-outlined text-2xl">verified</span>
+            </div>
+            <div>
+              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Credential Auth</p>
+              <p className="text-sm font-bold text-success-text">99.9% Success Rate</p>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">DEVICES HEALTHY</p>
-            <div className="flex items-center gap-3 mt-2">
-              <p className="text-3xl font-bold">{onlineCount} / {devices.length || 1}</p>
-              <span className="text-xs font-bold text-green-500">
-                {devices.length > 0 ? Math.round((onlineCount / devices.length) * 100) : 0}%
-              </span>
+          <div className="flex items-center gap-4 justify-end">
+            <div className="text-right">
+              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Audit Log Status</p>
+              <p className="text-sm font-bold text-text-muted">Writing to DB Node 4...</p>
             </div>
-          </div>
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-            <p className="text-[10px] font-extrabold text-muted tracking-widest uppercase">LAST SYNC</p>
-            <p className="text-3xl font-bold mt-2">Just now</p>
+            <div className="p-3 bg-slate-75 rounded-xl text-text-muted">
+              <span className="material-symbols-outlined text-2xl">history</span>
+            </div>
           </div>
         </div>
       </div>

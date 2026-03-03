@@ -18,4 +18,17 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5154',
+        changeOrigin: true,
+      },
+      '/hubs': {
+        target: 'http://localhost:5154',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
 })

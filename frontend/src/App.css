@@ -135,36 +135,10 @@
 
 .device-form {
   display: grid;
-  gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
-input,
-select,
-button {
-  border-radius: 10px;
-  border: 1px solid #4b3a71;
-  background: #201832;
-  color: #f0eaff;
-  padding: 10px 12px;
-  font: inherit;
-}
-
-button {
-  cursor: pointer;
-  background: #362556;
-  font-weight: 600;
-}
-
-button:hover {
-  border-color: #8e77bc;
-  background: #453169;
-}
-
-button:disabled {
-  opacity: 0.65;
-  cursor: default;
-}
+/* Global overrides moved to index.css to avoid @apply issues */
 
 .danger {
   border-color: #8d3b52;

@@ -144,40 +144,49 @@ app.MapPost("/api/auth/register", async (
 app.MapPost("/api/auth/login", async (
     LoginRequest request,
     UserManager<ApplicationUser> userManager,
-    IJwtTokenService tokenService) =>
+    IJwtTokenService tokenService,
+    ILogger<Program> logger) =>
 {
-    var user = await userManager.FindByEmailAsync(request.Email);
-    if (user is null)
+    try
     {
-        return Results.Unauthorized();
-    }
-
-    var passwordValid = await userManager.CheckPasswordAsync(user, request.Password);
-    if (!passwordValid)
-    {
-        return Results.Unauthorized();
-    }
-
-    var roles = await userManager.GetRolesAsync(user);
-    var token = tokenService.CreateToken(
-        user.Id,
-        user.UserName ?? user.Email ?? user.Id.ToString(),
-        user.Email ?? string.Empty,
-        roles.ToArray());
-
-    return Results.Ok(new
-    {
-        accessToken = token,
-        expiresInMinutes = jwtOptions.ExpirationMinutes,
-        user = new
+        var user = await userManager.FindByEmailAsync(request.Email);
+        if (user is null)
         {
-            id = user.Id,
-            email = user.Email,
-            firstName = user.FirstName,
-            lastName = user.LastName,
-            roles
+            return Results.Unauthorized();
         }
-    });
+
+        var passwordValid = await userManager.CheckPasswordAsync(user, request.Password);
+        if (!passwordValid)
+        {
+            return Results.Unauthorized();
+        }
+
+        var roles = await userManager.GetRolesAsync(user);
+        var token = tokenService.CreateToken(
+            user.Id,
+            user.UserName ?? user.Email ?? user.Id.ToString(),
+            user.Email ?? string.Empty,
+            roles.ToArray());
+
+        return Results.Ok(new
+        {
+            accessToken = token,
+            expiresInMinutes = jwtOptions.ExpirationMinutes,
+            user = new
+            {
+                id = user.Id,
+                email = user.Email,
+                firstName = user.FirstName,
+                lastName = user.LastName,
+                roles
+            }
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Login failed for {Email}", request.Email);
+        return Results.Json(new { error = "Authentication service error. Check server logs." }, statusCode: 500);
+    }
 }).AllowAnonymous();
 
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) =>

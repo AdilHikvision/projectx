@@ -2,16 +2,47 @@
 
 @theme {
   --color-primary: #aa9ad4;
+  --color-primary-dark: #9684c3;
   --color-primary-light: #a797d7;
+
   --color-background-light: #f7f6f7;
   --color-background-dark: #17151d;
-  --color-slate-75: #f1f4f9;
-  --color-dark: #111827;
-  --color-muted: #6b7280;
+  --color-surface: #ffffff;
+
+  --color-border-base: #eceff3;
   --color-border-light: #f3f4f6;
+
+  --color-slate-75: #f1f4f8;
+
+  --color-text-dark: #111827;
+  --color-text-base: #374151;
+  --color-text-muted: #6b7280;
+  --color-text-light: #9ca3af;
+
+  --color-success-bg: #ecfdf5;
+  --color-success-text: #059669;
+  --color-warning-bg: #fffbe9;
+  --color-warning-text: #d97706;
+  --color-error-bg: #fef2f2;
+  --color-error-text: #dc2626;
+
+  --color-avatar-bg: #f9dfc5;
+  --color-avatar-text: #b57321;
+  --color-avatar-border: #f0d5ba;
 
   --font-sans: "Inter", sans-serif;
   --font-display: "Inter", sans-serif;
+
+  /* Fluid Typography System */
+  --text-xs: clamp(0.7rem, 0.05vw + 0.68rem, 0.75rem);
+  --text-sm: clamp(0.8rem, 0.1vw + 0.78rem, 0.875rem);
+  --text-base: clamp(0.9rem, 0.15vw + 0.86rem, 1rem);
+  --text-lg: clamp(1rem, 0.2vw + 0.96rem, 1.125rem);
+  --text-xl: clamp(1.125rem, 0.3vw + 1.06rem, 1.35rem);
+  --text-2xl: clamp(1.35rem, 0.4vw + 1.25rem, 1.65rem);
+  --text-3xl: clamp(1.65rem, 0.6vw + 1.5rem, 2.15rem);
+  --text-4xl: clamp(2.15rem, 0.8vw + 1.9rem, 2.85rem);
+  --text-5xl: clamp(2.85rem, 1.2vw + 2.5rem, 3.85rem);
 }
 
 @custom-variant dark (&:where(.never, .never *));
@@ -21,8 +52,17 @@
   html,
   body,
   #root {
-    @apply min-h-screen bg-background-light font-sans text-dark antialiased;
+    @apply min-h-screen bg-background-light font-sans text-text-dark antialiased;
     font-family: 'Inter', sans-serif !important;
+  }
+
+  input,
+  select {
+    @apply rounded-md border border-border-base bg-slate-75 text-text-base transition-all outline-none focus:ring-2 focus:ring-primary/20;
+  }
+
+  button {
+    @apply transition-all active:scale-[0.98] disabled:opacity-50;
   }
 }
 
