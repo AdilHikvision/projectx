@@ -1,5 +1,16 @@
 # Реализованные фичи (текущее состояние)
 
+## Креденшилы для входа
+
+| Поле | Значение |
+|------|----------|
+| **Email** | `admin@projectx.local` |
+| **Пароль** | `Admin123!Strong` |
+
+Пароль задаётся в `backend/.env` (`SeedAdmin__Password`) или `appsettings.Development.json` (`SeedAdmin:Password`). При первом запуске создаётся seed-пользователь с этими данными.
+
+---
+
 ## 1) Backend (ASP.NET Core Web API)
 
 - JWT-аутентификация:

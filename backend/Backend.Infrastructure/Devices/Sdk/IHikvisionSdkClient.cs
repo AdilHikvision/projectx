@@ -5,7 +5,10 @@ public sealed record SdkDiscoveredDevice(
     string Name,
     string IpAddress,
     int Port,
-    string? Model);
+    string? Model,
+    string? DeviceType,
+    string? MacAddress,
+    string? FirmwareVersion);
 
 public sealed record SdkDeviceEvent(
     string DeviceIdentifier,

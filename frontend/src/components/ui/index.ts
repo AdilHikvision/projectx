@@ -4,3 +4,4 @@ export * from './Badge';
 export * from './Card';
 export * from './Avatar';
 export * from './PageHeader';
+export * from './Modal';

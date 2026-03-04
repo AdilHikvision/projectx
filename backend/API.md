@@ -5,6 +5,20 @@
 - `http://localhost:5154`
 - `https://localhost:7055`
 
+## Устройства — только реальные данные
+
+Все данные об устройствах получаются от реальных Hikvision-устройств в сети. Mock-данные не используются.
+- **Discover** — ISAPI (HTTP `GET /ISAPI/System/deviceInfo`). Не требует SDK. Сканирует подсеть на портах 80, 443, 8000.
+- **Connect/Disconnect** — Hikvision HCNetSDK (NET_DVR_Login_V40, NET_DVR_Logout_V30)
+- **Events** — события от подключённых устройств через SDK
+
+**Важно:** winSDK содержит HPNetSDK (Hikvision Partner Pro), а не HCNetSDK. Для Discover используется ISAPI — он не требует SDK.
+
+**Настройка** в appsettings.json:
+- `Hikvision:Username` — логин устройства (по умолчанию admin)
+- `Hikvision:Password` — пароль устройства (по умолчанию 12345, смените под ваши устройства)
+- `Hikvision:DiscoveryPorts` — порты для поиска (по умолчанию 80,443,8000)
+
 ## Аутентификация
 
 - Используется JWT Bearer токен.
@@ -21,6 +35,21 @@
   - `3` — `AttendanceTerminal`
 - `status` в device API: `Online` или `Offline`.
 - Все даты передаются в UTC (ISO-8601), например: `2026-02-25T12:40:00Z`.
+
+### Структуры ответов API устройств
+
+| Endpoint | Возвращает |
+|----------|------------|
+| `GET /api/devices/discover` | `[{ deviceIdentifier, name, ipAddress, port, model, deviceType, macAddress, firmwareVersion }]` |
+| `GET /api/devices` | `[{ id, deviceIdentifier, name, ipAddress, port, location, deviceType, status, lastSeenUtc }]` |
+| `GET /api/devices/{id}` | Один объект устройства (те же поля) |
+| `POST /api/devices` | Созданное устройство (201) |
+| `PUT /api/devices/{id}` | Обновлённое устройство |
+| `POST /api/devices/{id}/connect` | Устройство с актуальным status |
+| `POST /api/devices/{id}/disconnect` | Устройство с актуальным status |
+| `GET /api/devices/{id}/status` | `{ deviceId, deviceIdentifier, status, lastSeenUtc }` |
+| `GET /api/devices/statuses` | `[{ deviceId, deviceIdentifier, status, lastSeenUtc }]` |
+| `GET /api/devices/events?take=100` | `[{ deviceIdentifier, eventType, occurredUtc, payload }]` |
 
 ### 1) Health Check
 
@@ -144,24 +173,38 @@
 - **Возможные ошибки:**
   - `401` — отсутствует или недействительный токен
 
-### 5) Поиск устройств в LAN
+### 5) Поиск устройств в LAN (Discover)
 
 - **Method:** `GET`
 - **Path:** `/api/devices/discover`
-- **Auth:** требуется JWT Bearer
-- **Response 200:**
+- **Auth:** не требуется (AllowAnonymous)
+- **Описание:** Сканирует локальную подсеть через ISAPI (`GET /ISAPI/System/deviceInfo`). Использует `Hikvision:Username`, `Hikvision:Password`, `Hikvision:DiscoveryPorts` (по умолчанию 80, 443, 8000).
+- **Response 200:** массив найденных устройств (пустой `[]` если ничего не найдено):
 
 ```json
 [
   {
-    "deviceIdentifier": "MOCK-AC-001",
-    "name": "Mock Access Controller #1",
-    "ipAddress": "192.168.1.101",
+    "deviceIdentifier": "DS-K1A802",
+    "name": "Hikvision 192.168.1.50",
+    "ipAddress": "192.168.1.50",
+    "port": 80,
+    "model": "DS-K1A802"
+  },
+  {
+    "deviceIdentifier": "ISAPI-192-168-1-51-8000",
+    "name": "Hikvision 192.168.1.51",
+    "ipAddress": "192.168.1.51",
     "port": 8000,
-    "model": "AC-Controller"
+    "model": null
   }
 ]
 ```
+
+Поля:
+- `deviceIdentifier` — серийный номер из устройства или `ISAPI-{ip}-{port}` если серийник недоступен
+- `name` — имя устройства из XML или `Hikvision {ip}`
+- `ipAddress`, `port` — адрес и порт
+- `model` — модель из `/ISAPI/System/deviceInfo` или `null`
 
 ### 6) CRUD устройств
 
@@ -283,7 +326,7 @@
     "deviceIdentifier": "AC-ENTRANCE-01",
     "eventType": "Heartbeat",
     "occurredUtc": "2026-02-25T12:40:00Z",
-    "payload": "{\"source\":\"mock-sdk\",\"status\":\"alive\"}"
+    "payload": "{\"source\":\"hikvision-sdk\",\"status\":\"connected\"}"
   }
 ]
 ```

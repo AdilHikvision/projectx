@@ -53,8 +53,8 @@ $defaultSdkDir = if ($isLinuxRuntime) {
     Join-Path $repoRoot "winSDK\lib"
 }
 $sdkCandidates += @(
-    (Join-Path $repoRoot "winSDK\lib\HPNetSDK"),
     $defaultSdkDir,
+    (Join-Path $repoRoot "winSDK\lib\HPNetSDK"),
     (Join-Path $repoRoot "linuxSDK\lib")
 )
 

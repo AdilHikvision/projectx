@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { Button, Input } from '../components/ui'
+import { Button, Input, Modal } from '../components/ui'
+import { consumeSessionExpiredFlag } from '../lib/api'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
@@ -9,7 +10,14 @@ export function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [showSessionExpiredDialog, setShowSessionExpiredDialog] = useState(false)
   const { login, isAuthenticated } = useAuth()
+
+  useEffect(() => {
+    if (consumeSessionExpiredFlag()) {
+      setShowSessionExpiredDialog(true)
+    }
+  }, [])
 
   if (isAuthenticated) {
     return <Navigate to="/devices" replace />
@@ -31,6 +39,14 @@ export function LoginPage() {
 
   return (
     <div className="font-sans antialiased text-text-dark bg-background-light min-h-screen flex flex-col">
+      <Modal isOpen={showSessionExpiredDialog} onClose={() => setShowSessionExpiredDialog(false)} title="Сессия истекла">
+        <div className="space-y-4">
+          <p className="text-sm text-text-dark">
+            Срок действия вашей сессии истёк. Пожалуйста, войдите в систему снова.
+          </p>
+          <Button onClick={() => setShowSessionExpiredDialog(false)}>OK</Button>
+        </div>
+      </Modal>
 
       {/* Mobile View (block md:hidden) */}
       <div className="md:hidden flex flex-col min-h-screen">

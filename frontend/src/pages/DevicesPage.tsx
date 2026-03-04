@@ -1,11 +1,24 @@
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
-import { Card, Badge, Button, Avatar, PageHeader } from '../components/ui'
+import { Card, Badge, Button, Avatar, PageHeader, Input, Modal } from '../components/ui'
 import { apiRequest, getApiBaseUrl } from '../lib/api'
 
 type DeviceStatus = 'Online' | 'Offline'
+
+const DEVICE_TYPES = [
+  { value: 'all', label: 'All Devices' },
+  { value: 'AccessController', label: 'Controllers' },
+  { value: 'Intercom', label: 'Intercoms' },
+  { value: 'AttendanceTerminal', label: 'Terminals' },
+] as const
+
+const DEVICE_TYPE_OPTIONS = [
+  { value: 1, label: 'Access Controller' },
+  { value: 2, label: 'Intercom' },
+  { value: 3, label: 'Attendance Terminal' },
+]
 
 interface Device {
   id: string
@@ -32,6 +45,27 @@ interface DiscoveredDevice {
   ipAddress: string
   port: number
   model?: string | null
+  deviceType?: string | null
+  macAddress?: string | null
+  firmwareVersion?: string | null
+}
+
+interface DeviceFormData {
+  deviceIdentifier: string
+  name: string
+  ipAddress: string
+  port: number
+  location: string
+  deviceType: number
+}
+
+const emptyForm: DeviceFormData = {
+  deviceIdentifier: '',
+  name: '',
+  ipAddress: '',
+  port: 8000,
+  location: '',
+  deviceType: 1,
 }
 
 function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
@@ -43,6 +77,45 @@ function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
   }
 }
 
+function getDeviceIcon(deviceType: string): string {
+  if (deviceType === 'AccessController') return 'hub'
+  if (deviceType === 'Intercom') return 'videocam'
+  return 'devices'
+}
+
+function getDeviceTypeLabel(deviceType: string): string {
+  if (deviceType === 'AccessController') return 'Access Controller'
+  if (deviceType === 'Intercom') return 'Intercom'
+  if (deviceType === 'AttendanceTerminal') return 'Attendance Terminal'
+  return deviceType
+}
+
+const DISCOVER_TYPE_TABS = [
+  { value: 'all', label: 'Все' },
+  { value: 'camera', label: 'Камеры' },
+  { value: 'access', label: 'Контроль доступа' },
+  { value: 'intercom', label: 'Интеркомы' },
+  { value: 'nvr', label: 'NVR' },
+  { value: 'switch', label: 'Коммутаторы' },
+  { value: 'other', label: 'Другое' },
+] as const
+
+function inferDeviceTypeFromModel(model: string | null | undefined, serial?: string | null): string {
+  const src = (model || serial || '').toUpperCase()
+  if (!src) return 'other'
+  if (src.startsWith('DS-2CD') || src.startsWith('DS-2DE') || src.startsWith('DS-2PT')) return 'camera'
+  if (src.startsWith('DS-K') || src.startsWith('DS-KD') || src.startsWith('DS-KH')) return 'access'
+  if (src.startsWith('CS-H') || src.startsWith('DS-2TD')) return 'intercom'
+  if (src.startsWith('DS-77') || src.startsWith('IDS-72') || src.startsWith('DS-96') || src.startsWith('IDS-')) return 'nvr'
+  if (src.startsWith('DS-3E')) return 'switch'
+  return 'other'
+}
+
+function getDiscoverTypeLabel(type: string): string {
+  const t = DISCOVER_TYPE_TABS.find((x) => x.value === type)
+  return t?.label ?? type
+}
+
 export function DevicesPage() {
   const { token } = useAuth()
   const [devices, setDevices] = useState<Device[]>([])
@@ -50,6 +123,19 @@ export function DevicesPage() {
   const [isDiscovering, setIsDiscovering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | 'discover' | 'delete' | 'activate' | null>(null)
+  const [editingDevice, setEditingDevice] = useState<Device | null>(null)
+  const [deletingDevice, setDeletingDevice] = useState<Device | null>(null)
+  const [activatingDevice, setActivatingDevice] = useState<(DiscoveredDevice & { inferredType: string; isActive: boolean }) | null>(null)
+  const [activatePassword, setActivatePassword] = useState('')
+  const [activateConfirm, setActivateConfirm] = useState('')
+  const [discovered, setDiscovered] = useState<DiscoveredDevice[]>([])
+  const [discoverTypeTab, setDiscoverTypeTab] = useState<string>('all')
+  const [discoverSortActive, setDiscoverSortActive] = useState<'all' | 'active' | 'inactive'>('all')
+  const [formData, setFormData] = useState<DeviceFormData>(emptyForm)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const loadData = useCallback(async () => {
     if (!token) return
@@ -80,6 +166,13 @@ export function DevicesPage() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    if (modalMode === 'discover') {
+      setDiscoverTypeTab('all')
+      setDiscoverSortActive('all')
+    }
+  }, [modalMode])
 
   useEffect(() => {
     if (!token) return
@@ -116,19 +209,214 @@ export function DevicesPage() {
     }
   }, [token, fetchStatuses])
 
+  const filteredDevices = useMemo(() => {
+    let result = devices
+
+    if (typeFilter !== 'all') {
+      result = result.filter((d) => d.deviceType === typeFilter)
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim()
+      result = result.filter(
+        (d) =>
+          d.name.toLowerCase().includes(q) ||
+          d.deviceIdentifier.toLowerCase().includes(q) ||
+          d.ipAddress.toLowerCase().includes(q) ||
+          (d.location?.toLowerCase().includes(q) ?? false)
+      )
+    }
+
+    return result
+  }, [devices, typeFilter, searchQuery])
+
   async function handleDiscover() {
     if (!token) return
     setIsDiscovering(true)
     setError(null)
     setInfo(null)
     try {
-      const discovered = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token })
-      setInfo(discovered.length > 0 ? `Found ${discovered.length} devices.` : 'No devices found.')
-      if (discovered.length > 0) await loadData()
+      const discoveredList = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token })
+      setDiscovered(discoveredList)
+      setModalMode('discover')
+      setInfo(discoveredList.length > 0 ? `Found ${discoveredList.length} devices.` : 'No devices found.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Discovery failed')
     } finally {
       setIsDiscovering(false)
+    }
+  }
+
+  function openCreateModal() {
+    setFormData(emptyForm)
+    setModalMode('create')
+  }
+
+  function openEditModal(device: Device) {
+    setEditingDevice(device)
+    setFormData({
+      deviceIdentifier: device.deviceIdentifier,
+      name: device.name,
+      ipAddress: device.ipAddress,
+      port: device.port,
+      location: device.location ?? '',
+      deviceType: device.deviceType === 'AccessController' ? 1 : device.deviceType === 'Intercom' ? 2 : 3,
+    })
+    setModalMode('edit')
+  }
+
+  function openDeleteModal(device: Device) {
+    setDeletingDevice(device)
+    setModalMode('delete')
+  }
+
+  function closeModals() {
+    setModalMode(null)
+    setEditingDevice(null)
+    setDeletingDevice(null)
+    setActivatingDevice(null)
+    setActivatePassword('')
+    setActivateConfirm('')
+    setDiscovered([])
+  }
+
+  function closeActivateModal() {
+    setModalMode('discover')
+    setActivatingDevice(null)
+    setActivatePassword('')
+    setActivateConfirm('')
+  }
+
+  function openActivateModal(d: DiscoveredDevice & { inferredType: string; isActive: boolean }) {
+    setActivatingDevice(d)
+    setActivatePassword('')
+    setActivateConfirm('')
+    setModalMode('activate')
+  }
+
+  async function handleCreate() {
+    if (!token) return
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      const created = await apiRequest<Device>('/api/devices', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          deviceIdentifier: formData.deviceIdentifier.trim(),
+          name: formData.name.trim(),
+          ipAddress: formData.ipAddress.trim(),
+          port: formData.port,
+          location: formData.location.trim() || null,
+          deviceType: formData.deviceType,
+        }),
+      })
+      setDevices((prev) => [...prev, created])
+      closeModals()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create device')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleUpdate() {
+    if (!token || !editingDevice) return
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      const updated = await apiRequest<Device>(`/api/devices/${editingDevice.id}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({
+          deviceIdentifier: formData.deviceIdentifier.trim(),
+          name: formData.name.trim(),
+          ipAddress: formData.ipAddress.trim(),
+          port: formData.port,
+          location: formData.location.trim() || null,
+          deviceType: formData.deviceType,
+        }),
+      })
+      setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
+      closeModals()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update device')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!token || !deletingDevice) return
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      await apiRequest(`/api/devices/${deletingDevice.id}`, { method: 'DELETE', token })
+      setDevices((prev) => prev.filter((d) => d.id !== deletingDevice.id))
+      closeModals()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete device')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleActivate() {
+    if (!activatingDevice || !activatingDevice.macAddress) {
+      setError('Для активации требуется MAC-адрес устройства.')
+      return
+    }
+    if (activatePassword !== activateConfirm) {
+      setError('Пароли не совпадают.')
+      return
+    }
+    if (activatePassword.length < 8) {
+      setError('Пароль должен быть не менее 8 символов.')
+      return
+    }
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      await apiRequest('/api/devices/activate', {
+        method: 'POST',
+        token: token ?? undefined,
+        body: JSON.stringify({
+          ipAddress: activatingDevice.ipAddress,
+          port: activatingDevice.port,
+          macAddress: activatingDevice.macAddress,
+          password: activatePassword,
+        }),
+      })
+      setInfo(`Устройство ${activatingDevice.ipAddress} активировано. Запустите Discover снова для обновления.`)
+      closeActivateModal()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка активации')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleAddFromDiscovered(d: DiscoveredDevice) {
+    if (!token) return
+    setError(null)
+    try {
+      const created = await apiRequest<Device>('/api/devices', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          deviceIdentifier: d.deviceIdentifier,
+          name: d.name,
+          ipAddress: d.ipAddress,
+          port: d.port,
+          location: null,
+          deviceType: 1,
+        }),
+      })
+      setDevices((prev) => [...prev, created])
+      setDiscovered((prev) => prev.filter((x) => x.deviceIdentifier !== d.deviceIdentifier))
+      setInfo(`Device "${d.name}" added.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add device')
     }
   }
 
@@ -144,21 +432,27 @@ export function DevicesPage() {
     }
   }
 
-  const onlineCount = devices.filter(d => d.status === 'Online').length
+  const onlineCount = devices.filter((d) => d.status === 'Online').length
+
+  const canCreate = formData.deviceIdentifier.trim() && formData.name.trim() && formData.ipAddress.trim()
+  const canCreateOrUpdate = canCreate && formData.port > 0
 
   return (
     <AppLayout>
       <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
-
-        {/* Unified Page Header */}
         <PageHeader
           title="Devices Dashboard"
           description="Manage and monitor your enterprise access control hardware fleet."
           actions={
             <>
-              <Button variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>Refresh</Button>
-              <Button size="sm" icon="add" onClick={handleDiscover} isLoading={isDiscovering}>
-                {isDiscovering ? 'Scanning...' : 'Add Device'}
+              <Button variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>
+                Refresh
+              </Button>
+              <Button variant="outline" size="sm" icon="add" onClick={openCreateModal}>
+                Add manually
+              </Button>
+              <Button size="sm" icon="search" onClick={handleDiscover} isLoading={isDiscovering}>
+                {isDiscovering ? 'Scanning...' : 'Discover'}
               </Button>
             </>
           }
@@ -175,20 +469,34 @@ export function DevicesPage() {
           </div>
         )}
 
-        {/* Tabs (Responsive Style) */}
+        {/* Search */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <Input
+              placeholder="Search by name, identifier, IP, location..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              icon="search"
+            />
+          </div>
+        </div>
+
+        {/* Type filter tabs */}
         <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
-          <button className="pb-2.5 text-xs font-black border-b-2 border-primary text-primary whitespace-nowrap uppercase tracking-widest">
-            All Devices
-          </button>
-          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
-            Controllers
-          </button>
-          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
-            Readers
-          </button>
-          <button className="pb-2.5 text-xs font-bold text-text-muted hover:text-text-dark border-b-2 border-transparent transition-colors whitespace-nowrap uppercase tracking-widest">
-            Cameras
-          </button>
+          {DEVICE_TYPES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTypeFilter(t.value)}
+              className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${
+                typeFilter === t.value
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-dark'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
         {/* Stats Grid */}
@@ -198,7 +506,7 @@ export function DevicesPage() {
             <div className="flex items-baseline gap-2">
               <p className="text-3xl font-black text-text-dark">{devices.length}</p>
               <span className="text-xs font-bold text-success-text flex items-center gap-0.5">
-                <span className="material-symbols-outlined text-[12px]">check_circle</span> stable
+                <span className="material-symbols-outlined text-[12px]">check_circle</span> registered
               </span>
             </div>
           </Card>
@@ -206,21 +514,21 @@ export function DevicesPage() {
             <p className="text-xs font-black text-text-muted tracking-widest uppercase">Operational</p>
             <div className="flex items-baseline gap-2">
               <p className="text-3xl font-black text-success-text">{onlineCount}</p>
-              <span className="text-xs font-bold text-text-muted">Active Node</span>
+              <span className="text-xs font-bold text-text-muted">Active</span>
             </div>
           </Card>
           <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
-            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Fault Events</p>
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Offline</p>
             <div className="flex items-baseline gap-2">
               <p className="text-3xl font-black text-error-text">{devices.length - onlineCount}</p>
               <span className="text-xs font-bold text-text-muted">Requires Sync</span>
             </div>
           </Card>
           <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
-            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Status Sync</p>
+            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Filtered</p>
             <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-black text-text-dark">99.8<span className="text-sm">%</span></p>
-              <span className="text-xs font-bold text-text-muted">Uptime Score</span>
+              <p className="text-3xl font-black text-text-dark">{filteredDevices.length}</p>
+              <span className="text-xs font-bold text-text-muted">shown</span>
             </div>
           </Card>
         </div>
@@ -229,47 +537,82 @@ export function DevicesPage() {
         <Card noPadding className="overflow-hidden">
           <div className="hidden md:grid grid-cols-6 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
             <div className="col-span-2">Identity & Label</div>
-            <div>Hardware Profile</div>
-            <div>Network Node</div>
-            <div>Operational State</div>
-            <div className="text-right">Controls</div>
+            <div>Type</div>
+            <div>Network</div>
+            <div>Status</div>
+            <div className="text-right">Actions</div>
           </div>
 
           <div className="divide-y divide-border-light">
             {isLoading ? (
               <div className="p-12 text-center">
                 <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
-                <p className="mt-4 text-xs font-bold text-text-muted uppercase tracking-widest">Querying device manifest...</p>
+                <p className="mt-4 text-xs font-bold text-text-muted uppercase tracking-widest">Loading devices...</p>
               </div>
-            ) : devices.length === 0 ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">No hardware nodes registered. Run discovery to populate fleet.</div>
+            ) : filteredDevices.length === 0 ? (
+              <div className="p-12 text-center text-text-muted italic text-sm">
+                {devices.length === 0
+                  ? 'No devices registered. Use Discover or Add manually to add devices.'
+                  : 'No devices match your search or filter.'}
+              </div>
             ) : (
-              devices.map((device) => (
-                <div key={device.id} className="flex flex-col md:grid grid-cols-6 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group">
+              filteredDevices.map((device) => (
+                <div
+                  key={device.id}
+                  className="flex flex-col md:grid grid-cols-6 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group"
+                >
                   <div className="col-span-2 flex items-center gap-4">
-                    <Avatar icon={device.deviceType === '1' ? 'hub' : 'videocam'} variant="primary" size="lg" className="!rounded-xl shadow-sm" />
+                    <Avatar
+                      icon={getDeviceIcon(device.deviceType)}
+                      variant="primary"
+                      size="lg"
+                      className="!rounded-xl shadow-sm"
+                    />
                     <div>
-                      <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">{device.name}</p>
+                      <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">
+                        {device.name}
+                      </p>
                       <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight uppercase">
-                        {device.deviceIdentifier} • {device.location || 'SECURE ZONE'}
+                        {device.deviceIdentifier} • {device.location || '—'}
                       </p>
                     </div>
                   </div>
-                  <div className="hidden md:block text-sm font-bold text-text-dark">{device.deviceType === '1' ? 'UA-Hub Gen2' : 'G5-Enterprise'}</div>
+                  <div className="hidden md:block text-sm font-bold text-text-dark">
+                    {getDeviceTypeLabel(device.deviceType)}
+                  </div>
                   <div className="hidden md:block">
-                    <code className="text-xs bg-slate-75 text-text-muted px-2 py-0.5 rounded font-bold border border-border-base">{device.ipAddress}</code>
+                    <code className="text-xs bg-slate-75 text-text-muted px-2 py-0.5 rounded font-bold border border-border-base">
+                      {device.ipAddress}:{device.port}
+                    </code>
                   </div>
                   <div className="flex items-center gap-6 md:block">
                     <Badge dot variant={device.status === 'Online' ? 'success' : 'error'}>
                       {device.status}
                     </Badge>
-                    <span className="md:hidden text-xs font-bold text-text-muted uppercase tracking-widest">{device.status === 'Online' ? 'Active 12d' : 'Offline'}</span>
                   </div>
                   <div className="flex justify-end gap-2 mt-4 md:mt-0">
-                    <Button variant="outline" size="sm" className="font-black text-[10px] tracking-widest" onClick={() => handleToggleConnection(device)}>
-                      {device.status === 'Online' ? 'DROP' : 'START'}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="font-black text-[10px] tracking-widest"
+                      onClick={() => handleToggleConnection(device)}
+                    >
+                      {device.status === 'Online' ? 'Disconnect' : 'Connect'}
                     </Button>
-                    <Button variant="ghost" size="icon" icon="settings" className="text-text-muted hover:text-text-dark" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      icon="edit"
+                      className="text-text-muted hover:text-text-dark"
+                      onClick={() => openEditModal(device)}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      icon="delete"
+                      className="text-text-muted hover:text-error-text hover:bg-error-bg"
+                      onClick={() => openDeleteModal(device)}
+                    />
                   </div>
                 </div>
               ))
@@ -277,47 +620,300 @@ export function DevicesPage() {
           </div>
 
           <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
-            <p className="text-xs font-black text-text-muted uppercase tracking-widest">Sync cycle active • {devices.length} nodes indexed</p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" icon="chevron_left" className="h-7 w-7 p-0" />
-              <Button variant="outline" size="sm" icon="chevron_right" className="h-7 w-7 p-0" />
-            </div>
+            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
+              {filteredDevices.length} of {devices.length} devices
+            </p>
           </div>
         </Card>
-
-        {/* Bottom Metrics (Desktop) */}
-        <div className="hidden lg:grid grid-cols-3 gap-8 mt-4 pt-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary/10 rounded-xl text-primary">
-              <span className="material-symbols-outlined text-2xl">sensors</span>
-            </div>
-            <div>
-              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Controller Load</p>
-              <div className="w-32 h-1.5 bg-slate-75 rounded-full mt-1 overflow-hidden">
-                <div className="h-full bg-primary" style={{ width: '45%' }}></div>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 border-x border-border-base px-8">
-            <div className="p-3 bg-success-bg rounded-xl text-success-text">
-              <span className="material-symbols-outlined text-2xl">verified</span>
-            </div>
-            <div>
-              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Credential Auth</p>
-              <p className="text-sm font-bold text-success-text">99.9% Success Rate</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 justify-end">
-            <div className="text-right">
-              <p className="text-xs font-black text-text-dark uppercase tracking-wider">Audit Log Status</p>
-              <p className="text-sm font-bold text-text-muted">Writing to DB Node 4...</p>
-            </div>
-            <div className="p-3 bg-slate-75 rounded-xl text-text-muted">
-              <span className="material-symbols-outlined text-2xl">history</span>
-            </div>
-          </div>
-        </div>
       </div>
+
+      {/* Create/Edit Modal */}
+      <Modal
+        isOpen={modalMode === 'create' || modalMode === 'edit'}
+        onClose={closeModals}
+        title={modalMode === 'create' ? 'Add Device' : 'Edit Device'}
+      >
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (modalMode === 'create') handleCreate()
+            else handleUpdate()
+          }}
+        >
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">Device Identifier</label>
+            <Input
+              value={formData.deviceIdentifier}
+              onChange={(e) => setFormData((p) => ({ ...p, deviceIdentifier: e.target.value }))}
+              placeholder="AC-ENTRANCE-01"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">Name</label>
+            <Input
+              value={formData.name}
+              onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+              placeholder="Entrance Controller"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">IP Address</label>
+            <Input
+              value={formData.ipAddress}
+              onChange={(e) => setFormData((p) => ({ ...p, ipAddress: e.target.value }))}
+              placeholder="192.168.1.50"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">Port</label>
+            <Input
+              type="number"
+              value={formData.port}
+              onChange={(e) => setFormData((p) => ({ ...p, port: parseInt(e.target.value, 10) || 8000 }))}
+              min={1}
+              max={65535}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">Location (optional)</label>
+            <Input
+              value={formData.location}
+              onChange={(e) => setFormData((p) => ({ ...p, location: e.target.value }))}
+              placeholder="HQ / Gate A"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">Device Type</label>
+            <select
+              value={formData.deviceType}
+              onChange={(e) => setFormData((p) => ({ ...p, deviceType: parseInt(e.target.value, 10) }))}
+              className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs text-text-base focus:ring-2 focus:ring-primary/20 focus:border-primary/30 outline-none transition-all"
+            >
+              {DEVICE_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2 pt-4">
+            <Button type="submit" disabled={!canCreateOrUpdate || isSubmitting} isLoading={isSubmitting}>
+              {modalMode === 'create' ? 'Create' : 'Save'}
+            </Button>
+            <Button type="button" variant="outline" onClick={closeModals}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Discover Modal */}
+      <Modal isOpen={modalMode === 'discover' || modalMode === 'activate'} onClose={closeModals} title="Discovered Devices" fullScreen>
+        {discovered.length === 0 ? (
+          <p className="text-xs text-text-muted">No devices found on the network.</p>
+        ) : (
+          <div className="flex flex-col min-h-0 flex-1 gap-4">
+            <p className="text-xs text-text-muted">
+              {discovered.length} device(s) found. Click Add to register them.
+            </p>
+
+            {/* Tabs by type */}
+            <div className="flex flex-wrap gap-2 border-b border-border-base pb-2">
+              {DISCOVER_TYPE_TABS.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => setDiscoverTypeTab(t.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${
+                    discoverTypeTab === t.value
+                      ? 'bg-primary text-white'
+                      : 'bg-slate-75 text-text-muted hover:bg-slate-100 hover:text-text-dark'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sort: active / inactive */}
+            <div className="flex gap-2 items-center">
+              <span className="text-xs font-bold text-text-muted uppercase">Сортировка:</span>
+              {(['all', 'active', 'inactive'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setDiscoverSortActive(s)}
+                  className={`px-2 py-1 rounded text-xs font-bold ${
+                    discoverSortActive === s ? 'bg-primary/20 text-primary' : 'text-text-muted hover:text-text-dark'
+                  }`}
+                >
+                  {s === 'all' ? 'Все' : s === 'active' ? 'Активные' : 'Неактивные'}
+                </button>
+              ))}
+              <span className="text-xs text-text-muted ml-2">
+                (Активные = с MAC и прошивкой)
+              </span>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto rounded-xl border border-border-base">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white z-10 shadow-sm">
+                  <tr className="bg-slate-75 border-b border-border-base text-left text-xs font-black text-text-muted tracking-widest uppercase">
+                    <th className="px-4 py-3">Тип</th>
+                    <th className="px-4 py-3">IP Address</th>
+                    <th className="px-4 py-3">MAC Address</th>
+                    <th className="px-4 py-3">Serial Number</th>
+                    <th className="px-4 py-3">Firmware</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discovered
+                    .map((d) => ({
+                      ...d,
+                      inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier),
+                      isActive: !!(d.macAddress && d.firmwareVersion),
+                    }))
+                    .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
+                    .filter((d) =>
+                      discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive
+                    )
+                    .sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1))
+                    .sort((a, b) => a.ipAddress.localeCompare(b.ipAddress))
+                    .map((d) => (
+                      <tr
+                        key={d.ipAddress}
+                        className={`border-b border-border-light last:border-0 hover:bg-slate-75/50 ${
+                          !d.isActive ? 'bg-error-bg/30 border-l-4 border-l-error-text' : ''
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-bold text-text-dark">{getDiscoverTypeLabel(d.inferredType)}</td>
+                        <td className="px-4 py-3">
+                          <code className="text-xs bg-slate-75 px-2 py-0.5 rounded font-bold">{d.ipAddress}:{d.port}</code>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs">{d.macAddress || '—'}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{d.deviceIdentifier}</td>
+                        <td className="px-4 py-3 text-xs">{d.firmwareVersion || '—'}</td>
+                        <td className="px-4 py-3 text-right">
+                          {d.isActive ? (
+                            <Button size="sm" icon="add" onClick={() => handleAddFromDiscovered(d)}>
+                              Add
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              icon="lock_open"
+                              variant="outline"
+                              onClick={() => openActivateModal(d)}
+                              disabled={!d.macAddress}
+                              title={!d.macAddress ? 'Для активации нужен MAC-адрес' : 'Активировать устройство'}
+                            >
+                              Активация
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-between items-center">
+              <p className="text-xs text-text-muted">
+                Показано: {discovered
+                  .map((d) => ({ ...d, inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier), isActive: !!(d.macAddress && d.firmwareVersion) }))
+                  .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
+                  .filter((d) => discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive)
+                  .length} из {discovered.length}
+              </p>
+              <Button variant="outline" onClick={closeModals}>
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Activation Modal */}
+      <Modal isOpen={modalMode === 'activate'} onClose={closeActivateModal} title="Активация устройства">
+        {activatingDevice && (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleActivate()
+            }}
+          >
+            <p className="text-sm text-text-muted">
+              Устройство: <strong>{activatingDevice.ipAddress}:{activatingDevice.port}</strong>
+              {activatingDevice.macAddress && (
+                <span className="block text-xs mt-1">MAC: {activatingDevice.macAddress}</span>
+              )}
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Пароль (мин. 8 символов)</label>
+              <Input
+                type="password"
+                value={activatePassword}
+                onChange={(e) => setActivatePassword(e.target.value)}
+                placeholder="Введите пароль"
+                required
+                minLength={8}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Подтверждение пароля</label>
+              <Input
+                type="password"
+                value={activateConfirm}
+                onChange={(e) => setActivateConfirm(e.target.value)}
+                placeholder="Повторите пароль"
+                required
+                minLength={8}
+              />
+            </div>
+            {activatePassword && activateConfirm && activatePassword !== activateConfirm && (
+              <p className="text-xs font-bold text-error-text">Пароли не совпадают</p>
+            )}
+            <div className="flex gap-2 pt-4">
+              <Button
+                type="submit"
+                disabled={activatePassword.length < 8 || activatePassword !== activateConfirm || isSubmitting}
+                isLoading={isSubmitting}
+                icon="lock_open"
+              >
+                Активировать
+              </Button>
+              <Button type="button" variant="outline" onClick={closeActivateModal} disabled={isSubmitting}>
+                Отмена
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Delete confirmation Modal */}
+      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title="Delete Device">
+        {deletingDevice && (
+          <div className="space-y-4">
+            <p className="text-sm text-text-dark">
+              Are you sure you want to delete <strong>{deletingDevice.name}</strong> ({deletingDevice.deviceIdentifier})?
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="danger" onClick={handleDelete} isLoading={isSubmitting}>
+                Delete
+              </Button>
+              <Button variant="outline" onClick={closeModals} disabled={isSubmitting}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </AppLayout>
   )
 }

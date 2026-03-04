@@ -7,6 +7,24 @@ export interface ApiRequestOptions extends RequestInit {
   token?: string | null
 }
 
+export const SESSION_EXPIRED_KEY = 'projectx.session.expired'
+
+export function dispatchSessionExpired(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('auth:session-expired'))
+  }
+}
+
+export function consumeSessionExpiredFlag(): boolean {
+  if (typeof window === 'undefined') return false
+  const flag = sessionStorage.getItem(SESSION_EXPIRED_KEY)
+  if (flag) {
+    sessionStorage.removeItem(SESSION_EXPIRED_KEY)
+    return true
+  }
+  return false
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { token, headers, ...rest } = options
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -17,6 +35,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       ...(headers ?? {}),
     },
   })
+
+  if (response.status === 401 && !path.includes('/api/auth/login')) {
+    dispatchSessionExpired()
+    throw new Error('Session expired')
+  }
 
   if (!response.ok) {
     const errorText = await response.text()

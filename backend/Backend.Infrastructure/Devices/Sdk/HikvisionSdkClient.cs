@@ -43,14 +43,43 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         _username = configuration["Hikvision:Username"]
             ?? Environment.GetEnvironmentVariable("HIKVISION_SDK_USERNAME")
             ?? "admin";
-        _password = configuration["Hikvision:Password"]
-            ?? Environment.GetEnvironmentVariable("HIKVISION_SDK_PASSWORD")
-            ?? "12345";
+        _password = (configuration["Hikvision:Password"] ?? Environment.GetEnvironmentVariable("HIKVISION_SDK_PASSWORD") ?? "12345").Trim();
+        if (string.IsNullOrEmpty(_password)) _password = "12345";
     }
 
-    public Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default)
     {
-        return ScanLanViaIsapiAsync(cancellationToken);
+        // Запускаем все методы параллельно и объединяем результаты — максимум устройств как в SADP Tool.
+        var merged = new ConcurrentDictionary<string, SdkDiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
+
+        var rawTask = SadpRawDiscovery.TryDiscoverAsync(_logger, cancellationToken);
+        var udpTask = ScanLanViaSadpUdpAsync(cancellationToken);
+        var isapiTask = ScanLanViaIsapiAsync(cancellationToken);
+
+        var rawDevices = await rawTask;
+        var udpDevices = await udpTask;
+        var isapiDevices = await isapiTask;
+
+        foreach (var d in rawDevices.Concat(udpDevices).Concat(isapiDevices))
+        {
+            var key = d.IpAddress;
+            merged.AddOrUpdate(key, d, (_, existing) =>
+                PreferMoreComplete(existing, d));
+        }
+
+        var result = merged.Values.OrderBy(x => x.IpAddress).ToArray();
+        _logger.LogInformation("Discovery: SADP Raw={Raw}, SADP UDP={Udp}, ISAPI={Isapi} → total {Total} device(s)",
+            rawDevices.Count, udpDevices.Count, isapiDevices.Count, result.Length);
+        return result;
+    }
+
+    private static SdkDiscoveredDevice PreferMoreComplete(SdkDiscoveredDevice a, SdkDiscoveredDevice b)
+    {
+        var aScore = (string.IsNullOrEmpty(a.MacAddress) ? 0 : 8) + (string.IsNullOrEmpty(a.FirmwareVersion) ? 0 : 4) +
+                     (a.Port == 8000 ? 2 : a.Port == 80 ? 1 : 0);
+        var bScore = (string.IsNullOrEmpty(b.MacAddress) ? 0 : 8) + (string.IsNullOrEmpty(b.FirmwareVersion) ? 0 : 4) +
+                     (b.Port == 8000 ? 2 : b.Port == 80 ? 1 : 0);
+        return bScore > aScore ? b : a;
     }
 
     public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default)
@@ -175,6 +204,31 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         _disposed = true;
     }
 
+    private Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaSadpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            EnsureSdkReady();
+            var discovered = Native.TrySearchDevicesViaSadp(_logger, cancellationToken);
+            return Task.FromResult(discovered);
+        }
+        catch (DllNotFoundException)
+        {
+            _logger.LogWarning("SADP search: SDK native library not found. Falling back to ISAPI.");
+            return ScanLanViaIsapiAsync(cancellationToken);
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            _logger.LogWarning(ex, "SADP search: NET_DVR_StartSearchDevices_V40 not available. Falling back to ISAPI.");
+            return ScanLanViaIsapiAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SADP search failed. Falling back to ISAPI.");
+            return ScanLanViaIsapiAsync(cancellationToken);
+        }
+    }
+
     private Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaSadpOrFallbackAsync(CancellationToken cancellationToken)
     {
         var discovered = TryScanViaSadp(cancellationToken);
@@ -183,27 +237,32 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
     private async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaIsapiAsync(CancellationToken cancellationToken)
     {
-        var hosts = ResolveLocalSubnetHosts(maxHostsPerSubnet: 256).ToArray();
+        var hosts = ResolveLocalSubnetHosts(maxHostsPerSubnet: 4096).ToArray();
         if (hosts.Length == 0)
         {
-            _logger.LogWarning("ISAPI discovery skipped: no eligible local IPv4 subnets were found.");
+            _logger.LogWarning("ISAPI discovery: no local IPv4 subnets found. Check network adapters.");
             return [];
         }
 
         var ports = ResolveDiscoveryPorts();
+        _logger.LogInformation("ISAPI discovery: scanning {HostCount} IPs on ports {Ports} (user={User})", hosts.Length, string.Join(",", ports), _username);
         var discovered = new ConcurrentDictionary<string, SdkDiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
 
         var digestCredential = new NetworkCredential(_username, _password);
         using var httpClient = CreateIsapiHttpClient(digestCredential, useHttps: false);
         using var httpsClient = CreateIsapiHttpClient(digestCredential, useHttps: true);
+        using var anonHttpClient = CreateIsapiHttpClient(null, useHttps: false);
+        using var anonHttpsClient = CreateIsapiHttpClient(null, useHttps: true);
         using var throttler = new SemaphoreSlim(64);
 
         var tasks = hosts
-            .SelectMany(ip => ports.Select(port => ProbeIsapiAsync(ip, port, httpClient, httpsClient, discovered, throttler, cancellationToken)))
+            .SelectMany(ip => ports.Select(port => ProbeIsapiAsync(ip, port, httpClient, httpsClient, anonHttpClient, anonHttpsClient, discovered, throttler, cancellationToken)))
             .ToArray();
 
         await Task.WhenAll(tasks);
-        return discovered.Values.OrderBy(x => x.IpAddress).ThenBy(x => x.Port).ToArray();
+        var result = discovered.Values.OrderBy(x => x.IpAddress).ThenBy(x => x.Port).ToArray();
+        _logger.LogInformation("ISAPI discovery: found {Count} device(s)", result.Length);
+        return result;
     }
 
     private async Task ProbeIsapiAsync(
@@ -211,6 +270,8 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         int port,
         HttpClient httpClient,
         HttpClient httpsClient,
+        HttpClient anonHttpClient,
+        HttpClient anonHttpsClient,
         ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
         SemaphoreSlim throttler,
         CancellationToken cancellationToken)
@@ -220,11 +281,23 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         {
             var primaryScheme = port == 443 ? "https" : "http";
             var primaryClient = port == 443 ? httpsClient : httpClient;
-            var candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, primaryScheme, primaryClient, cancellationToken);
+            var anonClient = port == 443 ? anonHttpsClient : anonHttpClient;
+
+            // Сначала пробуем анонимно — некоторые устройства разрешают deviceInfo без авторизации.
+            var candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, primaryScheme, anonClient, cancellationToken);
             if (candidate is null && port != 443)
             {
-                // Some devices expose ISAPI over HTTPS on non-standard ports.
-                candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, "https", httpsClient, cancellationToken);
+                candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, "https", anonHttpsClient, cancellationToken);
+            }
+
+            // Если 401 — пробуем с учётными данными.
+            if (candidate is { Model: "Unauthorized" })
+            {
+                candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, primaryScheme, primaryClient, cancellationToken);
+                if (candidate is { Model: "Unauthorized" } && port != 443)
+                {
+                    candidate = await TryReadIsapiDeviceInfoAsync(ipAddress, port, "https", httpsClient, cancellationToken);
+                }
             }
 
             if (candidate is null)
@@ -273,9 +346,9 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
-            // Endpoint exists, but credentials are invalid.
+            // Устройство найдено, но пароль неверный — всё равно возвращаем (пользователь увидит и сменит пароль в настройках).
             var fallbackId = $"ISAPI-{ipAddress.Replace('.', '-')}-{port}";
-            return new SdkDiscoveredDevice(fallbackId, $"Hikvision {ipAddress}", ipAddress, port, "Unauthorized");
+            return new SdkDiscoveredDevice(fallbackId, $"Hikvision {ipAddress} (проверьте пароль)", ipAddress, port, "Unauthorized", null, null, null);
         }
 
         if (!response.IsSuccessStatusCode)
@@ -287,7 +360,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return BuildDeviceFromIsapiXml(content, ipAddress, port);
     }
 
-    private static HttpClient CreateIsapiHttpClient(NetworkCredential credential, bool useHttps)
+    private static HttpClient CreateIsapiHttpClient(NetworkCredential? credential, bool useHttps)
     {
         var handler = new HttpClientHandler
         {
@@ -312,16 +385,170 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         var document = XDocument.Parse(xml);
         var root = document.Root;
 
-        string? Value(string localName) =>
-            root?.Descendants().FirstOrDefault(x => string.Equals(x.Name.LocalName, localName, StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+        string? Value(params string[] localNames)
+        {
+            for (var i = 0; i < localNames.Length; i++)
+            {
+                var v = root?.Descendants()
+                    .FirstOrDefault(x => string.Equals(x.Name.LocalName, localNames[i], StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(v)) return v;
+            }
+            return null;
+        }
 
-        var serial = Value("serialNumber");
+        var serial = Value("serialNumber", "deviceID", "serial");
         var model = Value("model");
-        var deviceName = Value("deviceName");
+        var deviceName = Value("deviceName", "name");
+        var deviceType = Value("deviceType", "type");
+        var macAddress = Value("macAddress", "MACAddress", "mac");
+        var firmwareVersion = Value("firmwareVersion", "softwareVersion", "firmware");
         var identifier = string.IsNullOrWhiteSpace(serial) ? $"ISAPI-{ipAddress.Replace('.', '-')}-{port}" : serial;
         var name = string.IsNullOrWhiteSpace(deviceName) ? $"Hikvision {ipAddress}" : deviceName;
 
-        return new SdkDiscoveredDevice(identifier, name, ipAddress, port, model);
+        return new SdkDiscoveredDevice(identifier, name, ipAddress, port, model, deviceType, macAddress, firmwareVersion);
+    }
+
+    private const string SadpProbeXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><Probe><Uuid>13A888A9-F1B1-4020-AE9F-05607682D23B</Uuid><Types>inquiry</Types></Probe>";
+    private const int SadpPort = 37020;
+    private static readonly IPAddress SadpMulticastAddress = IPAddress.Parse("239.255.255.250");
+
+    private async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaSadpUdpAsync(CancellationToken cancellationToken)
+    {
+        var discovered = new ConcurrentDictionary<string, SdkDiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
+        var probeBytes = Encoding.UTF8.GetBytes(SadpProbeXml);
+        var broadcastTargets = ResolveSadpBroadcastTargets().ToArray();
+
+        if (broadcastTargets.Length == 0)
+        {
+            _logger.LogWarning("SADP: no network interfaces with broadcast address.");
+            return [];
+        }
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(35));
+
+        var tasks = broadcastTargets.Select(async target =>
+        {
+            var (localIp, broadcastIp) = target;
+            try
+            {
+                using var udp = new UdpClient(AddressFamily.InterNetwork);
+                udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                udp.Client.Bind(new IPEndPoint(localIp, 0));
+                udp.EnableBroadcast = true;
+                udp.JoinMulticastGroup(SadpMulticastAddress, localIp);
+
+                var multicastEp = new IPEndPoint(SadpMulticastAddress, SadpPort);
+                var broadcastEp = new IPEndPoint(broadcastIp, SadpPort);
+
+                var sendProbes = async () =>
+                {
+                    for (var i = 0; i < 8 && !cts.Token.IsCancellationRequested; i++)
+                    {
+                        await udp.SendAsync(probeBytes, probeBytes.Length, multicastEp);
+                        await udp.SendAsync(probeBytes, probeBytes.Length, broadcastEp);
+                        await Task.Delay(TimeSpan.FromSeconds(3), cts.Token);
+                    }
+                };
+
+                var receiveLoop = async () =>
+                {
+                    while (!cts.Token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            var result = await udp.ReceiveAsync(cts.Token);
+                            var xml = Encoding.UTF8.GetString(result.Buffer);
+                            var device = ParseSadpProbeMatch(xml, result.RemoteEndPoint.Address.ToString());
+                            if (device is not null)
+                            {
+                                var key = $"{device.IpAddress}:{device.Port}";
+                                discovered.TryAdd(key, device);
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                    }
+                };
+
+                await Task.WhenAll(sendProbes(), receiveLoop());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "SADP probe failed for interface {Local} -> {Broadcast}", localIp, broadcastIp);
+            }
+        });
+
+        try
+        {
+            await Task.WhenAll(tasks);
+            return discovered.Values.OrderBy(x => x.IpAddress).ThenBy(x => x.Port).ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SADP discovery failed.");
+            return [];
+        }
+    }
+
+    private static IEnumerable<(IPAddress LocalIp, IPAddress BroadcastIp)> ResolveSadpBroadcastTargets()
+    {
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up) continue;
+
+            foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (uni.Address.AddressFamily != AddressFamily.InterNetwork || uni.IPv4Mask is null) continue;
+
+                var ip = uni.Address;
+                var mask = uni.IPv4Mask;
+                var ipUInt = ToUInt32(ip);
+                var maskUInt = ToUInt32(mask);
+                var network = ipUInt & maskUInt;
+                var broadcast = network | ~maskUInt;
+                var broadcastIp = FromUInt32(broadcast);
+
+                yield return (ip, broadcastIp);
+            }
+        }
+    }
+
+    private static SdkDiscoveredDevice? ParseSadpProbeMatch(string xml, string? fallbackIp)
+    {
+        try
+        {
+            var doc = XDocument.Parse(xml);
+            var root = doc.Root;
+            if (root?.Name.LocalName != "ProbeMatch") return null;
+
+            string? Val(string name) =>
+                root.Descendants().FirstOrDefault(x => string.Equals(x.Name.LocalName, name, StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+
+            var ip = Val("IPv4Address") ?? fallbackIp ?? "";
+            var cmdPort = int.TryParse(Val("CommandPort"), out var cp) ? cp : 0;
+            var httpPort = int.TryParse(Val("HttpPort"), out var hp) ? hp : 0;
+            var port = cmdPort > 0 ? cmdPort : (httpPort > 0 ? httpPort : 8000);
+            var serial = Val("DeviceSN");
+            var mac = Val("MAC");
+            var firmware = Val("SoftwareVersion");
+            var model = Val("DeviceDescription");
+            var deviceType = Val("DeviceType");
+
+            if (string.IsNullOrWhiteSpace(ip)) return null;
+
+            var identifier = string.IsNullOrWhiteSpace(serial) ? $"SADP-{ip.Replace('.', '-')}-{port}" : serial;
+            var name = string.IsNullOrWhiteSpace(model) ? $"Hikvision {ip}" : model;
+            var macFormatted = !string.IsNullOrWhiteSpace(mac) ? mac.Replace('-', ':') : null;
+
+            return new SdkDiscoveredDevice(identifier, name, ip, port, model, deviceType, macFormatted, firmware);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private int[] ResolveDiscoveryPorts()
@@ -476,6 +703,13 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
                         var serial = (sadp.chSerialNo ?? string.Empty).Trim('\0', ' ');
                         var identifier = string.IsNullOrWhiteSpace(serial) ? $"SADP-{ip.Replace('.', '-')}" : serial;
                         var model = sadp.wFactoryType.ToString();
+                        var firmware = (sadp.chSoftwareVersion ?? string.Empty).Trim('\0', ' ');
+                        var mac = sadp.byMACAddr is { Length: >= 6 }
+                            ? string.Join(":", sadp.byMACAddr.Take(6).Select(b => b.ToString("X2")))
+                            : null;
+                        var deviceModel = sadp.byDeviceModel is { Length: > 0 }
+                            ? Encoding.ASCII.GetString(sadp.byDeviceModel).Trim('\0', ' ')
+                            : null;
                         var key = $"{ip}:{sadp.wPort}";
                         if (!discovered.ContainsKey(key))
                         {
@@ -484,7 +718,10 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
                                 $"Hikvision {ip}",
                                 ip,
                                 sadp.wPort,
-                                model);
+                                model,
+                                deviceModel,
+                                mac,
+                                string.IsNullOrWhiteSpace(firmware) ? null : firmware);
                         }
                     }
                 }
@@ -945,6 +1182,8 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         public const int NET_DVR_LOGIN_PASSWD_MAX_LEN = 64;
         public const int SERIALNO_LEN = 48;
         public const int SOFTWARE_VERSION_LEN = 48;
+        public const int DEV_ID_LEN = 32;
+        public const int NET_SDK_DEVICE_MODEL_LEN = 24;
         public const int MAX_SADP_NUM = 256;
         public const int ACS_CARD_NO_LEN = 32;
         public const int MACADDR_LEN = 6;
@@ -985,6 +1224,119 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         [DllImport(SdkLib)]
         public static extern bool NET_DVR_GetSadpInfoList(int lUserID, ref NET_DVR_SADPINFO_LIST lpSadpInfoList);
+
+        /// <summary>SADP search — no login required. Broadcasts on LAN, callback receives each device.</summary>
+        [DllImport(SdkLib, EntryPoint = "NET_DVR_StartSearchDevices_V40")]
+        public static extern int NET_DVR_StartSearchDevices_V40(
+            IntPtr lpSearchCond,
+            IntPtr lpSearchResult,
+            SearchDevicesCallback cbSearchDevices,
+            IntPtr pUserData);
+
+        [DllImport(SdkLib, EntryPoint = "NET_DVR_StartSearchDevices")]
+        public static extern int NET_DVR_StartSearchDevices(
+            uint dwSearchType,
+            IntPtr lpSearchResult,
+            SearchDevicesCallback cbSearchDevices,
+            IntPtr pUserData);
+
+        [DllImport(SdkLib)]
+        public static extern bool NET_DVR_StopSearchDevices(int lSearchHandle);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        public delegate void SearchDevicesCallback(int lSearchHandle, IntPtr lpSearchResult, IntPtr pUserData);
+
+        /// <summary>Search result structure — IP, port, serial from SADP. Layout per Hikvision SDK.</summary>
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        public struct NET_DVR_SEARCH_DEVICE_RESULT
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = SERIALNO_LEN)]
+            public byte[] sSerialNumber;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = MACADDR_LEN)]
+            public byte[] byMacAddr;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+            public byte[] byRes1;
+            public uint dwDevType;
+            public uint dwCurVersion;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string sDevIP;
+            public uint wDevPort;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string sDevName;
+        }
+
+        public static IReadOnlyCollection<SdkDiscoveredDevice> TrySearchDevicesViaSadp(ILogger logger, CancellationToken cancellationToken)
+        {
+            var discovered = new ConcurrentBag<SdkDiscoveredDevice>();
+            GCHandle? gcHandle = null;
+
+            try
+            {
+                SearchDevicesCallback callback = (handle, pResult, pUser) =>
+                {
+                    if (pResult == IntPtr.Zero) return;
+                    try
+                    {
+                        var info = Marshal.PtrToStructure<NET_DVR_SEARCH_DEVICE_RESULT>(pResult);
+                        var ip = (info.sDevIP ?? string.Empty).Trim('\0', ' ');
+                        if (string.IsNullOrWhiteSpace(ip)) return;
+
+                        var serial = SafeAscii(info.sSerialNumber);
+                        var identifier = string.IsNullOrWhiteSpace(serial) ? $"SADP-{ip.Replace('.', '-')}-{info.wDevPort}" : serial;
+                        var name = string.IsNullOrWhiteSpace(info.sDevName?.Trim()) ? $"Hikvision {ip}" : info.sDevName.Trim();
+                        var port = (int)(info.wDevPort > 0 ? info.wDevPort : 8000);
+
+                        discovered.Add(new SdkDiscoveredDevice(identifier, name, ip, port, null, null, null, null));
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "SADP callback parse error.");
+                    }
+                };
+
+                var cb = GCHandle.Alloc(callback);
+                gcHandle = cb;
+
+                int handle;
+                try
+                {
+                    handle = NET_DVR_StartSearchDevices_V40(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero);
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    handle = NET_DVR_StartSearchDevices(0, IntPtr.Zero, callback, IntPtr.Zero);
+                }
+
+                if (handle < 0)
+                {
+                    var err = NET_DVR_GetLastError();
+                    logger.LogWarning("NET_DVR_StartSearchDevices failed, error={Error}", err);
+                    return [];
+                }
+
+                for (var i = 0; i < 80 && !cancellationToken.IsCancellationRequested; i++)
+                {
+                    Thread.Sleep(100);
+                }
+
+                NET_DVR_StopSearchDevices(handle);
+            }
+            finally
+            {
+                gcHandle?.Free();
+            }
+
+            return discovered.DistinctBy(d => $"{d.IpAddress}:{d.Port}", StringComparer.OrdinalIgnoreCase)
+                .OrderBy(d => d.IpAddress).ThenBy(d => d.Port).ToArray();
+        }
+
+        private static string SafeAscii(byte[]? bytes)
+        {
+            if (bytes is null || bytes.Length == 0) return string.Empty;
+            var end = Array.IndexOf(bytes, (byte)0);
+            if (end < 0) end = bytes.Length;
+            return Encoding.ASCII.GetString(bytes, 0, end).Trim();
+        }
 
         public delegate void RemoteConfigCallback(uint dwType, IntPtr lpBuffer, uint dwBufLen, IntPtr pUserData);
 
@@ -1180,7 +1532,12 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             public NET_DVR_IPADDR struDnsServer2IpAddr;
             public byte byDns;
             public byte byDhcp;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 158)]
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = DEV_ID_LEN)]
+            public byte[] szGB28181DevID;
+            public byte byActivated;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = NET_SDK_DEVICE_MODEL_LEN)]
+            public byte[] byDeviceModel;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 101)]
             public byte[] byRes;
         }
 
@@ -1209,7 +1566,9 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
                 list.struSadpInfo[i] = new NET_DVR_SADPINFO
                 {
                     byMACAddr = new byte[MACADDR_LEN],
-                    byRes = new byte[158],
+                    szGB28181DevID = new byte[DEV_ID_LEN],
+                    byDeviceModel = new byte[NET_SDK_DEVICE_MODEL_LEN],
+                    byRes = new byte[101],
                     struIP = new NET_DVR_IPADDR { byIPv6 = new byte[128] },
                     struSubDVRIPMask = new NET_DVR_IPADDR { byIPv6 = new byte[128] },
                     struGatewayIpAddr = new NET_DVR_IPADDR { byIPv6 = new byte[128] },

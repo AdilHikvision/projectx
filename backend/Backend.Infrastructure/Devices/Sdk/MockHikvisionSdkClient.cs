@@ -10,8 +10,8 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
     {
         IReadOnlyCollection<SdkDiscoveredDevice> devices =
         [
-            new("MOCK-AC-001", "Mock Access Controller #1", "192.168.1.101", 8000, "AC-Controller"),
-            new("MOCK-IC-001", "Mock Intercom #1", "192.168.1.102", 8000, "Intercom")
+            new("MOCK-AC-001", "Mock Access Controller #1", "192.168.1.101", 8000, "AC-Controller", "AccessController", "AA:BB:CC:DD:EE:01", "V1.0"),
+            new("MOCK-IC-001", "Mock Intercom #1", "192.168.1.102", 8000, "Intercom", "Intercom", "AA:BB:CC:DD:EE:02", "V1.0")
         ];
 
         return Task.FromResult(devices);

@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { apiRequest } from '../lib/api'
+import { apiRequest, SESSION_EXPIRED_KEY } from '../lib/api'
 
 interface AuthUser {
   id: string
@@ -61,6 +61,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null)
     setUser(null)
   }, [])
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      logout()
+      sessionStorage.setItem(SESSION_EXPIRED_KEY, '1')
+      window.location.href = '/login'
+    }
+    window.addEventListener('auth:session-expired', handleSessionExpired)
+    return () => window.removeEventListener('auth:session-expired', handleSessionExpired)
+  }, [logout])
 
   const login = useCallback(async (request: LoginRequest) => {
     const response = await apiRequest<LoginResponse>('/api/auth/login', {

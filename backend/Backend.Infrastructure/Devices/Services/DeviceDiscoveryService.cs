@@ -14,7 +14,7 @@ public sealed class DeviceDiscoveryService(
         {
             var discovered = await sdkClient.ScanLanAsync(cancellationToken);
             return discovered
-                .Select(x => new DiscoveredDevice(x.DeviceIdentifier, x.Name, x.IpAddress, x.Port, x.Model))
+                .Select(x => new DiscoveredDevice(x.DeviceIdentifier, x.Name, x.IpAddress, x.Port, x.Model, x.DeviceType, x.MacAddress, x.FirmwareVersion))
                 .ToArray();
         }
         catch (DllNotFoundException ex)

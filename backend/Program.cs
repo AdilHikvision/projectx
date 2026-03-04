@@ -206,6 +206,19 @@ app.MapGet("/api/devices/discover", async (
     return Results.Ok(discovered);
 }).AllowAnonymous();
 
+app.MapPost("/api/devices/activate", async (
+    ActivateDeviceRequest request,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.IpAddress) || string.IsNullOrWhiteSpace(request.MacAddress) || string.IsNullOrWhiteSpace(request.Password))
+    {
+        return Results.BadRequest(new { message = "IP, MAC and password are required." });
+    }
+    var ok = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken);
+    return ok ? Results.Ok(new { success = true, message = "Activation sent." }) : Results.BadRequest(new { message = "Activation failed." });
+}).AllowAnonymous();
+
 app.MapGet("/api/devices", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var devices = await dbContext.Devices
@@ -609,6 +622,8 @@ public sealed record RegisterRequest(
     string? Role);
 
 public sealed record LoginRequest(string Email, string Password);
+
+public sealed record ActivateDeviceRequest(string IpAddress, int Port, string MacAddress, string Password);
 
 public sealed record CreateDeviceRequest(
     string DeviceIdentifier,
