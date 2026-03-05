@@ -23,7 +23,8 @@ public sealed record DiscoveredDevice(
     string? Model,
     string? DeviceType,
     string? MacAddress,
-    string? FirmwareVersion);
+    string? FirmwareVersion,
+    bool? IsActivated);
 
 public sealed record DeviceConnection(
     string DeviceIdentifier,

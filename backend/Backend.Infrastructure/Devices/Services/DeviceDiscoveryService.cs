@@ -14,12 +14,17 @@ public sealed class DeviceDiscoveryService(
         {
             var discovered = await sdkClient.ScanLanAsync(cancellationToken);
             return discovered
-                .Select(x => new DiscoveredDevice(x.DeviceIdentifier, x.Name, x.IpAddress, x.Port, x.Model, x.DeviceType, x.MacAddress, x.FirmwareVersion))
+                .Select(x => new DiscoveredDevice(x.DeviceIdentifier, x.Name, x.IpAddress, x.Port, x.Model, x.DeviceType, x.MacAddress, x.FirmwareVersion, x.IsActivated))
                 .ToArray();
         }
         catch (DllNotFoundException ex)
         {
             logger.LogWarning(ex, "SDK native library is not available. Discovery returns empty result.");
+            return Array.Empty<DiscoveredDevice>();
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogDebug("Device discovery cancelled (timeout).");
             return Array.Empty<DiscoveredDevice>();
         }
         catch (Exception ex)

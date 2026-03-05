@@ -3,6 +3,10 @@ const API_BASE_URL =
   configuredApiBaseUrl ||
   (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5055')
 
+const HUB_BASE_URL = (import.meta.env.VITE_HUB_URL as string | undefined)?.trim() ||
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
+  'http://localhost:5154'
+
 export interface ApiRequestOptions extends RequestInit {
   token?: string | null
 }
@@ -55,4 +59,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
 export function getApiBaseUrl(): string {
   return API_BASE_URL
+}
+
+export function getHubUrl(): string {
+  return HUB_BASE_URL
 }

@@ -42,6 +42,7 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<SeedAdminOptions>(configuration.GetSection("SeedAdmin"));
         services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
+        services.Configure<SadpOptions>(configuration.GetSection(SadpOptions.SectionName));
 
         services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionBuilder.ConnectionString));
 
@@ -50,6 +51,7 @@ public static class DependencyInjection
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AppDbContext>();
 
+        services.AddSingleton<SadpDiscoveryService>();
         services.AddSingleton<HikvisionSdkClient>();
         services.AddSingleton<IHikvisionSdkClient>(provider => provider.GetRequiredService<HikvisionSdkClient>());
         services.AddSingleton<IDeviceConnectionManager, DeviceConnectionManager>();

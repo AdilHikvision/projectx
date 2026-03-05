@@ -28,6 +28,16 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
 });
 
 builder.Services.AddOpenApi();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:5154", "http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://127.0.0.1:5154")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
@@ -54,6 +64,19 @@ builder.Services
             ValidAudience = jwtOptions.Audience,
             IssuerSigningKey = signingKey
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
@@ -73,12 +96,16 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseSerilogRequestLogging();
-app.UseHttpsRedirection();
+app.UseCors();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapHub<DevicesHub>("/hubs/devices");
+app.MapHub<DevicesHub>("/hubs/devices").AllowAnonymous();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", utc = DateTime.UtcNow }));
 app.MapGet("/api/health/db", async (ISystemStatusService systemStatusService, CancellationToken cancellationToken) =>
@@ -202,12 +229,15 @@ app.MapGet("/api/devices/discover", async (
     IDeviceDiscoveryService discoveryService,
     CancellationToken cancellationToken) =>
 {
-    var discovered = await discoveryService.DiscoverAsync(cancellationToken);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    cts.CancelAfter(TimeSpan.FromSeconds(30));
+    var discovered = await discoveryService.DiscoverAsync(cts.Token);
     return Results.Ok(discovered);
 }).AllowAnonymous();
 
 app.MapPost("/api/devices/activate", async (
     ActivateDeviceRequest request,
+    IOptions<SadpOptions> sadpOptions,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
@@ -215,7 +245,7 @@ app.MapPost("/api/devices/activate", async (
     {
         return Results.BadRequest(new { message = "IP, MAC and password are required." });
     }
-    var ok = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken);
+    var ok = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken, sadpOptions.Value);
     return ok ? Results.Ok(new { success = true, message = "Activation sent." }) : Results.BadRequest(new { message = "Activation failed." });
 }).AllowAnonymous();
 

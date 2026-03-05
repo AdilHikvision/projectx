@@ -1,9 +1,9 @@
-import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
 import { Card, Badge, Button, Avatar, PageHeader, Input, Modal } from '../components/ui'
-import { apiRequest, getApiBaseUrl } from '../lib/api'
+import { apiRequest, getHubUrl } from '../lib/api'
 
 type DeviceStatus = 'Online' | 'Offline'
 
@@ -48,6 +48,7 @@ interface DiscoveredDevice {
   deviceType?: string | null
   macAddress?: string | null
   firmwareVersion?: string | null
+  isActivated?: boolean | null
 }
 
 interface DeviceFormData {
@@ -163,6 +164,9 @@ export function DevicesPage() {
     } catch { /* ignore */ }
   }, [token])
 
+  const fetchStatusesRef = useRef(fetchStatuses)
+  fetchStatusesRef.current = fetchStatuses
+
   useEffect(() => {
     loadData()
   }, [loadData])
@@ -183,7 +187,11 @@ export function DevicesPage() {
     async function startConnection() {
       try {
         hub = new HubConnectionBuilder()
-          .withUrl(`${getApiBaseUrl()}/hubs/devices`, { accessTokenFactory: () => token! })
+          .withUrl(`${getHubUrl()}/hubs/devices`, {
+            accessTokenFactory: () => token!,
+            skipNegotiation: true,
+            transport: HttpTransportType.WebSockets,
+          })
           .withAutomaticReconnect()
           .configureLogging(LogLevel.Warning)
           .build()
@@ -196,7 +204,7 @@ export function DevicesPage() {
       } catch { /* fallback */ }
 
       if (!isDisposed) {
-        pollTimer = window.setInterval(fetchStatuses, 5000)
+        pollTimer = window.setInterval(() => fetchStatusesRef.current(), 5000)
       }
     }
 
@@ -205,9 +213,9 @@ export function DevicesPage() {
     return () => {
       isDisposed = true
       if (pollTimer) window.clearInterval(pollTimer)
-      if (hub) hub.stop()
+      hub?.stop().catch(() => { /* ignore — cleanup */ })
     }
-  }, [token, fetchStatuses])
+  }, [token])
 
   const filteredDevices = useMemo(() => {
     let result = devices
@@ -776,7 +784,7 @@ export function DevicesPage() {
                     .map((d) => ({
                       ...d,
                       inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier),
-                      isActive: !!(d.macAddress && d.firmwareVersion),
+                      isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion),
                     }))
                     .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
                     .filter((d) =>
@@ -788,7 +796,7 @@ export function DevicesPage() {
                       <tr
                         key={d.ipAddress}
                         className={`border-b border-border-light last:border-0 hover:bg-slate-75/50 ${
-                          !d.isActive ? 'bg-error-bg/30 border-l-4 border-l-error-text' : ''
+                          !d.isActive ? 'bg-error-bg border-l-4 border-l-error-text' : ''
                         }`}
                       >
                         <td className="px-4 py-3 font-bold text-text-dark">{getDiscoverTypeLabel(d.inferredType)}</td>
@@ -824,7 +832,7 @@ export function DevicesPage() {
             <div className="flex justify-between items-center">
               <p className="text-xs text-text-muted">
                 Показано: {discovered
-                  .map((d) => ({ ...d, inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier), isActive: !!(d.macAddress && d.firmwareVersion) }))
+                  .map((d) => ({ ...d, inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier), isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion) }))
                   .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
                   .filter((d) => discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive)
                   .length} из {discovered.length}

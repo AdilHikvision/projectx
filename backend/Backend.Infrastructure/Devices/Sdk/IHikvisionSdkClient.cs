@@ -8,7 +8,8 @@ public sealed record SdkDiscoveredDevice(
     string? Model,
     string? DeviceType,
     string? MacAddress,
-    string? FirmwareVersion);
+    string? FirmwareVersion,
+    bool? IsActivated);
 
 public sealed record SdkDeviceEvent(
     string DeviceIdentifier,
