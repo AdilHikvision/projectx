@@ -181,6 +181,38 @@ public static class SadpRawDiscovery
         }
     }
 
+    /// <summary>
+    /// Возвращает только интерфейсы, находящиеся в той же подсети, что и устройство.
+    /// </summary>
+    private static IEnumerable<(IPAddress LocalIp, IPAddress BroadcastIp, PhysicalAddress? Mac)> ResolveInterfaceTargetsForActivation(IPAddress deviceIp)
+    {
+        var deviceUInt = ToUInt32(deviceIp);
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up) continue;
+
+            foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (uni.Address.AddressFamily != global::System.Net.Sockets.AddressFamily.InterNetwork || uni.IPv4Mask is null)
+                    continue;
+
+                var ip = uni.Address;
+                var mask = uni.IPv4Mask;
+                var maskUInt = ToUInt32(mask);
+                var localNetwork = ToUInt32(ip) & maskUInt;
+                var deviceNetwork = deviceUInt & maskUInt;
+                if (localNetwork != deviceNetwork) continue;
+
+                var ipUInt = ToUInt32(ip);
+                var broadcast = ipUInt | ~maskUInt;
+                var broadcastIp = new IPAddress([
+                    (byte)(broadcast >> 24), (byte)(broadcast >> 16), (byte)(broadcast >> 8), (byte)broadcast
+                ]);
+                yield return (ip, broadcastIp, nic.GetPhysicalAddress());
+            }
+        }
+    }
+
     private static SdkDiscoveredDevice? ParseProbeMatch(string xml, string? fallbackIp)
     {
         try
@@ -228,11 +260,65 @@ public static class SadpRawDiscovery
     }
 
     /// <summary>
-    /// SADP activate: getencryptstring → шифрование пароля → activate.
-    /// Использует Raw Ethernet (Npcap) для отправки И приёма ответов — 
-    /// это позволяет активировать устройства из Любых подсетей (как SADP Tool).
+    /// Проверяет, находится ли устройство в одной подсети с ПК.
     /// </summary>
-    public static async Task<bool> TryActivateAsync(
+    /// <param name="deviceIp">IP устройства.</param>
+    /// <param name="localSubnetInfo">Информация о подсетях ПК (для сообщения об ошибке).</param>
+    /// <returns>true, если устройство в той же подсети, что и хотя бы один интерфейс ПК.</returns>
+    public static bool IsDeviceInSameSubnet(IPAddress deviceIp, out string? localSubnetInfo)
+    {
+        var localSubnets = new List<string>();
+        var deviceUInt = ToUInt32(deviceIp);
+
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (nic.OperationalStatus != OperationalStatus.Up) continue;
+
+            foreach (var uni in nic.GetIPProperties().UnicastAddresses)
+            {
+                if (uni.Address.AddressFamily != global::System.Net.Sockets.AddressFamily.InterNetwork || uni.IPv4Mask is null)
+                    continue;
+
+                var localIp = uni.Address;
+                var mask = uni.IPv4Mask;
+                var maskUInt = ToUInt32(mask);
+                var localNetwork = ToUInt32(localIp) & maskUInt;
+                var deviceNetwork = deviceUInt & maskUInt;
+
+                var prefixLen = CountMaskBits(mask);
+                var subnetStr = $"{localIp}/{prefixLen}";
+                if (!localSubnets.Contains(subnetStr))
+                    localSubnets.Add(subnetStr);
+
+                if (localNetwork == deviceNetwork)
+                {
+                    localSubnetInfo = string.Join(", ", localSubnets);
+                    return true;
+                }
+            }
+        }
+
+        localSubnetInfo = localSubnets.Count > 0 ? string.Join(", ", localSubnets) : "нет активных интерфейсов";
+        return false;
+    }
+
+    private static int CountMaskBits(IPAddress mask)
+    {
+        var bits = 0;
+        foreach (var b in mask.GetAddressBytes())
+        {
+            var v = b;
+            while (v != 0) { bits += v & 1; v >>= 1; }
+        }
+        return bits;
+    }
+
+    /// <summary>
+    /// SADP activate: getencryptstring → шифрование пароля → activate.
+    /// Активация возможна только если устройство в той же подсети, что и ПК.
+    /// </summary>
+    /// <returns>(Success, Message) — при несовпадении подсетей Success=false, Message содержит предупреждение.</returns>
+    public static async Task<(bool Success, string? Message)> TryActivateAsync(
         string ipAddress,
         string macAddress,
         string password,
@@ -243,21 +329,29 @@ public static class SadpRawDiscovery
         if (string.IsNullOrWhiteSpace(ipAddress) || string.IsNullOrWhiteSpace(macAddress) || string.IsNullOrWhiteSpace(password))
         {
             logger.LogWarning("SADP activate: missing params (IP={Ip}, MAC={Mac}, PasswordLen={Len})", ipAddress ?? "null", macAddress ?? "null", password?.Length ?? 0);
-            return false;
+            return (false, "IP, MAC и пароль обязательны.");
         }
 
-        logger.LogInformation("SADP activate: START for IP={Ip} MAC={Mac} с любой сети", ipAddress, macAddress);
+        var deviceIp = IPAddress.Parse(ipAddress);
+
+        if (!IsDeviceInSameSubnet(deviceIp, out var localSubnetInfo))
+        {
+            var msg = $"Устройство {ipAddress} не в вашей подсети. Ваши подсети: {localSubnetInfo}. Активация возможна только в той же подсети.";
+            logger.LogWarning("SADP activate: {Msg}", msg);
+            return (false, msg);
+        }
+
+        logger.LogInformation("SADP activate: START for IP={Ip} MAC={Mac} (в той же подсети)", ipAddress, macAddress);
 
         var macNorm = macAddress.Replace('-', ':').Trim().ToUpperInvariant();
         var macHyphens = macNorm.Replace(":", "-");
         var uuid = "13A888A9-F1B1-4020-AE9F-05607682D23B";
-        var deviceIp = IPAddress.Parse(ipAddress);
         var deviceMac = PhysicalAddress.Parse(macHyphens);
 
         // --- STEP 1: getencryptstring ---
         logger.LogInformation("SADP activate: step 1 — getencryptstring for MAC={Mac}", macHyphens);
         var getEncryptStrXml = CreateProbeXml(uuid, macHyphens, "getencryptstring");
-        var encryptString = await RequestWithRawResponseAsync(getEncryptStrXml, deviceIp, deviceMac, "EncryptString", logger, cancellationToken, options);
+        var encryptString = await RequestWithRawResponseAsync(getEncryptStrXml, deviceIp, deviceMac, "EncryptString", logger, cancellationToken, options, useSubnetFilter: true);
 
         var passwordToSend = password;
         if (!string.IsNullOrWhiteSpace(encryptString))
@@ -295,7 +389,7 @@ public static class SadpRawDiscovery
         {
             logger.LogInformation("SADP activate: step 3 — sending {Type} for MAC={Mac}", activateType, macHyphens);
             var activateXml = CreateActivateXml(uuid, macHyphens, activateType, passwordToSend);
-            var response = await RequestWithRawResponseAsync(activateXml, deviceIp, deviceMac, "Result", logger, cancellationToken, options);
+            var response = await RequestWithRawResponseAsync(activateXml, deviceIp, deviceMac, "Result", logger, cancellationToken, options, useSubnetFilter: true);
 
             if (!string.IsNullOrWhiteSpace(response))
             {
@@ -303,7 +397,7 @@ public static class SadpRawDiscovery
                 if (response.Contains("Succ!", StringComparison.OrdinalIgnoreCase) || 
                     response.Contains("Has activated!", StringComparison.OrdinalIgnoreCase))
                 {
-                    return true;
+                    return (true, null);
                 }
                 
                 if (response.Contains("Password error", StringComparison.OrdinalIgnoreCase) || 
@@ -314,7 +408,7 @@ public static class SadpRawDiscovery
                 else if (response.Contains("Device deny", StringComparison.OrdinalIgnoreCase))
                 {
                     logger.LogWarning("SADP activate: device denied. Possible lock or wrong state.");
-                    return false;
+                    return (false, "Устройство отклонило запрос (возможна блокировка или неверное состояние).");
                 }
             }
             else
@@ -323,7 +417,7 @@ public static class SadpRawDiscovery
             }
         }
 
-        return false;
+        return (false, "Активация не удалась (таймаут или ошибка устройства).");
     }
 
     private static string CreateProbeXml(string uuid, string mac, string types)
@@ -349,6 +443,7 @@ public static class SadpRawDiscovery
     /// Универсальный запрос-ответ: отправляет через RAW+UDP и ловит ответ через RAW+UDP.
     /// Позволяет работать через подсети L2.
     /// </summary>
+    /// <param name="useSubnetFilter">Если true — использовать только интерфейсы в той же подсети, что и устройство (для активации).</param>
     private static async Task<string?> RequestWithRawResponseAsync(
         string xml,
         IPAddress deviceIp,
@@ -356,22 +451,30 @@ public static class SadpRawDiscovery
         string expectedNode,
         ILogger logger,
         CancellationToken ct,
-        SadpOptions? options)
+        SadpOptions? options,
+        bool useSubnetFilter = false)
     {
         var payloadContent = Encoding.UTF8.GetBytes(xml);
         var resultTcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linkedCts.CancelAfter(TimeSpan.FromSeconds(10));
 
-        var interfaces = ResolveInterfaceTargets().ToList();
+        var interfaces = useSubnetFilter
+            ? ResolveInterfaceTargetsForActivation(deviceIp).ToList()
+            : ResolveInterfaceTargets().ToList();
+        if (interfaces.Count == 0 && useSubnetFilter)
+        {
+            logger.LogWarning("SADP activate: 0 interfaces in same subnet, falling back to all interfaces");
+            interfaces = ResolveInterfaceTargets().ToList();
+        }
         var pcapDevices = OperatingSystem.IsWindows() ? LibPcapLiveDeviceList.Instance : null;
-        logger.LogDebug("SADP RequestWithRawResponse: {Ifaces} interfaces, pcap={PcapCount}", interfaces.Count, pcapDevices?.Count ?? 0);
+        logger.LogInformation("SADP RequestWithRawResponse: {Ifaces} interfaces, pcap={PcapCount}", interfaces.Count, pcapDevices?.Count ?? 0);
 
         // 1. Подготовка UDP слушателей на порту 37020 (устройство отвечает на этот порт)
-        var udpClients = new List<UdpClient>();
+        var udpClients = new List<(UdpClient Udp, IPAddress BroadcastIp)>();
         var receiveTasks = new List<Task>();
 
-        foreach (var (localIp, _, _) in interfaces)
+        foreach (var (localIp, broadcastIp, _) in interfaces)
         {
             try
             {
@@ -381,7 +484,7 @@ public static class SadpRawDiscovery
                 try { udp.Client.Bind(new IPEndPoint(localIp, SadpPort)); }
                 catch { udp.Client.Bind(new IPEndPoint(localIp, 0)); }
                 udp.JoinMulticastGroup(MulticastAddr, localIp);
-                udpClients.Add(udp);
+                udpClients.Add((udp, broadcastIp));
 
                 receiveTasks.Add(Task.Run(async () =>
                 {
@@ -422,7 +525,7 @@ public static class SadpRawDiscovery
                             var raw = e.GetPacket();
                             var packet = Packet.ParsePacket(raw.LinkLayerType, raw.Data);
                             var udp = packet.Extract<UdpPacket>();
-                            if (udp is null || (udp.SourcePort != SadpPort && udp.DestinationPort != SadpPort)) return;
+                            if (udp is null || (udp.SourcePort != SadpPort && udp.SourcePort != 8000 && udp.DestinationPort != SadpPort && udp.DestinationPort != 8000)) return;
 
                             var payload = udp.PayloadData;
                             if (payload is null or { Length: 0 }) return;
@@ -449,14 +552,18 @@ public static class SadpRawDiscovery
         {
             for (var i = 0; i < 4 && !linkedCts.Token.IsCancellationRequested; i++)
             {
-                // Отправка через RAW (на MAC адрес устройства)
+                // Отправка через RAW (как Discovery — unicast на устройство + broadcast в подсеть)
+                var broadcastMac = PhysicalAddress.Parse("FF-FF-FF-FF-FF-FF");
                 foreach (var dev in activePcapDevices)
                 {
                     try
                     {
-                        var localIp = dev.Addresses.FirstOrDefault(a => a.Addr.ipAddress.AddressFamily == AddressFamily.InterNetwork)?.Addr.ipAddress;
+                        var localIp = dev.Addresses.FirstOrDefault(a => a.Addr?.ipAddress?.AddressFamily == AddressFamily.InterNetwork)?.Addr?.ipAddress;
                         if (localIp is null) continue;
 
+                        var broadcastIp = interfaces.FirstOrDefault(t => t.Item1.Equals(localIp)).Item2 ?? IPAddress.Broadcast;
+
+                        // Unicast на устройство (37020 и 8000)
                         var udp = new UdpPacket(37020, 37020) { PayloadData = payloadContent };
                         var ip = new IPv4Packet(localIp, deviceIp) { PayloadPacket = udp };
                         var eth = new EthernetPacket(dev.MacAddress, deviceMac, EthernetType.IPv4) { PayloadPacket = ip };
@@ -464,21 +571,34 @@ public static class SadpRawDiscovery
                         udp.UpdateUdpChecksum();
                         dev.SendPacket(eth);
 
-                        // Также шлём на броадкаст MAC
-                        var ethB = new EthernetPacket(dev.MacAddress, PhysicalAddress.Parse("FFFFFFFFFFFF"), EthernetType.IPv4) { PayloadPacket = ip };
+                        var udp8000 = new UdpPacket(37020, 8000) { PayloadData = payloadContent };
+                        var ip8000 = new IPv4Packet(localIp, deviceIp) { PayloadPacket = udp8000 };
+                        var eth8000 = new EthernetPacket(dev.MacAddress, deviceMac, EthernetType.IPv4) { PayloadPacket = ip8000 };
+                        ip8000.UpdateIPChecksum();
+                        udp8000.UpdateUdpChecksum();
+                        dev.SendPacket(eth8000);
+
+                        // Broadcast в подсеть (как Discovery — устройства слушают broadcast)
+                        var udpB = new UdpPacket(37020, 37020) { PayloadData = payloadContent };
+                        var ipB = new IPv4Packet(localIp, broadcastIp) { PayloadPacket = udpB };
+                        var ethB = new EthernetPacket(dev.MacAddress, broadcastMac, EthernetType.IPv4) { PayloadPacket = ipB };
+                        ipB.UpdateIPChecksum();
+                        udpB.UpdateUdpChecksum();
                         dev.SendPacket(ethB);
                     }
                     catch { }
                 }
 
-                // Отправка через станадартный UDP
-                foreach (var udp in udpClients)
+                // Отправка через UDP (subnet broadcast как в Discovery — 192.168.88.255 важнее 255.255.255.255)
+                foreach (var (udp, broadcastIp) in udpClients)
                 {
                     try
                     {
                         await udp.SendAsync(payloadContent, new IPEndPoint(MulticastAddr, SadpPort));
+                        await udp.SendAsync(payloadContent, new IPEndPoint(broadcastIp, SadpPort));
                         await udp.SendAsync(payloadContent, new IPEndPoint(IPAddress.Broadcast, SadpPort));
                         await udp.SendAsync(payloadContent, new IPEndPoint(deviceIp, SadpPort));
+                        await udp.SendAsync(payloadContent, new IPEndPoint(deviceIp, 8000));
                     }
                     catch { }
                 }
@@ -502,7 +622,7 @@ public static class SadpRawDiscovery
         {
             linkedCts.Cancel();
             foreach (var dev in activePcapDevices) { try { dev.StopCapture(); dev.Close(); } catch { } }
-            foreach (var udp in udpClients) { try { udp.Dispose(); } catch { } }
+            foreach (var (udp, _) in udpClients) { try { udp.Dispose(); } catch { } }
         }
 
         return null;

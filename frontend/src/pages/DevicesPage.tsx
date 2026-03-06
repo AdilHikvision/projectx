@@ -135,6 +135,8 @@ export function DevicesPage() {
   const [discovered, setDiscovered] = useState<DiscoveredDevice[]>([])
   const [discoverTypeTab, setDiscoverTypeTab] = useState<string>('all')
   const [discoverSortActive, setDiscoverSortActive] = useState<'all' | 'active' | 'inactive'>('all')
+  const [discoverSearchQuery, setDiscoverSearchQuery] = useState('')
+  const [discoverIpSort, setDiscoverIpSort] = useState<'asc' | 'desc'>('asc')
   const [formData, setFormData] = useState<DeviceFormData>(emptyForm)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -175,6 +177,8 @@ export function DevicesPage() {
     if (modalMode === 'discover') {
       setDiscoverTypeTab('all')
       setDiscoverSortActive('all')
+      setDiscoverSearchQuery('')
+      setDiscoverIpSort('asc')
     }
   }, [modalMode])
 
@@ -245,6 +249,7 @@ export function DevicesPage() {
     setInfo(null)
     try {
       const discoveredList = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token })
+      console.log('[Discovery API] returned data:', discoveredList)
       setDiscovered(discoveredList)
       setModalMode('discover')
       setInfo(discoveredList.length > 0 ? `Found ${discoveredList.length} devices.` : 'No devices found.')
@@ -747,22 +752,47 @@ export function DevicesPage() {
               ))}
             </div>
 
-            {/* Sort: active / inactive */}
-            <div className="flex gap-2 items-center">
-              <span className="text-xs font-bold text-text-muted uppercase">Сортировка:</span>
-              {(['all', 'active', 'inactive'] as const).map((s) => (
+            {/* Search */}
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Поиск по IP, серийному номеру, MAC..."
+                value={discoverSearchQuery}
+                onChange={(e) => setDiscoverSearchQuery(e.target.value)}
+                icon="search"
+                className="max-w-xs"
+              />
+            </div>
+
+            {/* Sort: active / inactive + IP */}
+            <div className="flex flex-wrap gap-4 items-center">
+              <div className="flex gap-2 items-center">
+                <span className="text-xs font-bold text-text-muted uppercase">Сортировка:</span>
+                {(['all', 'active', 'inactive'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setDiscoverSortActive(s)}
+                    className={`px-2 py-1 rounded text-xs font-bold ${
+                      discoverSortActive === s ? 'bg-primary/20 text-primary' : 'text-text-muted hover:text-text-dark'
+                    }`}
+                  >
+                    {s === 'all' ? 'Все' : s === 'active' ? 'Активные' : 'Неактивные'}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 items-center">
+                <span className="text-xs font-bold text-text-muted uppercase">IP:</span>
                 <button
-                  key={s}
                   type="button"
-                  onClick={() => setDiscoverSortActive(s)}
-                  className={`px-2 py-1 rounded text-xs font-bold ${
-                    discoverSortActive === s ? 'bg-primary/20 text-primary' : 'text-text-muted hover:text-text-dark'
+                  onClick={() => setDiscoverIpSort((p) => (p === 'asc' ? 'desc' : 'asc'))}
+                  className={`px-2 py-1 rounded text-xs font-bold flex items-center gap-1 ${
+                    'bg-primary/20 text-primary'
                   }`}
                 >
-                  {s === 'all' ? 'Все' : s === 'active' ? 'Активные' : 'Неактивные'}
+                  {discoverIpSort === 'asc' ? '↑ Возрастание' : '↓ Убывание'}
                 </button>
-              ))}
-              <span className="text-xs text-text-muted ml-2">
+              </div>
+              <span className="text-xs text-text-muted">
                 (Активные = с MAC и прошивкой)
               </span>
             </div>
@@ -772,7 +802,12 @@ export function DevicesPage() {
                 <thead className="sticky top-0 bg-white z-10 shadow-sm">
                   <tr className="bg-slate-75 border-b border-border-base text-left text-xs font-black text-text-muted tracking-widest uppercase">
                     <th className="px-4 py-3">Тип</th>
-                    <th className="px-4 py-3">IP Address</th>
+                    <th
+                      className="px-4 py-3 cursor-pointer hover:text-primary"
+                      onClick={() => setDiscoverIpSort((p) => (p === 'asc' ? 'desc' : 'asc'))}
+                    >
+                      IP Address {discoverIpSort === 'asc' ? '↑' : '↓'}
+                    </th>
                     <th className="px-4 py-3">MAC Address</th>
                     <th className="px-4 py-3">Serial Number</th>
                     <th className="px-4 py-3">Firmware</th>
@@ -790,11 +825,23 @@ export function DevicesPage() {
                     .filter((d) =>
                       discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive
                     )
+                    .filter((d) => {
+                      const q = discoverSearchQuery.trim().toLowerCase()
+                      if (!q) return true
+                      const ip = (d.ipAddress ?? '').toLowerCase()
+                      const serial = (d.deviceIdentifier ?? '').toLowerCase()
+                      const mac = (d.macAddress ?? '').toLowerCase().replace(/[:-]/g, '')
+                      const qNorm = q.replace(/[:-]/g, '')
+                      return ip.includes(q) || serial.includes(q) || mac.includes(qNorm)
+                    })
                     .sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1))
-                    .sort((a, b) => a.ipAddress.localeCompare(b.ipAddress))
+                    .sort((a, b) => {
+                      const cmp = a.ipAddress.localeCompare(b.ipAddress)
+                      return discoverIpSort === 'asc' ? cmp : -cmp
+                    })
                     .map((d) => (
                       <tr
-                        key={d.ipAddress}
+                        key={`${d.ipAddress}:${d.port}:${d.deviceIdentifier}`}
                         className={`border-b border-border-light last:border-0 hover:bg-slate-75/50 ${
                           !d.isActive ? 'bg-error-bg border-l-4 border-l-error-text' : ''
                         }`}
@@ -835,6 +882,15 @@ export function DevicesPage() {
                   .map((d) => ({ ...d, inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier), isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion) }))
                   .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
                   .filter((d) => discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive)
+                  .filter((d) => {
+                    const q = discoverSearchQuery.trim().toLowerCase()
+                    if (!q) return true
+                    const ip = (d.ipAddress ?? '').toLowerCase()
+                    const serial = (d.deviceIdentifier ?? '').toLowerCase()
+                    const mac = (d.macAddress ?? '').toLowerCase().replace(/[:-]/g, '')
+                    const qNorm = q.replace(/[:-]/g, '')
+                    return ip.includes(q) || serial.includes(q) || mac.includes(qNorm)
+                  })
                   .length} из {discovered.length}
               </p>
               <Button variant="outline" onClick={closeModals}>

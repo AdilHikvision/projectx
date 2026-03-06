@@ -1,7 +1,7 @@
 const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
 const API_BASE_URL =
   configuredApiBaseUrl ||
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5055')
+  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5154')
 
 const HUB_BASE_URL = (import.meta.env.VITE_HUB_URL as string | undefined)?.trim() ||
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||

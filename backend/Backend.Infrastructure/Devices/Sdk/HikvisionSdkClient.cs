@@ -168,6 +168,65 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return Task.FromResult<IReadOnlyCollection<SdkDeviceEvent>>(output);
     }
 
+    public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(ipAddress) || string.IsNullOrWhiteSpace(password))
+        {
+            return Task.FromResult<(bool, string?)>((false, "IP и пароль обязательны."));
+        }
+
+        try
+        {
+            EnsureSdkReady();
+        }
+        catch (DllNotFoundException ex)
+        {
+            _logger.LogDebug(ex, "HCNetSDK not found, skipping SDK activation.");
+            return Task.FromResult<(bool, string?)>((false, null)); // null = caller should try SADP
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            _logger.LogDebug(ex, "NET_DVR_ActivateDevice not available, skipping SDK activation.");
+            return Task.FromResult<(bool, string?)>((false, null));
+        }
+
+        var portNum = port > 0 ? port : 8000;
+        var pwdBytes = Encoding.UTF8.GetBytes(password ?? string.Empty);
+        var pwdArr = new byte[16];
+        var copyLen = Math.Min(pwdBytes.Length, 16);
+        if (copyLen > 0)
+        {
+            Array.Copy(pwdBytes, pwdArr, copyLen);
+        }
+
+        var cfg = new Native.NET_DVR_ACTIVATECFG
+        {
+            dwSize = (uint)Marshal.SizeOf<Native.NET_DVR_ACTIVATECFG>(),
+            sPassword = pwdArr,
+            byLoginMode = 0,
+            byHttps = 0,
+            byRes = new byte[106]
+        };
+
+        var ok = Native.NET_DVR_ActivateDevice(ipAddress, (ushort)portNum, ref cfg);
+        if (ok)
+        {
+            _logger.LogInformation("SDK activation OK for {Ip}:{Port}", ipAddress, portNum);
+            return Task.FromResult<(bool, string?)>((true, null));
+        }
+
+        var err = Native.NET_DVR_GetLastError();
+        var msg = err switch
+        {
+            250u => "Устройство не активировано (ожидается activate).",
+            252u => "Устройство уже активировано.",
+            _ => DescribeError(err).Message
+        };
+        _logger.LogWarning("SDK activation failed for {Ip}:{Port}, error={Err}: {Msg}", ipAddress, portNum, err, msg);
+        return Task.FromResult<(bool, string?)>((false, msg));
+    }
+
     public HikvisionSdkHealth GetHealth()
     {
         uint errorCode;
@@ -1113,6 +1172,22 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         [DllImport(SdkLib)]
         public static extern bool NET_DVR_GetSadpInfoList(int lUserID, ref NET_DVR_SADPINFO_LIST lpSadpInfoList);
+
+        /// <summary>Activate inactive device via direct TCP (HCNetSDK). No SADP multicast required.</summary>
+        [DllImport(SdkLib, CharSet = CharSet.Ansi)]
+        public static extern bool NET_DVR_ActivateDevice(string sDVRIP, ushort wDVRPort, ref NET_DVR_ACTIVATECFG lpActivateCfg);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct NET_DVR_ACTIVATECFG
+        {
+            public uint dwSize;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] // PASSWD_LEN
+            public byte[] sPassword;
+            public byte byLoginMode;  // 0-Private, 1-ISAPI
+            public byte byHttps;       // 0-no HTTPS, 1-use HTTPS
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 106)]
+            public byte[] byRes;
+        }
 
         /// <summary>SADP search — no login required. Broadcasts on LAN, callback receives each device.</summary>
         [DllImport(SdkLib, EntryPoint = "NET_DVR_StartSearchDevices_V40")]

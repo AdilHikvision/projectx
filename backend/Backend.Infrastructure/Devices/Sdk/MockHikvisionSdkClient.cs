@@ -48,4 +48,9 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
 
         return Task.FromResult<IReadOnlyCollection<SdkDeviceEvent>>(events);
     }
+
+    public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<(bool, string?)>((false, null)); // Mock: no SDK, caller should try SADP
+    }
 }

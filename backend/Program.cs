@@ -237,6 +237,7 @@ app.MapGet("/api/devices/discover", async (
 
 app.MapPost("/api/devices/activate", async (
     ActivateDeviceRequest request,
+    IHikvisionSdkClient sdkClient,
     IOptions<SadpOptions> sadpOptions,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -245,8 +246,22 @@ app.MapPost("/api/devices/activate", async (
     {
         return Results.BadRequest(new { message = "IP, MAC and password are required." });
     }
-    var ok = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken, sadpOptions.Value);
-    return ok ? Results.Ok(new { success = true, message = "Activation sent." }) : Results.BadRequest(new { message = "Activation failed." });
+    var port = request.Port > 0 ? request.Port : 8000;
+
+    // 1. Try SDK activation first (NET_DVR_ActivateDevice — direct TCP)
+    var (sdkSuccess, sdkMessage) = await sdkClient.TryActivateViaSdkAsync(request.IpAddress, port, request.Password, cancellationToken);
+    if (sdkSuccess)
+    {
+        return Results.Ok(new { success = true, message = "Activation sent (SDK)." });
+    }
+    if (sdkMessage is not null)
+    {
+        return Results.BadRequest(new { message = sdkMessage });
+    }
+
+    // 2. Fallback to SADP (UDP multicast)
+    var (sadpSuccess, sadpMessage) = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken, sadpOptions.Value);
+    return sadpSuccess ? Results.Ok(new { success = true, message = "Activation sent (SADP)." }) : Results.BadRequest(new { message = sadpMessage ?? "Activation failed." });
 }).AllowAnonymous();
 
 app.MapGet("/api/devices", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
