@@ -51,6 +51,24 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("access_levels", (string)null);
                 });
 
+            modelBuilder.Entity("Backend.Domain.Entities.AccessLevelDoor", b =>
+                {
+                    b.Property<Guid>("AccessLevelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DoorIndex")
+                        .HasColumnType("integer");
+
+                    b.HasKey("AccessLevelId", "DeviceId", "DoorIndex");
+
+                    b.HasIndex("DeviceId", "DoorIndex");
+
+                    b.ToTable("access_level_doors", (string)null);
+                });
+
             modelBuilder.Entity("Backend.Domain.Entities.Device", b =>
                 {
                     b.Property<Guid>("Id")
@@ -90,6 +108,14 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("Port")
                         .HasColumnType("integer");
+
+                    b.Property<string>("Username")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Password")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
 
                     b.Property<DateTime?>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -478,6 +504,25 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("Backend.Domain.Entities.AccessLevelDoor", b =>
+                {
+                    b.HasOne("Backend.Domain.Entities.AccessLevel", "AccessLevel")
+                        .WithMany("Doors")
+                        .HasForeignKey("AccessLevelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Backend.Domain.Entities.Device", "Device")
+                        .WithMany("AccessLevelDoors")
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AccessLevel");
+
+                    b.Navigation("Device");
+                });
+
             modelBuilder.Entity("Backend.Domain.Entities.Device", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.DeviceStatus", "DeviceStatus")
@@ -580,9 +625,16 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Backend.Domain.Entities.AccessLevel", b =>
                 {
+                    b.Navigation("Doors");
+
                     b.Navigation("EmployeeAccessLevels");
 
                     b.Navigation("VisitorAccessLevels");
+                });
+
+            modelBuilder.Entity("Backend.Domain.Entities.Device", b =>
+                {
+                    b.Navigation("AccessLevelDoors");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.DeviceStatus", b =>

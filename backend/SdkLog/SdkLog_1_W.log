@@ -1,0 +1,51 @@
+[2026-03-08 01:08:51.837][ERR] Private connect 192.168.1.64:8000 sock=3112 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:08:51.850][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:08:51.851][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:08:51.889][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/libcrypto-1_1-x64.dll], hHandleRet[105119744]
+[2026-03-08 01:08:51.889][DBG] Load [libcrypto-1_1-x64.dll] SUCC, Real Path[C:\Users\yagup\Desktop\projectx\backend\winSDK\lib\libcrypto-1_1-x64.dll]
+[2026-03-08 01:08:51.893][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/libssl-1_1-x64.dll], hHandleRet[1694826496]
+[2026-03-08 01:08:51.893][DBG] Load [libssl-1_1-x64.dll] SUCC, Real Path[C:\Users\yagup\Desktop\projectx\backend\winSDK\lib\libssl-1_1-x64.dll]
+[2026-03-08 01:08:51.911][ERR] CSSLTrans::SSLTrans_CTX_Load_CA, invalid path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/cert/\]
+[2026-03-08 01:08:54.148][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCVoiceTalk.dll] SUCC
+[2026-03-08 01:08:54.168][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCGeneralCfgMgr.dll] SUCC
+[2026-03-08 01:08:54.175][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCPlayBack.dll] SUCC
+[2026-03-08 01:08:54.180][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCIndustry.dll] SUCC
+[2026-03-08 01:08:54.186][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCDisplay.dll] SUCC
+[2026-03-08 01:08:54.192][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCPreview.dll] SUCC
+[2026-03-08 01:08:54.198][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCAlarm.dll] SUCC
+[2026-03-08 01:08:54.200][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:08:54.267][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:08:56.283][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:08:56.361][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:08:58.376][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:08:58.423][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:00.437][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:00.482][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:02.499][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:02.560][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:04.567][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:04.612][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:06.618][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:06.665][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:08.672][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:08.735][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:10.738][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:10.784][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:12.792][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:12.855][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:14.861][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:14.922][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:16.935][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:17.013][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:17.013][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:09:22.036][ERR] Private connect 192.168.1.64:8000 sock=3300 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:09:22.036][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:09:22.036][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:09:24.041][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:24.087][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:26.093][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:26.140][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:28.146][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:28.208][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:30.216][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:30.262][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1

@@ -52,28 +52,24 @@ $defaultSdkDir = if ($isLinuxRuntime) {
 } else {
     Join-Path $repoRoot "winSDK\lib"
 }
+# HCNetSDK (не HPNetSDK) — требуется для NET_DVR_ActivateDevice. HPNetSDK исключён.
 $sdkCandidates += @(
     $defaultSdkDir,
-    (Join-Path $repoRoot "winSDK\lib\HPNetSDK"),
     (Join-Path $repoRoot "linuxSDK\lib")
 )
 
 $sdkLibDir = $sdkCandidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -First 1
 
+# Для Windows: не переключаться на вложенные папки (HPNetSDK) — нужен HCNetSDK в winSDK\lib
 if ($sdkLibDir -and -not $isLinuxRuntime) {
-    $hasDlls = (Get-ChildItem -Path $sdkLibDir -Filter "*.dll" -File -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if (-not $hasDlls) {
-        $nestedWithDlls = Get-ChildItem -Path $sdkLibDir -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Get-ChildItem -Path $_.FullName -Filter "*.dll" -File -ErrorAction SilentlyContinue } |
-            Select-Object -First 1
-        if ($nestedWithDlls) {
-            $sdkLibDir = $nestedWithDlls.FullName
-        }
+    $hasHcNetSdk = Test-Path (Join-Path $sdkLibDir "HCNetSDK.dll")
+    if (-not $hasHcNetSdk) {
+        Write-Warning "HCNetSDK.dll not found in $sdkLibDir. Ensure winSDK\lib contains full HCNetSDK (not HPNetSDK)."
     }
 }
 
 if (-not $sdkLibDir) {
-    $expected = if ($isLinuxRuntime) { "linuxSDK\\EN-HCNetSDK...\\lib" } else { "winSDK\\lib or winSDK\\lib\\HPNetSDK" }
+    $expected = if ($isLinuxRuntime) { "linuxSDK\\lib or linuxSDK\\EN-HCNetSDK...\\lib" } else { "winSDK\\lib (HCNetSDK)" }
     Write-Warning "Hikvision SDK folder not found. Expected $expected or HIKVISION_SDK_PATH. Artifacts will be built without SDK native files."
 }
 else {
@@ -113,7 +109,7 @@ else {
     $primarySdkFiles = if ($isLinuxRuntime) {
         @("libhcnetsdk.so", "libHCCore.so", "libhpr.so")
     } else {
-        @("HCNetSDK.dll", "HPNetSDK.dll", "HCCore.dll", "hpr.dll")
+        @("HCNetSDK.dll", "HCCore.dll", "hpr.dll")
     }
     foreach ($sdkFile in $primarySdkFiles) {
         if (Test-Path (Join-Path $publishDir $sdkFile)) {

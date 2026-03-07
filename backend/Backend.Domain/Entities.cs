@@ -31,8 +31,14 @@ public sealed class Device : BaseEntity
     public DeviceType DeviceType { get; set; } = DeviceType.AccessController;
     public DateTime? LastSeenUtc { get; set; }
 
+    /// <summary>Логин для подключения к устройству. null — использовать глобальный конфиг.</summary>
+    public string? Username { get; set; }
+    /// <summary>Пароль для подключения к устройству. null — использовать глобальный конфиг.</summary>
+    public string? Password { get; set; }
+
     public Guid DeviceStatusId { get; set; }
     public DeviceStatus? DeviceStatus { get; set; }
+    public ICollection<AccessLevelDoor> AccessLevelDoors { get; set; } = new List<AccessLevelDoor>();
 }
 
 public sealed class AccessLevel : BaseEntity
@@ -42,6 +48,20 @@ public sealed class AccessLevel : BaseEntity
 
     public ICollection<EmployeeAccessLevel> EmployeeAccessLevels { get; set; } = new List<EmployeeAccessLevel>();
     public ICollection<VisitorAccessLevel> VisitorAccessLevels { get; set; } = new List<VisitorAccessLevel>();
+    public ICollection<AccessLevelDoor> Doors { get; set; } = new List<AccessLevelDoor>();
+}
+
+/// <summary>Привязка уровня доступа к двери устройства (DeviceId + DoorIndex, 0-based).</summary>
+public sealed class AccessLevelDoor
+{
+    public Guid AccessLevelId { get; set; }
+    public AccessLevel? AccessLevel { get; set; }
+
+    public Guid DeviceId { get; set; }
+    public Device? Device { get; set; }
+
+    /// <summary>Номер двери на устройстве (0-based, dwDoorNo в Hikvision SDK).</summary>
+    public int DoorIndex { get; set; }
 }
 
 public sealed class Employee : BaseEntity

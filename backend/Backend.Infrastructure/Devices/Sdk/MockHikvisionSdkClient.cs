@@ -6,7 +6,7 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
 {
     private readonly ConcurrentDictionary<string, (string Ip, int Port)> _connections = new();
 
-    public Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default, IProgress<SdkDiscoveredDevice>? progress = null)
     {
         IReadOnlyCollection<SdkDiscoveredDevice> devices =
         [
@@ -14,10 +14,13 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
             new("MOCK-IC-001", "Mock Intercom #1", "192.168.1.102", 8000, "Intercom", "Intercom", "AA:BB:CC:DD:EE:02", "V1.0", true)
         ];
 
+        foreach (var d in devices)
+            progress?.Report(d);
+
         return Task.FromResult(devices);
     }
 
-    public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default)
+    public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, string? username = null, string? password = null, CancellationToken cancellationToken = default)
     {
         _connections[deviceIdentifier] = (ipAddress, port);
         return Task.CompletedTask;
@@ -29,7 +32,7 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyCollection<SdkDeviceEvent>> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default)
+    public Task<PullEventsResult> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
         var events = new List<SdkDeviceEvent>();
@@ -46,7 +49,7 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
             }
         }
 
-        return Task.FromResult<IReadOnlyCollection<SdkDeviceEvent>>(events);
+        return Task.FromResult(new PullEventsResult(events, []));
     }
 
     public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)

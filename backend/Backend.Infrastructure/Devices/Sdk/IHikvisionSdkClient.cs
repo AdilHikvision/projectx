@@ -17,12 +17,17 @@ public sealed record SdkDeviceEvent(
     DateTime OccurredUtc,
     string Payload);
 
+/// <summary>Результат опроса устройств: события + идентификаторы недоступных устройств.</summary>
+public sealed record PullEventsResult(
+    IReadOnlyCollection<SdkDeviceEvent> Events,
+    IReadOnlyCollection<string> UnreachableDeviceIds);
+
 public interface IHikvisionSdkClient
 {
-    Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default);
-    Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default, IProgress<SdkDiscoveredDevice>? progress = null);
+    Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, string? username = null, string? password = null, CancellationToken cancellationToken = default);
     Task DisconnectAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
-    Task<IReadOnlyCollection<SdkDeviceEvent>> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default);
+    Task<PullEventsResult> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default);
     /// <summary>Activate inactive device via HCNetSDK NET_DVR_ActivateDevice (direct TCP). Returns (Success, Message).</summary>
     Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default);
 }

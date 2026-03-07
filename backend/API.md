@@ -12,7 +12,7 @@
 - **Connect/Disconnect** — Hikvision HCNetSDK (NET_DVR_Login_V40, NET_DVR_Logout_V30)
 - **Events** — события от подключённых устройств через SDK
 
-**Важно:** winSDK содержит HPNetSDK (Hikvision Partner Pro), а не HCNetSDK. Для Discover используется ISAPI — он не требует SDK.
+**Важно:** Для артефактов используется HCNetSDK из `winSDK\lib` (не HPNetSDK). HCNetSDK нужен для активации (`NET_DVR_ActivateDevice`). Discover — через ISAPI, не требует SDK.
 
 **Настройка** в appsettings.json:
 - `Hikvision:Username` — логин устройства (по умолчанию admin)
@@ -70,7 +70,7 @@
 - **Method:** `GET`
 - **Path:** `/api/health/sdk`
 - **Auth:** не требуется
-- **Назначение:** диагностика состояния Hikvision SDK (инициализация, активные сессии, последний код ошибки, пути поиска библиотек).
+- **Назначение:** диагностика состояния Hikvision SDK (инициализация, активные сессии, последний код ошибки с контекстом устройства, пути поиска библиотек).
 - **Response 200:**
 
 ```json
@@ -81,12 +81,17 @@
   "lastErrorCode": "29",
   "lastErrorMessage": "Device is unreachable.",
   "lastErrorHint": "Check IP address, port, NAT, and whether service is running on device.",
+  "lastErrorDevice": "DS-K1T342MFX-E120250307V043800ENGB9637211",
+  "lastErrorCategory": "network",
   "librarySearchPaths": [
     "C:\\projectx\\winSDK\\lib",
     "C:\\projectx\\artifacts\\installer\\backend-publish"
   ]
 }
 ```
+
+- **lastErrorDevice** — идентификатор устройства или `IP:port`, вызвавшего последнюю ошибку (при Login или PullAcsEvents).
+- **lastErrorCategory** — категория ошибки: `network` (7, 8, 9, 10, 11, 29, 72, 73), `auth` (1, 23, 76, 153), `other`.
 
 ### 2) Регистрация пользователя
 
@@ -248,6 +253,42 @@
 
 - `404` — устройство не найдено (`GET /{id}`, `PUT`, `DELETE`)
 - `409` — конфликт `deviceIdentifier` (дублирование)
+
+### 6.1) CRUD Access Levels
+
+- **`GET /api/access-levels`** — список всех уровней доступа (сортировка по Name).
+- **`GET /api/access-levels/{id}`** — один уровень по Id.
+- **`POST /api/access-levels`** — создать уровень (проверка уникальности Name).
+- **`PUT /api/access-levels/{id}`** — обновить уровень.
+- **`DELETE /api/access-levels/{id}`** — удалить уровень (CASCADE по связям Employee/Visitor).
+- **Auth для всех операций:** требуется JWT Bearer.
+
+Пример `POST /api/access-levels`:
+
+```json
+{
+  "name": "Full Access",
+  "description": "24/7 unrestricted access to main areas"
+}
+```
+
+Пример ответа:
+
+```json
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "name": "Full Access",
+  "description": "24/7 unrestricted access to main areas",
+  "createdUtc": "2026-03-05T12:00:00Z",
+  "updatedUtc": null
+}
+```
+
+Возможные ошибки:
+
+- `400` — Name пустой
+- `404` — уровень не найден (`GET /{id}`, `PUT`, `DELETE`)
+- `409` — конфликт Name (дублирование)
 
 ### 7) Подключение и отключение устройства
 

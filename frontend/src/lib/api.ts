@@ -5,7 +5,7 @@ const API_BASE_URL =
 
 const HUB_BASE_URL = (import.meta.env.VITE_HUB_URL as string | undefined)?.trim() ||
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
-  'http://localhost:5154'
+  API_BASE_URL
 
 export interface ApiRequestOptions extends RequestInit {
   token?: string | null
@@ -47,11 +47,30 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(errorText || `Request failed with status ${response.status}`)
+    let message = errorText || `Request failed with status ${response.status}`
+    try {
+      const json = JSON.parse(errorText)
+      if (typeof json?.message === 'string') message = json.message
+    } catch {
+      /* use raw errorText */
+    }
+    throw new Error(message)
   }
 
   if (response.status === 204) {
     return undefined as T
+  }
+
+  const contentType = response.headers.get('Content-Type') ?? ''
+  if (!contentType.includes('application/json')) {
+    const text = await response.text()
+    const preview = text.slice(0, 80).replace(/\s+/g, ' ')
+    throw new Error(
+      `Server returned ${contentType || 'non-JSON'} instead of JSON. ` +
+        (preview.toLowerCase().includes('<!doctype') || preview.toLowerCase().includes('<html')
+          ? 'Is the backend running on port 5154? Check VITE_API_BASE_URL.'
+          : `Preview: ${preview}`)
+    )
   }
 
   return (await response.json()) as T

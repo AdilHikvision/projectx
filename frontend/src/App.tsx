@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { useAuth } from './auth/AuthContext'
+import { LoadingOverlay } from './components/LoadingOverlay'
+import { useLoading } from './context/LoadingContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AccessLevelsPage } from './pages/AccessLevelsPage'
 import { DevicesPage } from './pages/DevicesPage'
@@ -12,13 +13,11 @@ import { WorkHoursTrackingPage } from './pages/WorkHoursTrackingPage'
 import './App.css'
 
 function App() {
-  const { isLoading } = useAuth()
-
-  if (isLoading) {
-    return <div className="page-message">Загрузка...</div>
-  }
+  const { isLoading } = useLoading()
 
   return (
+    <>
+    <LoadingOverlay isLoading={isLoading} />
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
@@ -28,10 +27,11 @@ function App() {
         <Route path="/work-hours" element={<WorkHoursTrackingPage />} />
         <Route path="/payroll" element={<PayrollCalculationPage />} />
         <Route path="/settings" element={<SystemSettingsPage />} />
-        <Route path="/system-status" element={<SystemStatusPage />} />
+        <Route path="/status" element={<SystemStatusPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/devices" replace />} />
     </Routes>
+    </>
   )
 }
 

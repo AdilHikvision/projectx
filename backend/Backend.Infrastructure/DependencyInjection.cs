@@ -59,6 +59,9 @@ public static class DependencyInjection
         services.AddSingleton<EventListenerService>();
         services.AddSingleton<IEventListenerService>(provider => provider.GetRequiredService<EventListenerService>());
         services.AddHostedService(provider => provider.GetRequiredService<EventListenerService>());
+        services.AddSingleton<DeviceArpStatusService>();
+        services.AddSingleton<IDeviceArpStatusService>(provider => provider.GetRequiredService<DeviceArpStatusService>());
+        services.AddHostedService(provider => provider.GetRequiredService<DeviceArpStatusService>());
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();

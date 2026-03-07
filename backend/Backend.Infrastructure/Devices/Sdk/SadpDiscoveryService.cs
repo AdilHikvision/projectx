@@ -35,7 +35,10 @@ public sealed class SadpDiscoveryService
     /// <summary>
     /// Запуск поиска устройств по всем 4 каналам параллельно.
     /// </summary>
-    public async Task<IReadOnlyCollection<SdkDiscoveredDevice>> DiscoverAsync(CancellationToken cancellationToken = default)
+    /// <param name="progress">При обнаружении нового устройства — Report для streaming.</param>
+    public async Task<IReadOnlyCollection<SdkDiscoveredDevice>> DiscoverAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<SdkDiscoveredDevice>? progress = null)
     {
         var timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -51,22 +54,22 @@ public sealed class SadpDiscoveryService
         // 1. Multicast Hikvision (239.255.255.250:37020)
         if (_options.MulticastEnabled)
         {
-            tasks.Add(RunMulticastChannelAsync("Multicast", MulticastHikvision, PortHikvision, probeBytes, probeV32Bytes, discovered, cts.Token));
+            tasks.Add(RunMulticastChannelAsync("Multicast", MulticastHikvision, PortHikvision, probeBytes, probeV32Bytes, discovered, progress, cts.Token));
         }
 
         // 2. Multicast Local / Dahua (239.255.255.251:37810)
         if (_options.MulticastEnabled)
         {
-            tasks.Add(RunMulticastChannelAsync("MulticastLocal", MulticastDahua, PortDahua, probeBytes, probeV32Bytes, discovered, cts.Token));
+            tasks.Add(RunMulticastChannelAsync("MulticastLocal", MulticastDahua, PortDahua, probeBytes, probeV32Bytes, discovered, progress, cts.Token));
         }
 
         // 3. UDP Subnet — broadcast по каждой подсети
-        tasks.Add(RunUdpSubnetChannelAsync(probeBytes, probeV32Bytes, discovered, cts.Token));
+        tasks.Add(RunUdpSubnetChannelAsync(probeBytes, probeV32Bytes, discovered, progress, cts.Token));
 
         // 4. PCAP — пассивный перехват (WinPcap/Npcap)
         if (_options.PcapEnabled && OperatingSystem.IsWindows())
         {
-            tasks.Add(RunPcapChannelAsync(discovered, cts.Token));
+            tasks.Add(RunPcapChannelAsync(discovered, progress, cts.Token));
         }
 
         try
@@ -114,6 +117,7 @@ public sealed class SadpDiscoveryService
         byte[] probeBytes,
         byte[] probeV32Bytes,
         ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
+        IProgress<SdkDiscoveredDevice>? progress,
         CancellationToken cancellationToken)
     {
         var broadcastTargets = ResolveBroadcastTargets().ToArray();
@@ -158,7 +162,8 @@ public sealed class SadpDiscoveryService
                             if (device is not null)
                             {
                                 var key = $"{device.IpAddress}:{device.Port}";
-                                discovered.TryAdd(key, device);
+                                if (discovered.TryAdd(key, device))
+                                    progress?.Report(device);
                             }
                         }
                         catch (OperationCanceledException)
@@ -186,6 +191,7 @@ public sealed class SadpDiscoveryService
         byte[] probeBytes,
         byte[] probeV32Bytes,
         ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
+        IProgress<SdkDiscoveredDevice>? progress,
         CancellationToken cancellationToken)
     {
         var broadcastTargets = ResolveBroadcastTargets().ToArray();
@@ -232,7 +238,8 @@ public sealed class SadpDiscoveryService
                             if (device is not null)
                             {
                                 var key = $"{device.IpAddress}:{device.Port}";
-                                discovered.TryAdd(key, device);
+                                if (discovered.TryAdd(key, device))
+                                    progress?.Report(device);
                             }
                         }
                         catch (OperationCanceledException)
@@ -258,13 +265,15 @@ public sealed class SadpDiscoveryService
     /// </summary>
     private async Task RunPcapChannelAsync(
         ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
+        IProgress<SdkDiscoveredDevice>? progress,
         CancellationToken cancellationToken)
     {
         var pcapDevices = await SadpRawDiscovery.TryDiscoverAsync(_logger, cancellationToken);
         foreach (var d in pcapDevices)
         {
             var key = $"{d.IpAddress}:{d.Port}";
-            discovered.TryAdd(key, d);
+            if (discovered.TryAdd(key, d))
+                progress?.Report(d);
         }
     }
 

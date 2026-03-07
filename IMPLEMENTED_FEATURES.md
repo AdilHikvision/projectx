@@ -1,5 +1,27 @@
 # Реализованные фичи (текущее состояние)
 
+## Последние изменения (март 2026)
+
+### Статус устройств — только через ARP
+- Статус устройств определяется **исключительно через ARP-запросы** (Win32 `SendARP`, iphlpapi.dll).
+- `DeviceArpStatusService` — фоновый опрос устройств из БД каждые 5 сек; статус **не хранится в БД** (только кэш в памяти и SignalR).
+- `DeviceConnectionManager` больше не обновляет статус в БД; используется только для SDK-подключений (события).
+- API `GET /api/devices/statuses` и `GET /api/devices/{id}/status` используют `IDeviceArpStatusService`.
+- Online — после успешного ARP-ответа; Offline — после 2 подряд неудачных ARP-запросов.
+
+### Диагностика SDK — контекст ошибки
+- `GET /api/health/sdk` расширен полями `lastErrorDevice` и `lastErrorCategory`.
+- Последняя ошибка сохраняется с привязкой к устройству при Login и PullAcsEvents.
+- Категории: `network` (7, 8, 9, 10, 11, 29, 72, 73), `auth` (1, 23, 76, 153), `other`.
+- В UI System Status — понятные сообщения: «Устройство вне сети» для network, «Проверьте логин и права» для auth.
+
+### Frontend
+- **System Status** — маршрут `/status` (исправлена ссылка в сайдбаре).
+- **System Settings** — удалены блоки Security Protocol, Communication Nodes, PROJECT-X ENTERPRISE; удалены кнопки Cancel/Save Changes.
+- **Курсоры** — `pointer` для кнопок, ссылок, табов; `default` для текстовых элементов.
+
+---
+
 ## Креденшилы для входа
 
 | Поле | Значение |
@@ -27,10 +49,16 @@
   - `POST /api/devices`
   - `PUT /api/devices/{id}`
   - `DELETE /api/devices/{id}`
+- CRUD по Access Level:
+  - `GET /api/access-levels`
+  - `GET /api/access-levels/{id}`
+  - `POST /api/access-levels`
+  - `PUT /api/access-levels/{id}`
+  - `DELETE /api/access-levels/{id}`
 - Управление подключением устройств:
   - `POST /api/devices/{id}/connect`
   - `POST /api/devices/{id}/disconnect`
-- Realtime-статусы:
+- Realtime-статусы (источник — ARP, не БД):
   - `GET /api/devices/{id}/status`
   - `GET /api/devices/statuses`
 - События устройств:
@@ -43,7 +71,7 @@
   - `POST /api/system/service/{action}` (`start|stop|restart`, loopback-only)
 - Фоновая обработка:
   - Hosted service для опроса событий SDK
-  - Heartbeat-обновление `lastSeen`
+  - `DeviceArpStatusService` — ARP-опрос статусов устройств (статус не в БД)
   - Перевод «застоявшихся» подключений в offline
 
 ## 2) Интеграция Hikvision SDK
@@ -58,12 +86,23 @@
   - сканирование локальных подсетей и проверка доступности/логина устройств.
 - Реализована диагностика SDK:
   - инициализация, количество активных подключений,
-  - последний код/описание ошибки,
+  - последний код/описание ошибки с контекстом устройства (`lastErrorDevice`, `lastErrorCategory`),
   - используемые пути поиска библиотек.
 - Поддержан runtime-конфиг путей нативных библиотек:
   - Windows (`PATH`)
   - Linux (`LD_LIBRARY_PATH`)
   - источники: `Hikvision:SdkPath` и `HIKVISION_SDK_PATH`.
+- Активация неактивированных устройств:
+  - Порядок попыток: SDK (HCNetSDK) → ISAPI → SADP.
+  - ISAPI activate (Face Recognition Terminals): подтверждённый формат XML:
+    ```xml
+    <Activate version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+      <ActivateInfo>
+        <password>{encryptedPassword}</password>
+      </ActivateInfo>
+    </Activate>
+    ```
+  - Challenge: POST `/ISAPI/Security/challenge` → PUT `/ISAPI/System/activate` с digest-шифрованием пароля.
 
 ## 3) Frontend (React + Vite + TypeScript)
 
@@ -84,10 +123,15 @@
   - действия:
     - «Добавить» (сразу в реестр)
     - «В форму» (автоподстановка в форму создания)
-- Страница системы:
+- Страница системы (`/status`):
   - общий статус backend-службы и БД
   - кнопки управления службой (`start/stop/restart`)
-  - блок «Диагностика SDK» (`/api/health/sdk`)
+  - блок «Диагностика SDK» с понятными сообщениями по типу ошибки (network/auth)
+- Страница настроек (`/settings`):
+  - General Settings (язык, таймзона, интервал обновления)
+- Страница Access Levels (`/access-levels`):
+  - CRUD уровней доступа (Name, Description)
+  - поиск по имени и описанию
 
 ## 4) Конфигурация и инфраструктура
 
@@ -122,6 +166,9 @@
 - [done] Диагностика SDK endpoint (`/api/health/sdk`) + UI-блок.
 - [done] Расширенная карта ошибок Hikvision SDK + подсказки по устранению в UI.
 - [done] Системный мониторинг backend-службы и БД.
+- [done] Активация устройств (SDK → ISAPI → SADP); ISAPI-формат: `<Activate><ActivateInfo><password>...</password></ActivateInfo></Activate>` (namespace `isapi.org/ver20`).
+- [done] Статус устройств только через ARP (без хранения в БД).
+- [done] SDK Health с контекстом ошибки (lastErrorDevice, lastErrorCategory).
 
 ### In-Progress
 
@@ -137,7 +184,6 @@
 
 - [planned] CRUD для сотрудников и посетителей.
 - [planned] CRUD для карт / отпечатков / лиц.
-- [planned] CRUD для Access Level.
 - [planned] Time Attendance (сбор и расчёт).
 - [planned] Payroll (базовый расчёт).
 - [planned] Инсталлятор с проверкой SDK/DB/службы.

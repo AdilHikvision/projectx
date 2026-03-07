@@ -8,9 +8,11 @@ $ports = @(5154, 5173, 5174)
 function Stop-PortProcesses {
     foreach ($port in $ports) {
         Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | ForEach-Object {
-            $pid = $_.OwningProcess
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-            Write-Host "  Stopped PID $pid on port $port" -ForegroundColor Gray
+            $procId = $_.OwningProcess
+            if ($procId -gt 0) {
+                Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                Write-Host "  Stopped PID $procId on port $port" -ForegroundColor Gray
+            }
         }
     }
 }
@@ -49,9 +51,14 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; exit 1 }
 Pop-Location
 
 Write-Host "Starting backend in new terminal..." -ForegroundColor Green
+$envFile = Join-Path $backendDir ".env"
+$envLoad = if (Test-Path $envFile) {
+    "Get-Content '$envFile' -ErrorAction SilentlyContinue | Where-Object { `$_ -match '^[^#].*=' } | ForEach-Object { `$p = `$_.IndexOf('='); if (`$p -gt 0) { `$k = `$_.Substring(0,`$p).Trim(); `$v = `$_.Substring(`$p+1).Trim(); [Environment]::SetEnvironmentVariable(`$k, `$v, 'Process') } }"
+} else { "" }
 $backendScript = @"
 `$env:ASPNETCORE_ENVIRONMENT = 'Development'
 Set-Location '$backendDir'
+$envLoad
 dotnet run --launch-profile http
 "@
 $backendScript | Out-File -FilePath (Join-Path $env:TEMP "projectx-backend-dev.ps1") -Encoding utf8

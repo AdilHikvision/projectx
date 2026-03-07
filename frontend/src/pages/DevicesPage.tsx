@@ -3,22 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
 import { Card, Badge, Button, Avatar, PageHeader, Input, Modal } from '../components/ui'
+import { useLoading } from '../context/LoadingContext'
 import { apiRequest, getHubUrl } from '../lib/api'
 
 type DeviceStatus = 'Online' | 'Offline'
 
 const DEVICE_TYPES = [
-  { value: 'all', label: 'All Devices' },
-  { value: 'AccessController', label: 'Controllers' },
-  { value: 'Intercom', label: 'Intercoms' },
-  { value: 'AttendanceTerminal', label: 'Terminals' },
+  { value: 'all', label: 'Все' },
+  { value: 'AccessController', label: 'Контроллеры доступа' },
+  { value: 'Intercom', label: 'Интеркомы' },
 ] as const
-
-const DEVICE_TYPE_OPTIONS = [
-  { value: 1, label: 'Access Controller' },
-  { value: 2, label: 'Intercom' },
-  { value: 3, label: 'Attendance Terminal' },
-]
 
 interface Device {
   id: string
@@ -30,6 +24,7 @@ interface Device {
   deviceType: string
   status: DeviceStatus
   lastSeenUtc?: string | null
+  username?: string | null
 }
 
 interface DeviceStatusResponse {
@@ -58,6 +53,8 @@ interface DeviceFormData {
   port: number
   location: string
   deviceType: number
+  username: string
+  password: string
 }
 
 const emptyForm: DeviceFormData = {
@@ -67,6 +64,8 @@ const emptyForm: DeviceFormData = {
   port: 8000,
   location: '',
   deviceType: 1,
+  username: 'admin',
+  password: '',
 }
 
 function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
@@ -75,6 +74,39 @@ function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
     ...device,
     status: status.status,
     lastSeenUtc: status.lastSeenUtc ?? device.lastSeenUtc,
+  }
+}
+
+const OFFLINE_DEBOUNCE_COUNT = 2
+
+function applyStatusWithDebounce(
+  device: Device,
+  status: DeviceStatusResponse | undefined,
+  offlineCountMap: Map<string, number>
+): Device {
+  if (!status) return device
+  const key = device.id
+  if (status.status === 'Online') {
+    offlineCountMap.delete(key)
+    return { ...device, status: 'Online', lastSeenUtc: status.lastSeenUtc ?? device.lastSeenUtc }
+  }
+  const count = (offlineCountMap.get(key) ?? 0) + 1
+  offlineCountMap.set(key, count)
+  if (count >= OFFLINE_DEBOUNCE_COUNT) {
+    offlineCountMap.delete(key)
+    return { ...device, status: 'Offline', lastSeenUtc: status.lastSeenUtc ?? device.lastSeenUtc }
+  }
+  return device
+}
+
+function getOfflineReason(device: Device): string {
+  if (device.status !== 'Offline') return ''
+  if (!device.lastSeenUtc) return 'Устройство никогда не подключалось'
+  try {
+    const d = new Date(device.lastSeenUtc)
+    return `Последняя активность: ${d.toLocaleString('ru-RU')}`
+  } catch {
+    return 'Соединение потеряно'
   }
 }
 
@@ -119,8 +151,8 @@ function getDiscoverTypeLabel(type: string): string {
 
 export function DevicesPage() {
   const { token } = useAuth()
+  const { startLoading, stopLoading, isLoading } = useLoading()
   const [devices, setDevices] = useState<Device[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [isDiscovering, setIsDiscovering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
@@ -132,17 +164,25 @@ export function DevicesPage() {
   const [activatingDevice, setActivatingDevice] = useState<(DiscoveredDevice & { inferredType: string; isActive: boolean }) | null>(null)
   const [activatePassword, setActivatePassword] = useState('')
   const [activateConfirm, setActivateConfirm] = useState('')
+  const [activateError, setActivateError] = useState<string | null>(null)
   const [discovered, setDiscovered] = useState<DiscoveredDevice[]>([])
   const [discoverTypeTab, setDiscoverTypeTab] = useState<string>('all')
   const [discoverSortActive, setDiscoverSortActive] = useState<'all' | 'active' | 'inactive'>('all')
   const [discoverSearchQuery, setDiscoverSearchQuery] = useState('')
   const [discoverIpSort, setDiscoverIpSort] = useState<'asc' | 'desc'>('asc')
+  const [showAddedDevices, setShowAddedDevices] = useState(false)
   const [formData, setFormData] = useState<DeviceFormData>(emptyForm)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [addFromDevice, setAddFromDevice] = useState<DiscoveredDevice | null>(null)
+  const [addDeviceName, setAddDeviceName] = useState('')
+  const [addDeviceUsername, setAddDeviceUsername] = useState('admin')
+  const [addDevicePassword, setAddDevicePassword] = useState('')
+  const [networkWarningMessage, setNetworkWarningMessage] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     if (!token) return
     setError(null)
+    startLoading()
     try {
       const [devicesResult, statusesResult] = await Promise.all([
         apiRequest<Device[]>('/api/devices', { token }),
@@ -153,21 +193,24 @@ export function DevicesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load devices')
     } finally {
-      setIsLoading(false)
+      stopLoading()
     }
-  }, [token])
+  }, [token, startLoading, stopLoading])
 
   const fetchStatuses = useCallback(async () => {
     if (!token) return
     try {
       const statuses = await apiRequest<DeviceStatusResponse[]>('/api/devices/statuses', { token })
       const byDeviceId = new Map(statuses.map((s) => [s.deviceId, s]))
-      setDevices((prev) => prev.map((d) => mergeStatus(d, byDeviceId.get(d.id))))
+      const offlineMap = offlineDebounceRef.current
+      setDevices((prev) => prev.map((d) => applyStatusWithDebounce(d, byDeviceId.get(d.id), offlineMap)))
     } catch { /* ignore */ }
   }, [token])
 
   const fetchStatusesRef = useRef(fetchStatuses)
   fetchStatusesRef.current = fetchStatuses
+  const hubRef = useRef<HubConnection | null>(null)
+  const offlineDebounceRef = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     loadData()
@@ -201,14 +244,37 @@ export function DevicesPage() {
           .build()
 
         hub.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
-          setDevices((prev) => prev.map((d) => (d.id === payload.deviceId || d.deviceIdentifier === payload.deviceIdentifier ? mergeStatus(d, payload) : d)))
+          const offlineMap = offlineDebounceRef.current
+          setDevices((prev) =>
+            prev.map((d) =>
+              d.id === payload.deviceId || d.deviceIdentifier === payload.deviceIdentifier
+                ? applyStatusWithDebounce(d, payload, offlineMap)
+                : d
+            )
+          )
+        })
+
+        hub.on('DeviceFound', (device: DiscoveredDevice) => {
+          setDiscovered((prev) => {
+            const key = `${device.ipAddress}:${device.port}`
+            const idx = prev.findIndex((x) => `${x.ipAddress}:${x.port}` === key)
+            const next = { ...device }
+            if (idx >= 0) return prev.map((x, i) => (i === idx ? next : x))
+            return [...prev, next]
+          })
+        })
+
+        hub.on('DiscoveryComplete', (count: number) => {
+          setIsDiscovering(false)
+          setInfo(count > 0 ? `Found ${count} devices.` : 'No devices found.')
         })
 
         await hub.start()
+        hubRef.current = hub
       } catch { /* fallback */ }
 
       if (!isDisposed) {
-        pollTimer = window.setInterval(() => fetchStatusesRef.current(), 5000)
+        pollTimer = window.setInterval(() => fetchStatusesRef.current(), 3000)
       }
     }
 
@@ -216,6 +282,7 @@ export function DevicesPage() {
 
     return () => {
       isDisposed = true
+      hubRef.current = null
       if (pollTimer) window.clearInterval(pollTimer)
       hub?.stop().catch(() => { /* ignore — cleanup */ })
     }
@@ -229,35 +296,57 @@ export function DevicesPage() {
     }
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim()
-      result = result.filter(
-        (d) =>
-          d.name.toLowerCase().includes(q) ||
-          d.deviceIdentifier.toLowerCase().includes(q) ||
-          d.ipAddress.toLowerCase().includes(q) ||
-          (d.location?.toLowerCase().includes(q) ?? false)
-      )
+      const q = searchQuery.toLowerCase().trim().replace(/\s+/g, ' ')
+      const terms = q.split(' ').filter(Boolean)
+      result = result.filter((d) => {
+        const name = (d.name ?? '').toLowerCase()
+        const identifier = (d.deviceIdentifier ?? '').toLowerCase()
+        const ip = (d.ipAddress ?? '').toLowerCase()
+        const location = (d.location ?? '').toLowerCase()
+        const typeLabel = getDeviceTypeLabel(d.deviceType ?? '').toLowerCase()
+        const portStr = String(d.port ?? '')
+        const searchable = `${name} ${identifier} ${ip} ${location} ${typeLabel} ${portStr}`
+        return terms.every((term) => searchable.includes(term))
+      })
     }
 
     return result
   }, [devices, typeFilter, searchQuery])
 
-  async function handleDiscover() {
-    if (!token) return
-    setIsDiscovering(true)
+  function openDiscoverModal() {
     setError(null)
     setInfo(null)
+    setModalMode('discover')
+  }
+
+  async function startDiscovery() {
+    if (!token) return
+    setDiscovered([])
+    setIsDiscovering(true)
+    setError(null)
+
+    const hub = hubRef.current
+    if (hub?.state !== 'Connected') {
+      setError('Realtime connection not ready. Wait a moment and try again.')
+      setIsDiscovering(false)
+      return
+    }
+
     try {
-      const discoveredList = await apiRequest<DiscoveredDevice[]>('/api/devices/discover', { token })
-      console.log('[Discovery API] returned data:', discoveredList)
-      setDiscovered(discoveredList)
-      setModalMode('discover')
-      setInfo(discoveredList.length > 0 ? `Found ${discoveredList.length} devices.` : 'No devices found.')
+      await hub.invoke('StartDiscovery')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Discovery failed')
-    } finally {
       setIsDiscovering(false)
     }
+  }
+
+  async function handleDiscover() {
+    openDiscoverModal()
+    await startDiscovery()
+  }
+
+  async function handleDiscoverRefresh() {
+    await startDiscovery()
   }
 
   function openCreateModal() {
@@ -274,6 +363,8 @@ export function DevicesPage() {
       port: device.port,
       location: device.location ?? '',
       deviceType: device.deviceType === 'AccessController' ? 1 : device.deviceType === 'Intercom' ? 2 : 3,
+      username: device.username ?? 'admin',
+      password: '',
     })
     setModalMode('edit')
   }
@@ -291,6 +382,7 @@ export function DevicesPage() {
     setActivatePassword('')
     setActivateConfirm('')
     setDiscovered([])
+    closeAddFromDiscoveredModal()
   }
 
   function closeActivateModal() {
@@ -298,12 +390,26 @@ export function DevicesPage() {
     setActivatingDevice(null)
     setActivatePassword('')
     setActivateConfirm('')
+    setActivateError(null)
   }
 
-  function openActivateModal(d: DiscoveredDevice & { inferredType: string; isActive: boolean }) {
+  async function openActivateModal(d: DiscoveredDevice & { inferredType: string; isActive: boolean }) {
+    try {
+      const res = await apiRequest<{ inSameSubnet: boolean; message?: string }>(
+        `/api/devices/check-network?ipAddress=${encodeURIComponent(d.ipAddress)}`,
+        { token: token ?? undefined }
+      )
+      if (!res.inSameSubnet && res.message) {
+        setNetworkWarningMessage(res.message)
+        return
+      }
+    } catch {
+      // При ошибке API разрешаем продолжить
+    }
     setActivatingDevice(d)
     setActivatePassword('')
     setActivateConfirm('')
+    setActivateError(null)
     setModalMode('activate')
   }
 
@@ -316,16 +422,19 @@ export function DevicesPage() {
         method: 'POST',
         token,
         body: JSON.stringify({
-          deviceIdentifier: formData.deviceIdentifier.trim(),
+          deviceIdentifier: `${formData.ipAddress.trim()}:${formData.port}`,
           name: formData.name.trim(),
           ipAddress: formData.ipAddress.trim(),
           port: formData.port,
           location: formData.location.trim() || null,
-          deviceType: formData.deviceType,
+          deviceType: 1,
+          username: formData.username.trim() || null,
+          password: formData.password || null,
         }),
       })
-      setDevices((prev) => [...prev, created])
+      setDevices((prev) => [...prev, { ...created, status: 'Offline' }])
       closeModals()
+      fetchStatusesRef.current()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create device')
     } finally {
@@ -348,6 +457,8 @@ export function DevicesPage() {
           port: formData.port,
           location: formData.location.trim() || null,
           deviceType: formData.deviceType,
+          username: formData.username.trim() || null,
+          password: formData.password || null,
         }),
       })
       setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
@@ -389,6 +500,7 @@ export function DevicesPage() {
     }
     setIsSubmitting(true)
     setError(null)
+    setActivateError(null)
     try {
       await apiRequest('/api/devices/activate', {
         method: 'POST',
@@ -400,54 +512,89 @@ export function DevicesPage() {
           password: activatePassword,
         }),
       })
-      setInfo(`Устройство ${activatingDevice.ipAddress} активировано. Запустите Discover снова для обновления.`)
+      setInfo(`Устройство ${activatingDevice.ipAddress} активировано. Запускаем повторный поиск...`)
       closeActivateModal()
+      await startDiscovery()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка активации')
+      const msg = e instanceof Error ? e.message : 'Ошибка активации'
+      setActivateError(msg)
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  async function handleAddFromDiscovered(d: DiscoveredDevice) {
-    if (!token) return
+  async function openAddFromDiscoveredModal(d: DiscoveredDevice) {
+    try {
+      const res = await apiRequest<{ inSameSubnet: boolean; message?: string }>(
+        `/api/devices/check-network?ipAddress=${encodeURIComponent(d.ipAddress)}`,
+        { token: token ?? undefined }
+      )
+      if (!res.inSameSubnet && res.message) {
+        setNetworkWarningMessage(res.message)
+        return
+      }
+    } catch {
+      // При ошибке API разрешаем продолжить
+    }
+    setAddFromDevice(d)
+    setAddDeviceName(d.ipAddress)
+    setAddDeviceUsername('admin')
+    setAddDevicePassword('')
+  }
+
+  function closeAddFromDiscoveredModal() {
+    setAddFromDevice(null)
+    setAddDeviceName('')
+    setAddDeviceUsername('admin')
+    setAddDevicePassword('')
+  }
+
+  async function handleAddFromDiscoveredSubmit() {
+    if (!token || !addFromDevice) return
+    if (!addDeviceName.trim()) {
+      setError('Введите имя устройства')
+      return
+    }
+    if (!addDevicePassword) {
+      setError('Введите пароль устройства (тот же, что при активации)')
+      return
+    }
     setError(null)
+    setIsSubmitting(true)
     try {
       const created = await apiRequest<Device>('/api/devices', {
         method: 'POST',
         token,
         body: JSON.stringify({
-          deviceIdentifier: d.deviceIdentifier,
-          name: d.name,
-          ipAddress: d.ipAddress,
-          port: d.port,
+          deviceIdentifier: addFromDevice.deviceIdentifier,
+          name: addDeviceName.trim(),
+          ipAddress: addFromDevice.ipAddress,
+          port: addFromDevice.port,
           location: null,
           deviceType: 1,
+          username: addDeviceUsername.trim() || null,
+          password: addDevicePassword || null,
         }),
       })
-      setDevices((prev) => [...prev, created])
-      setDiscovered((prev) => prev.filter((x) => x.deviceIdentifier !== d.deviceIdentifier))
-      setInfo(`Device "${d.name}" added.`)
+      const deviceWithStatus: Device = {
+        ...created,
+        status: 'Offline',
+      }
+      setDevices((prev) => [...prev, deviceWithStatus])
+      setDiscovered((prev) => prev.filter((x) => x.deviceIdentifier !== addFromDevice.deviceIdentifier))
+      fetchStatusesRef.current()
+      setInfo(`Устройство "${addDeviceName.trim()}" добавлено.`)
+      closeAddFromDiscoveredModal()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add device')
-    }
-  }
-
-  async function handleToggleConnection(device: Device) {
-    if (!token) return
-    const action = device.status === 'Online' ? 'disconnect' : 'connect'
-    setError(null)
-    try {
-      const updated = await apiRequest<Device>(`/api/devices/${device.id}/${action}`, { method: 'POST', token })
-      setDevices((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change connection state')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
   const onlineCount = devices.filter((d) => d.status === 'Online').length
 
-  const canCreate = formData.deviceIdentifier.trim() && formData.name.trim() && formData.ipAddress.trim()
+  const canCreate = formData.name.trim() && formData.ipAddress.trim()
   const canCreateOrUpdate = canCreate && formData.port > 0
 
   return (
@@ -464,8 +611,8 @@ export function DevicesPage() {
               <Button variant="outline" size="sm" icon="add" onClick={openCreateModal}>
                 Add manually
               </Button>
-              <Button size="sm" icon="search" onClick={handleDiscover} isLoading={isDiscovering}>
-                {isDiscovering ? 'Scanning...' : 'Discover'}
+              <Button size="sm" icon="search" onClick={handleDiscover}>
+                Discover
               </Button>
             </>
           }
@@ -483,14 +630,25 @@ export function DevicesPage() {
         )}
 
         {/* Search */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1">
+        <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+          <div className="flex-1 relative">
             <Input
-              placeholder="Search by name, identifier, IP, location..."
+              placeholder="Поиск по имени, IP, серийному номеру, типу, локации..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               icon="search"
+              className="pr-9"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
+                aria-label="Очистить поиск"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -513,7 +671,7 @@ export function DevicesPage() {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-6">
           <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
             <p className="text-xs font-black text-text-muted tracking-widest uppercase">Total Fleet</p>
             <div className="flex items-baseline gap-2">
@@ -537,13 +695,6 @@ export function DevicesPage() {
               <span className="text-xs font-bold text-text-muted">Requires Sync</span>
             </div>
           </Card>
-          <Card className="flex flex-col gap-2 transition-all hover:border-primary/20">
-            <p className="text-xs font-black text-text-muted tracking-widest uppercase">Filtered</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-black text-text-dark">{filteredDevices.length}</p>
-              <span className="text-xs font-bold text-text-muted">shown</span>
-            </div>
-          </Card>
         </div>
 
         {/* Devices List/Table */}
@@ -557,12 +708,7 @@ export function DevicesPage() {
           </div>
 
           <div className="divide-y divide-border-light">
-            {isLoading ? (
-              <div className="p-12 text-center">
-                <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
-                <p className="mt-4 text-xs font-bold text-text-muted uppercase tracking-widest">Loading devices...</p>
-              </div>
-            ) : filteredDevices.length === 0 ? (
+            {filteredDevices.length === 0 ? (
               <div className="p-12 text-center text-text-muted italic text-sm">
                 {devices.length === 0
                   ? 'No devices registered. Use Discover or Add manually to add devices.'
@@ -599,19 +745,16 @@ export function DevicesPage() {
                     </code>
                   </div>
                   <div className="flex items-center gap-6 md:block">
-                    <Badge dot variant={device.status === 'Online' ? 'success' : 'error'}>
-                      {device.status}
-                    </Badge>
+                    <span
+                      title={device.status === 'Offline' ? getOfflineReason(device) : undefined}
+                      className={device.status === 'Offline' ? 'cursor-help' : ''}
+                    >
+                      <Badge dot variant={device.status === 'Online' ? 'success' : 'error'}>
+                        {device.status}
+                      </Badge>
+                    </span>
                   </div>
                   <div className="flex justify-end gap-2 mt-4 md:mt-0">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="font-black text-[10px] tracking-widest"
-                      onClick={() => handleToggleConnection(device)}
-                    >
-                      {device.status === 'Online' ? 'Disconnect' : 'Connect'}
-                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -655,15 +798,6 @@ export function DevicesPage() {
           }}
         >
           <div>
-            <label className="block text-xs font-bold text-text-muted mb-1">Device Identifier</label>
-            <Input
-              value={formData.deviceIdentifier}
-              onChange={(e) => setFormData((p) => ({ ...p, deviceIdentifier: e.target.value }))}
-              placeholder="AC-ENTRANCE-01"
-              required
-            />
-          </div>
-          <div>
             <label className="block text-xs font-bold text-text-muted mb-1">Name</label>
             <Input
               value={formData.name}
@@ -699,19 +833,32 @@ export function DevicesPage() {
               placeholder="HQ / Gate A"
             />
           </div>
+          {modalMode === 'edit' && (
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Device Type</label>
+              <p className="h-9 px-3 flex items-center bg-slate-75 border border-border-base rounded-md text-xs text-text-base">
+                {getDeviceTypeLabel(editingDevice?.deviceType ?? 'AccessController')}
+              </p>
+            </div>
+          )}
           <div>
-            <label className="block text-xs font-bold text-text-muted mb-1">Device Type</label>
-            <select
-              value={formData.deviceType}
-              onChange={(e) => setFormData((p) => ({ ...p, deviceType: parseInt(e.target.value, 10) }))}
-              className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs text-text-base focus:ring-2 focus:ring-primary/20 focus:border-primary/30 outline-none transition-all"
-            >
-              {DEVICE_TYPE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            <label className="block text-xs font-bold text-text-muted mb-1">Username</label>
+            <Input
+              value={formData.username}
+              onChange={(e) => setFormData((p) => ({ ...p, username: e.target.value }))}
+              placeholder="admin"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-text-muted mb-1">
+              Password {modalMode === 'edit' && '(оставьте пустым, чтобы не менять)'}
+            </label>
+            <Input
+              type="password"
+              value={formData.password}
+              onChange={(e) => setFormData((p) => ({ ...p, password: e.target.value }))}
+              placeholder={modalMode === 'edit' ? '••••••' : 'Пароль устройства'}
+            />
           </div>
           <div className="flex gap-2 pt-4">
             <Button type="submit" disabled={!canCreateOrUpdate || isSubmitting} isLoading={isSubmitting}>
@@ -725,13 +872,29 @@ export function DevicesPage() {
       </Modal>
 
       {/* Discover Modal */}
-      <Modal isOpen={modalMode === 'discover' || modalMode === 'activate'} onClose={closeModals} title="Discovered Devices" fullScreen>
+      <Modal
+        isOpen={modalMode === 'discover' || modalMode === 'activate'}
+        onClose={closeModals}
+        title="Discovered Devices"
+        fullScreen
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            icon="sync"
+            onClick={handleDiscoverRefresh}
+            isLoading={isDiscovering}
+          >
+            {isDiscovering ? 'Поиск...' : 'Обновить'}
+          </Button>
+        }
+      >
         {discovered.length === 0 ? (
-          <p className="text-xs text-text-muted">No devices found on the network.</p>
+          <p className="text-xs text-text-muted">{isDiscovering ? 'Сканирование сети...' : 'Устройства не найдены.'}</p>
         ) : (
           <div className="flex flex-col min-h-0 flex-1 gap-4">
             <p className="text-xs text-text-muted">
-              {discovered.length} device(s) found. Click Add to register them.
+              {discovered.length} устройств найдено. Нажмите «Добавить» для регистрации.
             </p>
 
             {/* Tabs by type */}
@@ -752,8 +915,8 @@ export function DevicesPage() {
               ))}
             </div>
 
-            {/* Search */}
-            <div className="flex items-center gap-2">
+            {/* Search + Show added */}
+            <div className="flex flex-wrap items-center gap-4">
               <Input
                 placeholder="Поиск по IP, серийному номеру, MAC..."
                 value={discoverSearchQuery}
@@ -761,6 +924,15 @@ export function DevicesPage() {
                 icon="search"
                 className="max-w-xs"
               />
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showAddedDevices}
+                  onChange={(e) => setShowAddedDevices(e.target.checked)}
+                  className="w-4 h-4 rounded border-border-base text-primary focus:ring-primary/20"
+                />
+                <span className="text-xs font-bold text-text-dark">Показывать добавленные</span>
+              </label>
             </div>
 
             {/* Sort: active / inactive + IP */}
@@ -815,71 +987,95 @@ export function DevicesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {discovered
-                    .map((d) => ({
-                      ...d,
-                      inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier),
-                      isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion),
-                    }))
-                    .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
-                    .filter((d) =>
-                      discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive
+                  {(() => {
+                    const addedKeys = new Set(
+                      devices.flatMap((dev) => [
+                        dev.deviceIdentifier,
+                        `${dev.ipAddress}:${dev.port}`,
+                      ])
                     )
-                    .filter((d) => {
-                      const q = discoverSearchQuery.trim().toLowerCase()
-                      if (!q) return true
-                      const ip = (d.ipAddress ?? '').toLowerCase()
-                      const serial = (d.deviceIdentifier ?? '').toLowerCase()
-                      const mac = (d.macAddress ?? '').toLowerCase().replace(/[:-]/g, '')
-                      const qNorm = q.replace(/[:-]/g, '')
-                      return ip.includes(q) || serial.includes(q) || mac.includes(qNorm)
-                    })
-                    .sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1))
-                    .sort((a, b) => {
-                      const cmp = a.ipAddress.localeCompare(b.ipAddress)
-                      return discoverIpSort === 'asc' ? cmp : -cmp
-                    })
-                    .map((d) => (
-                      <tr
-                        key={`${d.ipAddress}:${d.port}:${d.deviceIdentifier}`}
-                        className={`border-b border-border-light last:border-0 hover:bg-slate-75/50 ${
-                          !d.isActive ? 'bg-error-bg border-l-4 border-l-error-text' : ''
-                        }`}
-                      >
-                        <td className="px-4 py-3 font-bold text-text-dark">{getDiscoverTypeLabel(d.inferredType)}</td>
-                        <td className="px-4 py-3">
-                          <code className="text-xs bg-slate-75 px-2 py-0.5 rounded font-bold">{d.ipAddress}:{d.port}</code>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs">{d.macAddress || '—'}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{d.deviceIdentifier}</td>
-                        <td className="px-4 py-3 text-xs">{d.firmwareVersion || '—'}</td>
-                        <td className="px-4 py-3 text-right">
-                          {d.isActive ? (
-                            <Button size="sm" icon="add" onClick={() => handleAddFromDiscovered(d)}>
-                              Add
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              icon="lock_open"
-                              variant="outline"
-                              onClick={() => openActivateModal(d)}
-                              disabled={!d.macAddress}
-                              title={!d.macAddress ? 'Для активации нужен MAC-адрес' : 'Активировать устройство'}
-                            >
-                              Активация
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    const isAdded = (d: { deviceIdentifier: string; ipAddress: string; port: number }) =>
+                      addedKeys.has(d.deviceIdentifier) || addedKeys.has(`${d.ipAddress}:${d.port}`)
+                    return discovered
+                      .map((d) => ({
+                        ...d,
+                        inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier),
+                        isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion),
+                      }))
+                      .filter((d) => showAddedDevices || !isAdded(d))
+                      .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
+                      .filter((d) =>
+                        discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive
+                      )
+                      .filter((d) => {
+                        const q = discoverSearchQuery.trim().toLowerCase()
+                        if (!q) return true
+                        const ip = (d.ipAddress ?? '').toLowerCase()
+                        const serial = (d.deviceIdentifier ?? '').toLowerCase()
+                        const mac = (d.macAddress ?? '').toLowerCase().replace(/[:-]/g, '')
+                        const qNorm = q.replace(/[:-]/g, '')
+                        return ip.includes(q) || serial.includes(q) || mac.includes(qNorm)
+                      })
+                      .sort((a, b) => (a.isActive === b.isActive ? 0 : a.isActive ? -1 : 1))
+                      .sort((a, b) => {
+                        const cmp = a.ipAddress.localeCompare(b.ipAddress)
+                        return discoverIpSort === 'asc' ? cmp : -cmp
+                      })
+                      .map((d) => {
+                        const added = isAdded(d)
+                        return (
+                          <tr
+                            key={`${d.ipAddress}:${d.port}:${d.deviceIdentifier}`}
+                            className={`border-b border-border-light last:border-0 hover:bg-slate-75/50 ${
+                              added ? 'bg-emerald-50/70' : !d.isActive ? 'bg-error-bg border-l-4 border-l-error-text' : ''
+                            }`}
+                          >
+                            <td className="px-4 py-3 font-bold text-text-dark">{getDiscoverTypeLabel(d.inferredType)}</td>
+                            <td className="px-4 py-3">
+                              <code className="text-xs bg-slate-75 px-2 py-0.5 rounded font-bold">{d.ipAddress}:{d.port}</code>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs">{d.macAddress || '—'}</td>
+                            <td className="px-4 py-3 font-mono text-xs">{d.deviceIdentifier}</td>
+                            <td className="px-4 py-3 text-xs">{d.firmwareVersion || '—'}</td>
+                            <td className="px-4 py-3 text-right">
+                              {added ? (
+                                <span className="text-xs font-bold text-success-text inline-flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-base">check_circle</span>
+                                  Добавлено
+                                </span>
+                              ) : d.isActive ? (
+                                <Button size="sm" icon="add" onClick={() => openAddFromDiscoveredModal(d)}>
+                                  Добавить
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  icon="lock_open"
+                                  variant="outline"
+                                  onClick={() => openActivateModal(d)}
+                                  disabled={!d.macAddress}
+                                  title={!d.macAddress ? 'Для активации нужен MAC-адрес' : 'Активировать устройство'}
+                                >
+                                  Активация
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })
+                  })()}
                 </tbody>
               </table>
             </div>
             <div className="flex justify-between items-center">
               <p className="text-xs text-text-muted">
-                Показано: {discovered
+                Показано:{' '}
+                {discovered
                   .map((d) => ({ ...d, inferredType: inferDeviceTypeFromModel(d.model, d.deviceIdentifier), isActive: d.isActivated ?? !!(d.macAddress && d.firmwareVersion) }))
+                  .filter((d) => {
+                    const added = devices.some((dev) => dev.deviceIdentifier === d.deviceIdentifier || `${dev.ipAddress}:${dev.port}` === `${d.ipAddress}:${d.port}`)
+                    return showAddedDevices || !added
+                  })
                   .filter((d) => discoverTypeTab === 'all' || d.inferredType === discoverTypeTab)
                   .filter((d) => discoverSortActive === 'all' ? true : discoverSortActive === 'active' ? d.isActive : !d.isActive)
                   .filter((d) => {
@@ -891,14 +1087,82 @@ export function DevicesPage() {
                     const qNorm = q.replace(/[:-]/g, '')
                     return ip.includes(q) || serial.includes(q) || mac.includes(qNorm)
                   })
-                  .length} из {discovered.length}
+                  .length}{' '}
+                из {discovered.length}
               </p>
               <Button variant="outline" onClick={closeModals}>
-                Close
+                Закрыть
               </Button>
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Add from Discovered Modal */}
+      <Modal isOpen={!!addFromDevice} onClose={closeAddFromDiscoveredModal} title="Добавить устройство">
+        {addFromDevice && (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleAddFromDiscoveredSubmit()
+            }}
+          >
+            <p className="text-sm text-text-muted">
+              Устройство: <strong>{addFromDevice.ipAddress}:{addFromDevice.port}</strong>
+            </p>
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Имя устройства</label>
+              <Input
+                value={addDeviceName}
+                onChange={(e) => setAddDeviceName(e.target.value)}
+                placeholder="По умолчанию — IP-адрес"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Логин</label>
+              <Input
+                value={addDeviceUsername}
+                onChange={(e) => setAddDeviceUsername(e.target.value)}
+                placeholder="admin"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-text-muted mb-1">Пароль устройства</label>
+              <Input
+                type="password"
+                value={addDevicePassword}
+                onChange={(e) => setAddDevicePassword(e.target.value)}
+                placeholder="Пароль для подключения"
+              />
+            </div>
+            <div className="flex gap-2 pt-4">
+              <Button type="submit" disabled={!addDeviceName.trim() || !addDevicePassword || isSubmitting} isLoading={isSubmitting} icon="add">
+                Добавить
+              </Button>
+              <Button type="button" variant="outline" onClick={closeAddFromDiscoveredModal} disabled={isSubmitting}>
+                Отмена
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Network warning dialog */}
+      <Modal
+        isOpen={!!networkWarningMessage}
+        onClose={() => setNetworkWarningMessage(null)}
+        title="Устройство не в одной сети с сервером"
+        actions={
+          <Button variant="outline" onClick={() => setNetworkWarningMessage(null)}>
+            Понятно
+          </Button>
+        }
+      >
+        <p className="text-sm text-text-muted">{networkWarningMessage ?? 'Устройство не в одной сети с сервером.'}</p>
+        <p className="mt-3 text-sm font-medium text-text-dark">
+          Для активации или добавления устройство должно находиться в одной сети с сервером.
+        </p>
       </Modal>
 
       {/* Activation Modal */}
@@ -941,6 +1205,11 @@ export function DevicesPage() {
             </div>
             {activatePassword && activateConfirm && activatePassword !== activateConfirm && (
               <p className="text-xs font-bold text-error-text">Пароли не совпадают</p>
+            )}
+            {activateError && (
+              <div className="p-3 bg-error-bg text-error-text rounded-lg text-sm font-medium border border-error-text/20">
+                {activateError}
+              </div>
             )}
             <div className="flex gap-2 pt-4">
               <Button

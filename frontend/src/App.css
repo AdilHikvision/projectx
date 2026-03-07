@@ -44,6 +44,7 @@
   color: #c2b8de;
   text-decoration: none;
   border: 1px solid transparent;
+  cursor: pointer;
 }
 
 .app-nav-link:hover {

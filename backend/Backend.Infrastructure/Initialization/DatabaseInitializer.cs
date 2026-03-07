@@ -19,6 +19,14 @@ public sealed class DatabaseInitializer(
     {
         await dbContext.Database.MigrateAsync(cancellationToken);
 
+        // One-time: add Username/Password columns if missing (migration may not have been applied)
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS "Username" character varying(64)
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS "Password" character varying(120)
+            """, cancellationToken);
+
         foreach (var role in SystemRoles.All)
         {
             if (!await roleManager.RoleExistsAsync(role))

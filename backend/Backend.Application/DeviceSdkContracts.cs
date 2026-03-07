@@ -48,11 +48,13 @@ public sealed record DeviceEvent(
 public interface IDeviceDiscoveryService
 {
     Task<IReadOnlyCollection<DiscoveredDevice>> DiscoverAsync(CancellationToken cancellationToken = default);
+    /// <summary>Streaming discovery: вызывает onDevice для каждого найденного устройства по мере поиска.</summary>
+    Task DiscoverStreamAsync(Func<DiscoveredDevice, CancellationToken, Task> onDevice, CancellationToken cancellationToken = default);
 }
 
 public interface IDeviceConnectionManager
 {
-    Task<DeviceConnection> ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default);
+    Task<DeviceConnection> ConnectAsync(string deviceIdentifier, string ipAddress, int port, string? username = null, string? password = null, CancellationToken cancellationToken = default);
     Task DisconnectAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
     Task<DeviceRealtimeStatus> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<DeviceRealtimeStatus>> GetStatusesAsync(CancellationToken cancellationToken = default);
@@ -64,4 +66,15 @@ public interface IDeviceConnectionManager
 public interface IEventListenerService
 {
     Task<IReadOnlyCollection<DeviceEvent>> ReadRecentEventsAsync(int take = 100, CancellationToken cancellationToken = default);
+}
+
+public interface IDeviceStatusBroadcaster
+{
+    Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, CancellationToken cancellationToken = default);
+}
+
+public interface IDeviceArpStatusService
+{
+    Task<DeviceRealtimeStatus?> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<DeviceRealtimeStatus>> GetStatusesAsync(CancellationToken cancellationToken = default);
 }

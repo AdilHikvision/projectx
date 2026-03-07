@@ -1,22 +1,18 @@
 using System.Collections.Concurrent;
 using Backend.Application.Devices;
 using Backend.Infrastructure.Devices.Sdk;
-using Backend.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Backend.Infrastructure.Devices.Services;
 
-public sealed class DeviceConnectionManager(
-    IHikvisionSdkClient sdkClient,
-    IServiceScopeFactory scopeFactory) : IDeviceConnectionManager
+/// <summary>Управляет SDK-подключениями для событий. Статус устройств определяется только через ARP (DeviceArpStatusService).</summary>
+public sealed class DeviceConnectionManager(IHikvisionSdkClient sdkClient) : IDeviceConnectionManager
 {
     private readonly ConcurrentDictionary<string, DeviceConnection> _activeConnections = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastSeen = new();
 
-    public async Task<DeviceConnection> ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default)
+    public async Task<DeviceConnection> ConnectAsync(string deviceIdentifier, string ipAddress, int port, string? username = null, string? password = null, CancellationToken cancellationToken = default)
     {
-        await sdkClient.ConnectAsync(deviceIdentifier, ipAddress, port, cancellationToken);
+        await sdkClient.ConnectAsync(deviceIdentifier, ipAddress, port, username, password, cancellationToken);
         var now = DateTime.UtcNow;
 
         var connection = new DeviceConnection(
@@ -29,7 +25,6 @@ public sealed class DeviceConnectionManager(
 
         _activeConnections[deviceIdentifier] = connection;
         _lastSeen[deviceIdentifier] = now;
-        await UpdateDbStatusAsync(deviceIdentifier, SeedIds.DeviceStatusOnline, now, cancellationToken);
         return connection;
     }
 
@@ -37,7 +32,6 @@ public sealed class DeviceConnectionManager(
     {
         await sdkClient.DisconnectAsync(deviceIdentifier, cancellationToken);
         _activeConnections.TryRemove(deviceIdentifier, out _);
-        await UpdateDbStatusAsync(deviceIdentifier, SeedIds.DeviceStatusOffline, null, cancellationToken);
     }
 
     public Task<DeviceRealtimeStatus> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default)
@@ -66,7 +60,7 @@ public sealed class DeviceConnectionManager(
         return Task.FromResult<IReadOnlyCollection<DeviceRealtimeStatus>>(statuses);
     }
 
-    public async Task TouchHeartbeatAsync(string deviceIdentifier, DateTime occurredUtc, CancellationToken cancellationToken = default)
+    public Task TouchHeartbeatAsync(string deviceIdentifier, DateTime occurredUtc, CancellationToken cancellationToken = default)
     {
         _lastSeen[deviceIdentifier] = occurredUtc;
         if (_activeConnections.TryGetValue(deviceIdentifier, out var existing))
@@ -77,15 +71,14 @@ public sealed class DeviceConnectionManager(
                 LastSeenUtc = occurredUtc
             };
         }
-
-        await UpdateDbStatusAsync(deviceIdentifier, SeedIds.DeviceStatusOnline, occurredUtc, cancellationToken);
+        return Task.CompletedTask;
     }
 
-    public async Task MarkStaleConnectionsOfflineAsync(TimeSpan staleAfter, CancellationToken cancellationToken = default)
+    public Task MarkStaleConnectionsOfflineAsync(TimeSpan staleAfter, CancellationToken cancellationToken = default)
     {
         if (staleAfter <= TimeSpan.Zero)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var now = DateTime.UtcNow;
@@ -97,34 +90,12 @@ public sealed class DeviceConnectionManager(
         foreach (var deviceIdentifier in staleDeviceIds)
         {
             _activeConnections.TryRemove(deviceIdentifier, out _);
-            await UpdateDbStatusAsync(deviceIdentifier, SeedIds.DeviceStatusOffline, null, cancellationToken);
         }
+        return Task.CompletedTask;
     }
 
     public Task<IReadOnlyCollection<DeviceConnection>> GetActiveConnectionsAsync(CancellationToken cancellationToken = default)
     {
         return Task.FromResult<IReadOnlyCollection<DeviceConnection>>(_activeConnections.Values.ToArray());
-    }
-
-    private async Task UpdateDbStatusAsync(
-        string deviceIdentifier,
-        Guid deviceStatusId,
-        DateTime? lastSeenUtc,
-        CancellationToken cancellationToken)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-        var device = await dbContext.Devices
-            .FirstOrDefaultAsync(x => x.DeviceIdentifier == deviceIdentifier, cancellationToken);
-        if (device is null)
-        {
-            return;
-        }
-
-        device.DeviceStatusId = deviceStatusId;
-        device.LastSeenUtc = lastSeenUtc;
-        device.UpdatedUtc = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

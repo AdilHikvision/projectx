@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { useLoading } from '../context/LoadingContext'
 import { Button, Input, Modal } from '../components/ui'
 import { consumeSessionExpiredFlag } from '../lib/api'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  const { startLoading, stopLoading, isLoading } = useLoading()
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showSessionExpiredDialog, setShowSessionExpiredDialog] = useState(false)
@@ -25,7 +26,7 @@ export function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
+    startLoading()
     setError(null)
     try {
       await login({ email, password })
@@ -33,7 +34,7 @@ export function LoginPage() {
       const msg = err instanceof Error ? err.message : ''
       setError(msg && (msg.includes('500') || msg.includes('Authentication service') || msg.includes('error')) ? msg : 'Invalid email or password. Please try again.')
     } finally {
-      setIsLoading(false)
+      stopLoading()
     }
   }
 

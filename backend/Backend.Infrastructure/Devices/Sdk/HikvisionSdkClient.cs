@@ -18,6 +18,8 @@ public sealed record HikvisionSdkHealth(
     string? LastErrorCode,
     string? LastErrorMessage,
     string? LastErrorHint,
+    string? LastErrorDevice,
+    string? LastErrorCategory,
     IReadOnlyCollection<string> LibrarySearchPaths);
 
 public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
@@ -31,6 +33,8 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
     private readonly object _nativeCfgLock = new();
     private readonly object _dllResolverLock = new();
     private readonly List<string> _librarySearchPaths = [];
+    private (uint Code, string Message, string Hint, string? Device, string Category)? _lastError;
+    private readonly object _lastErrorLock = new();
     private bool _sdkInitialized;
     private bool _nativeConfigured;
     private bool _dllResolverConfigured;
@@ -53,46 +57,25 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         if (string.IsNullOrEmpty(_password)) _password = "12345";
     }
 
-    public async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanAsync(CancellationToken cancellationToken = default, IProgress<SdkDiscoveredDevice>? progress = null)
     {
-        // Запускаем SADP (4 канала) + ISAPI параллельно — максимум устройств как в SADP Tool.
-        var merged = new ConcurrentDictionary<string, SdkDiscoveredDevice>(StringComparer.OrdinalIgnoreCase);
-
-        var sadpTask = _sadpDiscovery.DiscoverAsync(cancellationToken);
-        var isapiTask = ScanLanViaIsapiAsync(cancellationToken);
-
-        IReadOnlyCollection<SdkDiscoveredDevice> sadpDevices = [];
-        IReadOnlyCollection<SdkDiscoveredDevice> isapiDevices = [];
-
-        try { sadpDevices = await sadpTask; }
-        catch (OperationCanceledException) { _logger.LogDebug("SADP discovery cancelled (timeout)."); }
-
-        try { isapiDevices = await isapiTask; }
-        catch (OperationCanceledException) { _logger.LogDebug("ISAPI discovery cancelled (timeout)."); }
-
-        foreach (var d in sadpDevices.Concat(isapiDevices))
+        IReadOnlyCollection<SdkDiscoveredDevice> sadpDevices;
+        try
         {
-            var key = d.IpAddress;
-            merged.AddOrUpdate(key, d, (_, existing) =>
-                PreferMoreComplete(existing, d));
+            sadpDevices = await _sadpDiscovery.DiscoverAsync(cancellationToken, progress);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("SADP discovery cancelled (timeout).");
+            sadpDevices = [];
         }
 
-        var result = merged.Values.OrderBy(x => x.IpAddress).ToArray();
-        _logger.LogInformation("Discovery: SADP={Sadp}, ISAPI={Isapi} → total {Total} device(s)",
-            sadpDevices.Count, isapiDevices.Count, result.Length);
+        var result = sadpDevices.OrderBy(x => x.IpAddress).ThenBy(x => x.Port).ToArray();
+        _logger.LogInformation("Discovery: SADP found {Count} device(s)", result.Length);
         return result;
     }
 
-    private static SdkDiscoveredDevice PreferMoreComplete(SdkDiscoveredDevice a, SdkDiscoveredDevice b)
-    {
-        var aScore = (string.IsNullOrEmpty(a.MacAddress) ? 0 : 8) + (string.IsNullOrEmpty(a.FirmwareVersion) ? 0 : 4) +
-                     (a.Port == 8000 ? 2 : a.Port == 80 ? 1 : 0);
-        var bScore = (string.IsNullOrEmpty(b.MacAddress) ? 0 : 8) + (string.IsNullOrEmpty(b.FirmwareVersion) ? 0 : 4) +
-                     (b.Port == 8000 ? 2 : b.Port == 80 ? 1 : 0);
-        return bScore > aScore ? b : a;
-    }
-
-    public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, CancellationToken cancellationToken = default)
+    public Task ConnectAsync(string deviceIdentifier, string ipAddress, int port, string? username = null, string? password = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureSdkReady();
@@ -109,7 +92,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             }
         }
 
-        var userId = Login(ipAddress, port, out _);
+        var userId = Login(ipAddress, port, username, password, deviceIdentifier, out _);
         _sessions[deviceIdentifier] = new SdkSession(deviceIdentifier, ipAddress, port, userId);
         _logger.LogInformation("Hikvision login OK for {DeviceIdentifier} ({Ip}:{Port}), userId={UserId}", deviceIdentifier, ipAddress, port, userId);
         return Task.CompletedTask;
@@ -126,7 +109,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyCollection<SdkDeviceEvent>> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default)
+    public Task<PullEventsResult> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureSdkReady();
@@ -134,6 +117,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         var fromUtc = DateTime.UtcNow.AddSeconds(-10);
         var toUtc = DateTime.UtcNow;
         var output = new List<SdkDeviceEvent>();
+        var unreachable = new List<string>();
 
         foreach (var deviceIdentifier in deviceIdentifiers)
         {
@@ -146,26 +130,19 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             try
             {
                 var events = PullAcsEvents(session, fromUtc, toUtc, cancellationToken);
-                if (events.Count == 0)
-                {
-                    output.Add(new SdkDeviceEvent(
-                        deviceIdentifier,
-                        "HEARTBEAT",
-                        DateTime.UtcNow,
-                        """{"source":"hikvision-sdk","status":"connected"}"""));
-                }
-                else
+                if (events.Count > 0)
                 {
                     output.AddRange(events);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "PullEvents failed for {DeviceIdentifier}", deviceIdentifier);
+                _logger.LogWarning(ex, "PullEvents failed for {DeviceIdentifier} — устройство недоступно", deviceIdentifier);
+                unreachable.Add(deviceIdentifier);
             }
         }
 
-        return Task.FromResult<IReadOnlyCollection<SdkDeviceEvent>>(output);
+        return Task.FromResult(new PullEventsResult(output, unreachable));
     }
 
     public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)
@@ -229,6 +206,26 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
     public HikvisionSdkHealth GetHealth()
     {
+        (uint Code, string Message, string Hint, string? Device, string Category)? lastErr;
+        lock (_lastErrorLock)
+        {
+            lastErr = _lastError;
+        }
+        if (lastErr.HasValue)
+        {
+            var e = lastErr.Value;
+            return new HikvisionSdkHealth(
+                _sdkInitialized,
+                RuntimeInformation.OSDescription,
+                _sessions.Count,
+                e.Code.ToString(),
+                e.Message,
+                e.Hint,
+                e.Device,
+                e.Category,
+                _librarySearchPaths.ToArray());
+        }
+
         uint errorCode;
         try
         {
@@ -240,6 +237,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         }
 
         var error = DescribeError(errorCode);
+        var category = GetErrorCategory(errorCode);
 
         return new HikvisionSdkHealth(
             _sdkInitialized,
@@ -248,7 +246,27 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
             errorCode == 0 ? null : errorCode.ToString(),
             errorCode == 0 ? null : error.Message,
             errorCode == 0 ? null : error.Hint,
+            null,
+            errorCode == 0 ? null : category,
             _librarySearchPaths.ToArray());
+    }
+
+    private void RecordLastError(string deviceIdentifier, uint errorCode, SdkErrorDescription desc)
+    {
+        lock (_lastErrorLock)
+        {
+            _lastError = (errorCode, desc.Message, desc.Hint, deviceIdentifier, GetErrorCategory(errorCode));
+        }
+    }
+
+    private static string GetErrorCategory(uint errorCode)
+    {
+        return errorCode switch
+        {
+            7 or 8 or 9 or 10 or 11 or 29 or 72 or 73 => "network",
+            1 or 23 or 76 or 153 => "auth",
+            _ => "other"
+        };
     }
 
     public void Dispose()
@@ -304,7 +322,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return Task.FromResult(discovered);
     }
 
-    private async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaIsapiAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyCollection<SdkDiscoveredDevice>> ScanLanViaIsapiAsync(CancellationToken cancellationToken, IProgress<SdkDiscoveredDevice>? progress = null)
     {
         var maxHosts = _configuration.GetValue("Hikvision:DiscoveryMaxHosts", 512);
         var hostsSet = new HashSet<string>(ResolveLocalSubnetHosts(maxHostsPerSubnet: maxHosts), StringComparer.OrdinalIgnoreCase);
@@ -331,7 +349,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         using var throttler = new SemaphoreSlim(64);
 
         var tasks = hosts
-            .SelectMany(ip => ports.Select(port => ProbeIsapiAsync(ip, port, httpClient, httpsClient, anonHttpClient, anonHttpsClient, discovered, throttler, cancellationToken)))
+            .SelectMany(ip => ports.Select(port => ProbeIsapiAsync(ip, port, httpClient, httpsClient, anonHttpClient, anonHttpsClient, discovered, progress, throttler, cancellationToken)))
             .ToArray();
 
         await Task.WhenAll(tasks);
@@ -348,6 +366,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         HttpClient anonHttpClient,
         HttpClient anonHttpsClient,
         ConcurrentDictionary<string, SdkDiscoveredDevice> discovered,
+        IProgress<SdkDiscoveredDevice>? progress,
         SemaphoreSlim throttler,
         CancellationToken cancellationToken)
     {
@@ -380,7 +399,8 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
                 return;
             }
 
-            discovered.TryAdd($"{candidate.IpAddress}:{candidate.Port}", candidate);
+            if (discovered.TryAdd($"{candidate.IpAddress}:{candidate.Port}", candidate))
+                progress?.Report(candidate);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -714,7 +734,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         try
         {
-            var userId = Login(seedHost.Trim(), seedPort, out _);
+            var userId = Login(seedHost.Trim(), seedPort, null, null, $"{seedHost}:{seedPort}", out _);
             _logger.LogInformation("SADP bootstrap session opened via {Host}:{Port}.", seedHost, seedPort);
             return userId;
         }
@@ -725,14 +745,16 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         }
     }
 
-    private int Login(string ipAddress, int port, out Native.NET_DVR_DEVICEINFO_V40 deviceInfo)
+    private int Login(string ipAddress, int port, string? username, string? password, string? deviceIdentifierForError, out Native.NET_DVR_DEVICEINFO_V40 deviceInfo)
     {
+        var user = !string.IsNullOrWhiteSpace(username) ? username : _username;
+        var pwd = !string.IsNullOrWhiteSpace(password) ? password.Trim() : _password;
         var loginInfo = new Native.NET_DVR_USER_LOGIN_INFO
         {
             sDeviceAddress = ipAddress,
             wPort = (ushort)port,
-            sUserName = _username,
-            sPassword = _password,
+            sUserName = user,
+            sPassword = pwd,
             bUseAsynLogin = false,
             byLoginMode = 0,
             byHttps = 0,
@@ -752,7 +774,9 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         if (userId < 0)
         {
             var error = Native.NET_DVR_GetLastError();
-            throw new InvalidOperationException($"NET_DVR_Login_V40 failed for {ipAddress}:{port}, error={error} ({DescribeError(error)}).");
+            var desc = DescribeError(error);
+            RecordLastError(deviceIdentifierForError ?? $"{ipAddress}:{port}", error, desc);
+            throw new InvalidOperationException($"NET_DVR_Login_V40 failed for {ipAddress}:{port}, error={error} ({desc.Message}).");
         }
 
         return userId;
@@ -790,6 +814,9 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
             if (handle < 0)
             {
+                var err = Native.NET_DVR_GetLastError();
+                var desc = DescribeError(err);
+                RecordLastError(session.DeviceIdentifier, err, desc);
                 return [];
             }
 
@@ -976,9 +1003,10 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
                     return IntPtr.Zero;
                 }
 
+                // Только HCNetSDK — HPNetSDK не имеет NET_DVR_ActivateDevice
                 var names = OperatingSystem.IsWindows()
-                    ? new[] { libraryName, "HCNetSDK.dll", "HPNetSDK.dll", "hcnetsdk.dll" }
-                    : new[] { "libhcnetsdk.so", "libHPNetSDK.so" };
+                    ? new[] { "HCNetSDK.dll", "hcnetsdk.dll", libraryName }
+                    : new[] { "libhcnetsdk.so" };
 
                 foreach (var dir in candidates)
                 {
@@ -1051,9 +1079,8 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         if (OperatingSystem.IsWindows())
         {
             result.Add(Path.GetFullPath(Path.Combine(cwd, "winSDK", "lib")));
-            result.Add(Path.GetFullPath(Path.Combine(cwd, "winSDK", "lib", "HPNetSDK")));
             result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "winSDK", "lib")));
-            result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "winSDK", "lib", "HPNetSDK")));
+            // HPNetSDK исключён — нужен HCNetSDK (NET_DVR_ActivateDevice)
         }
         else
         {

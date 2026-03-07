@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Claims;
 using System.Text;
 using Backend.Application.Security;
@@ -38,6 +39,8 @@ builder.Services.AddCors(options =>
             .AllowCredentials();
     });
 });
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IDeviceStatusBroadcaster, DeviceStatusBroadcaster>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
@@ -80,7 +83,6 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
-builder.Services.AddSignalR();
 
 var app = builder.Build();
 
@@ -235,6 +237,20 @@ app.MapGet("/api/devices/discover", async (
     return Results.Ok(discovered);
 }).AllowAnonymous();
 
+app.MapGet("/api/devices/check-network", (string? ipAddress, IOptions<SadpOptions> sadpOptions) =>
+{
+    if (string.IsNullOrWhiteSpace(ipAddress) || !IPAddress.TryParse(ipAddress.Trim(), out var deviceIp))
+    {
+        return Results.BadRequest(new { inSameSubnet = false, message = "Некорректный IP-адрес." });
+    }
+    var inSameSubnet = SadpRawDiscovery.IsDeviceInSameSubnet(deviceIp, out var localSubnetInfo, sadpOptions.Value.ActivateBindIp);
+    return Results.Ok(new
+    {
+        inSameSubnet,
+        message = inSameSubnet ? null : $"Устройство {ipAddress} не в одной сети с сервером. Подсети сервера: {localSubnetInfo}. Для активации и добавления устройство должно быть в одной сети с сервером."
+    });
+}).AllowAnonymous();
+
 app.MapPost("/api/devices/activate", async (
     ActivateDeviceRequest request,
     IHikvisionSdkClient sdkClient,
@@ -259,37 +275,55 @@ app.MapPost("/api/devices/activate", async (
         return Results.BadRequest(new { message = sdkMessage });
     }
 
-    // 2. Fallback to SADP (UDP multicast)
+    // 2. Try ISAPI activation (HTTP — работает по TCP, не требует подсети)
+    var (isapiSuccess, isapiMessage) = await IsapiActivationService.TryActivateAsync(request.IpAddress, port, request.Password, logger, cancellationToken);
+    if (isapiSuccess)
+    {
+        return Results.Ok(new { success = true, message = "Activation sent (ISAPI)." });
+    }
+    if (isapiMessage is not null)
+    {
+        return Results.BadRequest(new { message = isapiMessage });
+    }
+
+    // 3. Fallback to SADP (UDP multicast)
     var (sadpSuccess, sadpMessage) = await SadpRawDiscovery.TryActivateAsync(request.IpAddress, request.MacAddress, request.Password, logger, cancellationToken, sadpOptions.Value);
     return sadpSuccess ? Results.Ok(new { success = true, message = "Activation sent (SADP)." }) : Results.BadRequest(new { message = sadpMessage ?? "Activation failed." });
 }).AllowAnonymous();
 
-app.MapGet("/api/devices", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/devices", async (
+    AppDbContext dbContext,
+    IDeviceArpStatusService arpStatusService,
+    CancellationToken cancellationToken) =>
 {
-    var devices = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .OrderBy(x => x.Name)
-        .ToListAsync(cancellationToken);
-
-    return Results.Ok(devices.Select(MapDeviceResponse));
+    var devices = await dbContext.Devices.OrderBy(x => x.Name).ToListAsync(cancellationToken);
+    var statuses = (await arpStatusService.GetStatusesAsync(cancellationToken)).ToDictionary(x => x.DeviceIdentifier, x => x, StringComparer.OrdinalIgnoreCase);
+    return Results.Ok(devices.Select(d =>
+    {
+        var st = statuses.GetValueOrDefault(d.DeviceIdentifier);
+        return MapDeviceResponse(d, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc);
+    }));
 }).RequireAuthorization();
 
-app.MapGet("/api/devices/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/devices/{id:guid}", async (
+    Guid id,
+    AppDbContext dbContext,
+    IDeviceArpStatusService arpStatusService,
+    CancellationToken cancellationToken) =>
 {
-    var device = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (device is null)
     {
         return Results.NotFound();
     }
-
-    return Results.Ok(MapDeviceResponse(device));
+    var st = await arpStatusService.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
+    return Results.Ok(MapDeviceResponse(device, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
 }).RequireAuthorization();
 
 app.MapPost("/api/devices", async (
     CreateDeviceRequest request,
     AppDbContext dbContext,
+    IDeviceConnectionManager connectionManager,
     CancellationToken cancellationToken) =>
 {
     var exists = await dbContext.Devices
@@ -308,6 +342,8 @@ app.MapPost("/api/devices", async (
         Port = request.Port,
         Location = request.Location,
         DeviceType = request.DeviceType,
+        Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim(),
+        Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password,
         DeviceStatusId = SeedIds.DeviceStatusOffline,
         CreatedUtc = DateTime.UtcNow
     };
@@ -315,10 +351,21 @@ app.MapPost("/api/devices", async (
     dbContext.Devices.Add(device);
     await dbContext.SaveChangesAsync(cancellationToken);
 
-    var created = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstAsync(x => x.Id == device.Id, cancellationToken);
-    return Results.Created($"/api/devices/{created.Id}", MapDeviceResponse(created));
+    var created = await dbContext.Devices.FirstAsync(x => x.Id == device.Id, cancellationToken);
+
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await connectionManager.ConnectAsync(created.DeviceIdentifier, created.IpAddress, created.Port, created.Username, created.Password, CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            // Офлайн — фоновый сервис будет периодически пытаться переподключить
+        }
+    });
+
+    return Results.Created($"/api/devices/{created.Id}", MapDeviceResponse(created, "Offline", null));
 }).RequireAuthorization();
 
 app.MapPut("/api/devices/{id:guid}", async (
@@ -326,6 +373,8 @@ app.MapPut("/api/devices/{id:guid}", async (
     UpdateDeviceRequest request,
     AppDbContext dbContext,
     IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
+    IServiceScopeFactory scopeFactory,
     CancellationToken cancellationToken) =>
 {
     var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -341,12 +390,8 @@ app.MapPut("/api/devices/{id:guid}", async (
         return Results.Conflict(new { message = "Device with this identifier already exists." });
     }
 
-    var realtimeStatus = await connectionManager.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
-    if (!string.Equals(device.DeviceIdentifier, request.DeviceIdentifier, StringComparison.OrdinalIgnoreCase) &&
-        realtimeStatus.Status == DeviceConnectivityStatus.Connected)
-    {
-        return Results.Conflict(new { message = "Disconnect device before changing DeviceIdentifier." });
-    }
+    var oldIdentifier = device.DeviceIdentifier;
+    var sdkConnected = (await connectionManager.GetStatusAsync(oldIdentifier, cancellationToken)).Status == DeviceConnectivityStatus.Connected;
 
     device.DeviceIdentifier = request.DeviceIdentifier;
     device.Name = request.Name;
@@ -354,13 +399,32 @@ app.MapPut("/api/devices/{id:guid}", async (
     device.Port = request.Port;
     device.Location = request.Location;
     device.DeviceType = request.DeviceType;
+    if (request.Username is not null) device.Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim();
+    if (request.Password is not null) device.Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password;
     device.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
 
-    var updated = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstAsync(x => x.Id == id, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated));
+    if (sdkConnected)
+    {
+        await connectionManager.DisconnectAsync(oldIdentifier, cancellationToken);
+    }
+    var deviceId = id;
+    var connMgr = connectionManager;
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var d = await ctx.Devices.AsNoTracking().FirstAsync(x => x.Id == deviceId, CancellationToken.None);
+            await connMgr.ConnectAsync(d.DeviceIdentifier, d.IpAddress, d.Port, d.Username, d.Password, CancellationToken.None);
+        }
+        catch { /* reconnect in background */ }
+    });
+
+    var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
+    var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
 }).RequireAuthorization();
 
 app.MapDelete("/api/devices/{id:guid}", async (
@@ -390,48 +454,7 @@ app.MapPost("/api/devices/{id:guid}/connect", async (
     Guid id,
     AppDbContext dbContext,
     IDeviceConnectionManager connectionManager,
-    CancellationToken cancellationToken) =>
-{
-    var device = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-    if (device is null)
-    {
-        return Results.NotFound();
-    }
-
-    await connectionManager.ConnectAsync(device.DeviceIdentifier, device.IpAddress, device.Port, cancellationToken);
-    var updated = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstAsync(x => x.Id == id, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated));
-}).RequireAuthorization();
-
-app.MapPost("/api/devices/{id:guid}/disconnect", async (
-    Guid id,
-    AppDbContext dbContext,
-    IDeviceConnectionManager connectionManager,
-    CancellationToken cancellationToken) =>
-{
-    var device = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-    if (device is null)
-    {
-        return Results.NotFound();
-    }
-
-    await connectionManager.DisconnectAsync(device.DeviceIdentifier, cancellationToken);
-    var updated = await dbContext.Devices
-        .Include(x => x.DeviceStatus)
-        .FirstAsync(x => x.Id == id, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated));
-}).RequireAuthorization();
-
-app.MapGet("/api/devices/{id:guid}/status", async (
-    Guid id,
-    AppDbContext dbContext,
-    IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
     CancellationToken cancellationToken) =>
 {
     var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -440,24 +463,65 @@ app.MapGet("/api/devices/{id:guid}/status", async (
         return Results.NotFound();
     }
 
-    var status = await connectionManager.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
+    await connectionManager.ConnectAsync(device.DeviceIdentifier, device.IpAddress, device.Port, device.Username, device.Password, cancellationToken);
+    var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
+    var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/{id:guid}/disconnect", async (
+    Guid id,
+    AppDbContext dbContext,
+    IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (device is null)
+    {
+        return Results.NotFound();
+    }
+
+    await connectionManager.DisconnectAsync(device.DeviceIdentifier, cancellationToken);
+    var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
+    var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/status", async (
+    Guid id,
+    AppDbContext dbContext,
+    IDeviceArpStatusService arpStatusService,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (device is null)
+    {
+        return Results.NotFound();
+    }
+
+    var status = await arpStatusService.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
+    if (status is null)
+    {
+        return Results.Ok(new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null));
+    }
     return Results.Ok(new DeviceStatusResponse(
         device.Id,
         device.DeviceIdentifier,
         MapConnectivityStatus(status.Status),
-        status.LastSeenUtc ?? device.LastSeenUtc));
+        status.LastSeenUtc));
 }).RequireAuthorization();
 
 app.MapGet("/api/devices/statuses", async (
     AppDbContext dbContext,
-    IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
     CancellationToken cancellationToken) =>
 {
-    var statuses = await connectionManager.GetStatusesAsync(cancellationToken);
-    var realtimeByIdentifier = statuses.ToDictionary(x => x.DeviceIdentifier, x => x);
+    var statuses = await arpStatusService.GetStatusesAsync(cancellationToken);
+    var realtimeByIdentifier = statuses.ToDictionary(x => x.DeviceIdentifier, x => x, StringComparer.OrdinalIgnoreCase);
     var devices = await dbContext.Devices
         .AsNoTracking()
-        .Select(x => new { x.Id, x.DeviceIdentifier, x.LastSeenUtc, x.DeviceStatusId })
+        .Select(x => new { x.Id, x.DeviceIdentifier })
         .ToListAsync(cancellationToken);
 
     var payload = devices.Select(device =>
@@ -468,11 +532,10 @@ app.MapGet("/api/devices/statuses", async (
                 device.Id,
                 device.DeviceIdentifier,
                 MapConnectivityStatus(realtime.Status),
-                realtime.LastSeenUtc ?? device.LastSeenUtc);
+                realtime.LastSeenUtc);
         }
 
-        var fallbackStatus = device.DeviceStatusId == SeedIds.DeviceStatusOnline ? "Online" : "Offline";
-        return new DeviceStatusResponse(device.Id, device.DeviceIdentifier, fallbackStatus, device.LastSeenUtc);
+        return new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null);
     });
 
     return Results.Ok(payload);
@@ -486,6 +549,119 @@ app.MapGet("/api/devices/events", async (
     var clampedTake = Math.Clamp(take ?? 100, 1, 1000);
     var events = await eventListenerService.ReadRecentEventsAsync(clampedTake, cancellationToken);
     return Results.Ok(events);
+}).RequireAuthorization();
+
+app.MapGet("/api/access-levels", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var levels = await dbContext.AccessLevels
+        .AsNoTracking()
+        .Include(x => x.Doors)
+        .ThenInclude(d => d.Device)
+        .OrderBy(x => x.Name)
+        .ToListAsync(cancellationToken);
+    var list = levels.Select(x => new AccessLevelResponse(
+        x.Id, x.Name, x.Description, x.CreatedUtc, x.UpdatedUtc,
+        x.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList()));
+    return Results.Ok(list);
+}).RequireAuthorization();
+
+app.MapGet("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.AccessLevels
+        .AsNoTracking()
+        .Include(x => x.Doors)
+        .ThenInclude(d => d.Device)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+    var doors = entity.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList();
+    return Results.Ok(new AccessLevelResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc, doors));
+}).RequireAuthorization();
+
+app.MapPost("/api/access-levels", async (CreateAccessLevelRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    var exists = await dbContext.AccessLevels.AnyAsync(x => x.Name == name, cancellationToken);
+    if (exists)
+        return Results.Conflict(new { message = "Access level with this name already exists." });
+
+    var entity = new AccessLevel
+    {
+        Id = Guid.NewGuid(),
+        Name = name,
+        Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.AccessLevels.Add(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    return Results.Created($"/api/access-levels/{entity.Id}", new AccessLevelResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc, []));
+}).RequireAuthorization();
+
+app.MapPost("/api/access-levels/{id:guid}/doors", async (Guid id, AddAccessLevelDoorRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var level = await dbContext.AccessLevels.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (level is null)
+        return Results.NotFound();
+    var device = await dbContext.Devices.FirstOrDefaultAsync(x => x.Id == request.DeviceId, cancellationToken);
+    if (device is null)
+        return Results.NotFound(new { message = "Device not found." });
+    if (request.DoorIndex < 0)
+        return Results.BadRequest(new { message = "DoorIndex must be >= 0." });
+    var exists = await dbContext.AccessLevelDoors.AnyAsync(x => x.AccessLevelId == id && x.DeviceId == request.DeviceId && x.DoorIndex == request.DoorIndex, cancellationToken);
+    if (exists)
+        return Results.Conflict(new { message = "This door is already assigned to this access level." });
+    dbContext.AccessLevelDoors.Add(new AccessLevelDoor { AccessLevelId = id, DeviceId = request.DeviceId, DoorIndex = request.DoorIndex });
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapDelete("/api/access-levels/{id:guid}/doors/{deviceId:guid}/{doorIndex:int}", async (Guid id, Guid deviceId, int doorIndex, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var link = await dbContext.AccessLevelDoors.FirstOrDefaultAsync(x => x.AccessLevelId == id && x.DeviceId == deviceId && x.DoorIndex == doorIndex, cancellationToken);
+    if (link is null)
+        return Results.NotFound();
+    dbContext.AccessLevelDoors.Remove(link);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPut("/api/access-levels/{id:guid}", async (Guid id, UpdateAccessLevelRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.AccessLevels.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    var hasConflict = await dbContext.AccessLevels.AnyAsync(x => x.Id != id && x.Name == name, cancellationToken);
+    if (hasConflict)
+        return Results.Conflict(new { message = "Access level with this name already exists." });
+
+    entity.Name = name;
+    entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var doors = await dbContext.AccessLevelDoors.Where(x => x.AccessLevelId == id).Include(x => x.Device).ToListAsync(cancellationToken);
+    return Results.Ok(new AccessLevelResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc,
+        doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList()));
+}).RequireAuthorization();
+
+app.MapDelete("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.AccessLevels.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    dbContext.AccessLevels.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
 }).RequireAuthorization();
 
 app.MapGet("/api/system/status", async (
@@ -615,7 +791,7 @@ if (File.Exists(indexHtmlPath))
 
 app.Run();
 
-static DeviceResponse MapDeviceResponse(Device device)
+static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? lastSeenUtc)
 {
     return new DeviceResponse(
         device.Id,
@@ -625,8 +801,9 @@ static DeviceResponse MapDeviceResponse(Device device)
         device.Port,
         device.Location,
         device.DeviceType.ToString(),
-        device.DeviceStatus?.Name ?? "Unknown",
-        device.LastSeenUtc);
+        status,
+        lastSeenUtc,
+        device.Username);
 }
 
 static string MapConnectivityStatus(DeviceConnectivityStatus status)
@@ -676,7 +853,9 @@ public sealed record CreateDeviceRequest(
     string IpAddress,
     int Port,
     string? Location,
-    DeviceType DeviceType);
+    DeviceType DeviceType,
+    string? Username,
+    string? Password);
 
 public sealed record UpdateDeviceRequest(
     string DeviceIdentifier,
@@ -684,7 +863,9 @@ public sealed record UpdateDeviceRequest(
     string IpAddress,
     int Port,
     string? Location,
-    DeviceType DeviceType);
+    DeviceType DeviceType,
+    string? Username,
+    string? Password);
 
 public sealed record DeviceResponse(
     Guid Id,
@@ -695,13 +876,20 @@ public sealed record DeviceResponse(
     string? Location,
     string DeviceType,
     string Status,
-    DateTime? LastSeenUtc);
+    DateTime? LastSeenUtc,
+    string? Username);
 
 public sealed record DeviceStatusResponse(
     Guid DeviceId,
     string DeviceIdentifier,
     string Status,
     DateTime? LastSeenUtc);
+
+public sealed record CreateAccessLevelRequest(string Name, string? Description);
+public sealed record UpdateAccessLevelRequest(string Name, string? Description);
+public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
+public sealed record AccessLevelDoorDto(Guid DeviceId, string DeviceName, int DoorIndex);
+public sealed record AccessLevelResponse(Guid Id, string Name, string? Description, DateTime CreatedUtc, DateTime? UpdatedUtc, IReadOnlyList<AccessLevelDoorDto> Doors);
 
 public sealed record SystemStatusResponse(
     string ServerStatus,
@@ -728,6 +916,37 @@ public sealed record ManagedServiceResponse(
     string ServiceState,
     string Message);
 
+public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub) : IDeviceStatusBroadcaster
+{
+    public async Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, CancellationToken cancellationToken = default)
+    {
+        await hub.Clients.All.SendAsync("DeviceStatusChanged", new DeviceStatusResponse(deviceId, deviceIdentifier, status, lastSeenUtc), cancellationToken);
+    }
+}
+
 public sealed class DevicesHub : Hub
 {
+    private readonly IDeviceDiscoveryService _discovery;
+
+    public DevicesHub(IDeviceDiscoveryService discovery)
+    {
+        _discovery = discovery;
+    }
+
+    /// <summary>Запуск streaming discovery: устройства отправляются по мере обнаружения через DeviceFound, по завершении — DiscoveryComplete.</summary>
+    public async Task StartDiscovery()
+    {
+        var cancellationToken = Context.ConnectionAborted;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(60));
+
+        var count = 0;
+        await _discovery.DiscoverStreamAsync(async (device, ct) =>
+        {
+            await Clients.Caller.SendAsync("DeviceFound", device, ct);
+            count++;
+        }, cts.Token);
+
+        await Clients.Caller.SendAsync("DiscoveryComplete", count, cancellationToken);
+    }
 }

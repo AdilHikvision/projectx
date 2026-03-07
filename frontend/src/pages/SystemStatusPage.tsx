@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
+import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 import { Card, Badge, Button, PageHeader } from '../components/ui'
 
@@ -39,15 +40,39 @@ interface SdkHealthResponse {
   lastErrorCode?: string | null
   lastErrorMessage?: string | null
   lastErrorHint?: string | null
+  lastErrorDevice?: string | null
+  lastErrorCategory?: string | null
   librarySearchPaths: string[]
+}
+
+function formatSdkError(sdk: SdkHealthResponse): { summary: string; detail: string } {
+  if (!sdk.lastErrorCode) return { summary: 'Нет ошибок', detail: '' }
+  const cat = sdk.lastErrorCategory || 'other'
+  const device = sdk.lastErrorDevice ? ` (${sdk.lastErrorDevice})` : ''
+  if (cat === 'network') {
+    return {
+      summary: `Устройство вне сети или недоступно${device}`,
+      detail: sdk.lastErrorMessage || 'Проверьте подключение, маршрутизацию и доступность устройства.'
+    }
+  }
+  if (cat === 'auth') {
+    return {
+      summary: `Проверьте логин и права доступа${device}`,
+      detail: sdk.lastErrorMessage || 'Учётная запись не имеет нужных привилегий на устройстве.'
+    }
+  }
+  return {
+    summary: `${sdk.lastErrorCode}: ${sdk.lastErrorMessage || 'Ошибка SDK'}${device}`,
+    detail: sdk.lastErrorHint || ''
+  }
 }
 
 export function SystemStatusPage() {
   const { token } = useAuth()
+  const { startLoading, stopLoading, isLoading } = useLoading()
   const [status, setStatus] = useState<SystemStatusResponse | null>(null)
   const [sdkHealth, setSdkHealth] = useState<SdkHealthResponse | null>(null)
   const [services, setServices] = useState<ManagedServiceResponse[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -55,38 +80,39 @@ export function SystemStatusPage() {
   const authToken = token
   const localControlKey = (import.meta.env.VITE_LOCAL_CONTROL_KEY as string | undefined)?.trim()
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (showLoading = false) => {
     if (!authToken) return
-    const [systemResponse, sdkResponse, servicesResponse] = await Promise.all([
-      apiRequest<SystemStatusResponse>('/api/system/status', { token: authToken }),
-      apiRequest<SdkHealthResponse>('/api/health/sdk'),
-      apiRequest<ManagedServiceResponse[]>('/api/system/services', { token: authToken }),
-    ])
-    setStatus(systemResponse)
-    setSdkHealth(sdkResponse)
-    setServices(servicesResponse)
-  }, [authToken])
+    if (showLoading) startLoading()
+    try {
+      const [systemResponse, sdkResponse, servicesResponse] = await Promise.all([
+        apiRequest<SystemStatusResponse>('/api/system/status', { token: authToken }),
+        apiRequest<SdkHealthResponse>('/api/health/sdk'),
+        apiRequest<ManagedServiceResponse[]>('/api/system/services', { token: authToken }),
+      ])
+      setStatus(systemResponse)
+      setSdkHealth(sdkResponse)
+      setServices(servicesResponse)
+    } finally {
+      if (showLoading) stopLoading()
+    }
+  }, [authToken, startLoading, stopLoading])
 
   useEffect(() => {
     let isDisposed = false
     let timer: number | null = null
 
-      ; (async () => {
-        try {
-          await loadStatus()
-        } catch (e) {
-          if (!isDisposed) {
-            setError(e instanceof Error ? e.message : 'Не удалось загрузить статус системы')
-          }
-        } finally {
-          if (!isDisposed) {
-            setIsLoading(false)
-          }
+    ;(async () => {
+      try {
+        await loadStatus(true)
+      } catch (e) {
+        if (!isDisposed) {
+          setError(e instanceof Error ? e.message : 'Не удалось загрузить статус системы')
         }
-      })()
+      }
+    })()
 
     timer = window.setInterval(() => {
-      loadStatus().catch(() => undefined)
+      loadStatus(false).catch(() => undefined)
     }, 4000)
 
     return () => {
@@ -171,7 +197,7 @@ export function SystemStatusPage() {
           title="System Operational Status"
           description="Real-time monitoring and control of backend services."
           actions={
-            <Button variant="outline" size="sm" icon="restart_alt" onClick={() => loadStatus()} isLoading={isLoading}>
+            <Button variant="outline" size="sm" icon="restart_alt" onClick={() => loadStatus(true)} isLoading={isLoading}>
               Refresh Status
             </Button>
           }
@@ -199,9 +225,9 @@ export function SystemStatusPage() {
                 {status?.serverStatus || 'Offline'}
               </Badge>
             </div>
-            {isLoading || !status ? (
-              <div className="flex items-center justify-center py-12">
-                <span className="material-symbols-outlined animate-spin text-primary text-4xl">progress_activity</span>
+            {!status ? (
+              <div className="flex items-center justify-center py-12 text-text-muted text-sm">
+                Нет данных
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-8">
@@ -261,8 +287,15 @@ export function SystemStatusPage() {
                 <div className="space-y-2">
                   <span className="text-xs font-bold text-text-muted uppercase">Last Error Event</span>
                   <div className={`p-3 rounded-lg text-xs ${sdkHealth.lastErrorCode ? 'bg-error-bg text-error-text border border-error-text/10' : 'bg-slate-75 text-text-muted'}`}>
-                    <p className="font-bold">{sdkHealth.lastErrorCode ? `${sdkHealth.lastErrorCode}: ${sdkHealth.lastErrorMessage}` : 'No fault events logged'}</p>
-                    {sdkHealth.lastErrorHint && <p className="mt-1 opacity-80">{sdkHealth.lastErrorHint}</p>}
+                    {(() => {
+                      const { summary, detail } = formatSdkError(sdkHealth)
+                      return (
+                        <>
+                          <p className="font-bold">{summary}</p>
+                          {detail && <p className="mt-1 opacity-80">{detail}</p>}
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
                 <div className="space-y-2">

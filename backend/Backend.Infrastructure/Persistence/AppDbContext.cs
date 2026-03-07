@@ -21,6 +21,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
     public DbSet<AccessLevel> AccessLevels => Set<AccessLevel>();
+    public DbSet<AccessLevelDoor> AccessLevelDoors => Set<AccessLevelDoor>();
     public DbSet<EmployeeAccessLevel> EmployeeAccessLevels => Set<EmployeeAccessLevel>();
     public DbSet<VisitorAccessLevel> VisitorAccessLevels => Set<VisitorAccessLevel>();
 
@@ -38,6 +39,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Location).HasMaxLength(255);
             entity.Property(x => x.DeviceType).HasConversion<int>().IsRequired();
             entity.Property(x => x.LastSeenUtc);
+            entity.Property(x => x.Username).HasMaxLength(64);
+            entity.Property(x => x.Password).HasMaxLength(120);
             entity.HasIndex(x => x.DeviceIdentifier).IsUnique();
             entity.HasOne(x => x.DeviceStatus).WithMany(x => x.Devices).HasForeignKey(x => x.DeviceStatusId);
         });
@@ -83,6 +86,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(500);
             entity.HasIndex(x => x.Name).IsUnique();
+        });
+
+        builder.Entity<AccessLevelDoor>(entity =>
+        {
+            entity.ToTable("access_level_doors");
+            entity.HasKey(x => new { x.AccessLevelId, x.DeviceId, x.DoorIndex });
+            entity.HasOne(x => x.AccessLevel).WithMany(x => x.Doors).HasForeignKey(x => x.AccessLevelId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Device).WithMany(x => x.AccessLevelDoors).HasForeignKey(x => x.DeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.DeviceId, x.DoorIndex });
         });
 
         builder.Entity<EmployeeAccessLevel>(entity =>
