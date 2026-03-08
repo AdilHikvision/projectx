@@ -218,6 +218,46 @@ app.MapPost("/api/auth/login", async (
     }
 }).AllowAnonymous();
 
+app.MapGet("/api/auth/setup-required", async (UserManager<ApplicationUser> userManager, CancellationToken cancellationToken) =>
+{
+    var adminWithSetup = await userManager.Users
+        .Where(u => u.RequiresPasswordSetup)
+        .Select(u => new { u.Email })
+        .FirstOrDefaultAsync(cancellationToken);
+    if (adminWithSetup is null)
+        return Results.Ok(new { required = false });
+    return Results.Ok(new { required = true, email = adminWithSetup.Email ?? "" });
+}).AllowAnonymous();
+
+app.MapPost("/api/auth/setup-admin-password", async (
+    SetupAdminPasswordRequest request,
+    UserManager<ApplicationUser> userManager,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { message = "Email and password are required." });
+    if (request.Password != request.ConfirmPassword)
+        return Results.BadRequest(new { message = "Passwords do not match." });
+    if (request.Password.Length < 8)
+        return Results.BadRequest(new { message = "Password must be at least 8 characters." });
+
+    var user = await userManager.FindByEmailAsync(request.Email);
+    if (user is null || !user.RequiresPasswordSetup)
+        return Results.BadRequest(new { message = "Setup is not required for this user." });
+
+    var result = await userManager.RemovePasswordAsync(user);
+    if (result.Succeeded)
+        result = await userManager.AddPasswordAsync(user, request.Password);
+    if (!result.Succeeded)
+    {
+        var err = string.Join("; ", result.Errors.Select(e => e.Description));
+        return Results.BadRequest(new { message = err });
+    }
+    user.RequiresPasswordSetup = false;
+    await userManager.UpdateAsync(user);
+    return Results.Ok(new { message = "Password set successfully." });
+}).AllowAnonymous();
+
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) =>
 {
     var id = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
@@ -844,6 +884,8 @@ public sealed record RegisterRequest(
     string? Role);
 
 public sealed record LoginRequest(string Email, string Password);
+
+public sealed record SetupAdminPasswordRequest(string Email, string Password, string ConfirmPassword);
 
 public sealed record ActivateDeviceRequest(string IpAddress, int Port, string MacAddress, string Password);
 

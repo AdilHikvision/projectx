@@ -3,7 +3,11 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input, Modal } from '../components/ui'
-import { consumeSessionExpiredFlag } from '../lib/api'
+import { apiRequest, consumeSessionExpiredFlag } from '../lib/api'
+
+interface SetupRequiredResponse {
+  required: boolean
+}
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
@@ -12,6 +16,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showSessionExpiredDialog, setShowSessionExpiredDialog] = useState(false)
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
   const { login, isAuthenticated } = useAuth()
 
   useEffect(() => {
@@ -19,6 +24,24 @@ export function LoginPage() {
       setShowSessionExpiredDialog(true)
     }
   }, [])
+
+  useEffect(() => {
+    apiRequest<SetupRequiredResponse>('/api/auth/setup-required')
+      .then((res) => setSetupRequired(res.required))
+      .catch(() => setSetupRequired(false))
+  }, [])
+
+  if (setupRequired === null) {
+    return (
+      <div className="fixed inset-0 z-9999 flex items-center justify-center bg-background-light" aria-busy="true">
+        <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
+      </div>
+    )
+  }
+
+  if (setupRequired === true) {
+    return <Navigate to="/setup-password" replace />
+  }
 
   if (isAuthenticated) {
     return <Navigate to="/devices" replace />
@@ -223,14 +246,6 @@ export function LoginPage() {
               <span className="material-symbols-outlined text-lg">east</span>
             </Button>
           </form>
-
-          <div className="pt-6 border-t border-border-light flex flex-col items-center gap-4 text-center">
-            <div className="flex items-center gap-2 text-text-muted font-bold text-[11px] uppercase tracking-wider">
-              <span className="material-symbols-outlined text-lg">shield</span>
-              Setup Multi-Factor Authentication (MFA)
-            </div>
-            <p className="text-[11px] text-text-muted tracking-tight font-medium">Protected by Enterprise Identity Services</p>
-          </div>
         </div>
 
         {/* Page Footer */}

@@ -28,6 +28,7 @@ interface AuthContextValue {
   token: string | null
   user: AuthUser | null
   isAuthenticated: boolean
+  /** true пока проверяется сессия (валидация токена через /api/auth/me) */
   isLoading: boolean
   login: (request: LoginRequest) => Promise<void>
   logout: () => void
@@ -53,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null
     }
   })
-  const [isLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(() => Boolean(localStorage.getItem(STORAGE_TOKEN_KEY)))
 
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_TOKEN_KEY)
@@ -61,6 +62,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null)
     setUser(null)
   }, [])
+
+  useEffect(() => {
+    const validateSession = async () => {
+      const storedToken = localStorage.getItem(STORAGE_TOKEN_KEY)
+      if (!storedToken) {
+        setIsLoading(false)
+        return
+      }
+      try {
+        const me = await apiRequest<{ id: string; email: string; roles: string[] }>('/api/auth/me', { token: storedToken })
+        setUser({ id: me.id, email: me.email ?? '', roles: me.roles ?? [] })
+        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify({ id: me.id, email: me.email ?? '', roles: me.roles ?? [] }))
+      } catch {
+        logout()
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    validateSession()
+  }, [logout])
 
   useEffect(() => {
     const handleSessionExpired = () => {

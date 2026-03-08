@@ -5,6 +5,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AccessLevelsPage } from './pages/AccessLevelsPage'
 import { DevicesPage } from './pages/DevicesPage'
 import { LoginPage } from './pages/LoginPage'
+import { SetupPasswordPage } from './pages/SetupPasswordPage'
 import { PayrollCalculationPage } from './pages/PayrollCalculationPage'
 import { PeopleManagementPage } from './pages/PeopleManagementPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
@@ -19,6 +20,7 @@ function App() {
     <>
     <LoadingOverlay isLoading={isLoading} />
     <Routes>
+      <Route path="/setup-password" element={<SetupPasswordPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/devices" element={<DevicesPage />} />

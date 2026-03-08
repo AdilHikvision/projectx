@@ -36,12 +36,19 @@ const emptyForm: AccessLevelFormData = {
   description: '',
 }
 
+const ACCESS_TABS = [
+  { value: 'access-level', label: 'Access Level' },
+  { value: 'doors', label: 'Doors' },
+  { value: 'floors', label: 'Floors' },
+] as const
+
 export function AccessLevelsPage() {
   const { token } = useAuth()
   const { startLoading, stopLoading, isLoading } = useLoading()
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [tabFilter, setTabFilter] = useState<(typeof ACCESS_TABS)[number]['value']>('access-level')
   const [modalMode, setModalMode] = useState<'create' | 'edit' | 'delete' | 'doors' | null>(null)
   const [editingItem, setEditingItem] = useState<AccessLevel | null>(null)
   const [deletingItem, setDeletingItem] = useState<AccessLevel | null>(null)
@@ -267,20 +274,6 @@ export function AccessLevelsPage() {
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
-          <Card className="relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-              <span className="material-symbols-outlined text-5xl">policy</span>
-            </div>
-            <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-3">Total Policies</p>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-text-dark">{accessLevels.length}</span>
-              <Badge variant="primary">Active</Badge>
-            </div>
-          </Card>
-        </div>
-
         {/* Search */}
         <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
           <div className="flex-1 relative">
@@ -304,85 +297,117 @@ export function AccessLevelsPage() {
           </div>
         </div>
 
-        {/* Main List */}
-        <Card noPadding className="overflow-hidden">
-          <div className="p-6 border-b border-border-base flex items-center justify-between">
-            <h4 className="text-sm font-black text-text-dark uppercase tracking-widest">Access Levels</h4>
+        {/* Tabs */}
+        <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
+          {ACCESS_TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTabFilter(t.value)}
+              className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${
+                tabFilter === t.value
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-dark'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tabFilter === 'access-level' && (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
+              <Card className="relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                  <span className="material-symbols-outlined text-5xl">policy</span>
+                </div>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-3">Total Policies</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-text-dark">{accessLevels.length}</span>
+                  <Badge variant="primary">Active</Badge>
+                </div>
+              </Card>
+            </div>
+
+            {/* Main List */}
+            <Card noPadding className="overflow-hidden">
+          <div className="hidden md:grid grid-cols-4 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
+            <div className="col-span-2">Policy</div>
+            <div>Doors</div>
+            <div className="text-right">Actions</div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="bg-slate-75 border-b border-border-base">
-                  <th className="px-8 py-4 text-[11px] font-black text-text-muted uppercase tracking-widest">Name</th>
-                  <th className="px-8 py-4 text-[11px] font-black text-text-muted uppercase tracking-widest">Description</th>
-                  <th className="px-8 py-4 text-[11px] font-black text-text-muted uppercase tracking-widest">Doors</th>
-                  <th className="px-8 py-4 text-[11px] font-black text-text-muted uppercase tracking-widest text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-light">
-                {filteredLevels.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-8 py-12 text-center text-text-muted italic text-sm">
-                      {accessLevels.length === 0 && !isLoading
-                        ? 'No access levels. Click Create New Policy to add one.'
-                        : 'No access levels match your search.'}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredLevels.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-75 transition-all group">
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-4">
-                          <Avatar icon="shield_lock" variant="default" size="md" className="group-hover:bg-primary/20 transition-colors" />
-                          <span className="text-sm font-bold text-text-dark">{item.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 text-sm font-medium text-text-muted">{item.description || '—'}</td>
-                      <td className="px-8 py-6">
-                        <div className="flex flex-wrap items-center gap-1">
-                          {(item.doors ?? []).length === 0 ? (
-                            <span className="text-text-light italic text-xs">—</span>
-                          ) : (
-                            (item.doors ?? []).map((d) => (
-                              <Badge key={`${d.deviceId}-${d.doorIndex}`} variant="secondary" className="text-[10px]">
-                                {d.deviceName}:#{d.doorIndex}
-                              </Badge>
-                            ))
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            icon="door_front"
-                            className="text-text-muted hover:text-primary"
-                            onClick={() => openDoorsModal(item)}
-                            title="Manage doors"
-                          />
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            icon="edit"
-                            className="text-text-muted hover:text-primary"
-                            onClick={() => openEditModal(item)}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            icon="delete"
-                            className="text-text-muted hover:text-error-text hover:bg-error-bg"
-                            onClick={() => openDeleteModal(item)}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="divide-y divide-border-light">
+            {filteredLevels.length === 0 ? (
+              <div className="p-12 text-center text-text-muted italic text-sm">
+                {accessLevels.length === 0 && !isLoading
+                  ? 'No access levels. Click Create New Policy to add one.'
+                  : 'No access levels match your search.'}
+              </div>
+            ) : (
+              filteredLevels.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-col md:grid grid-cols-4 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group"
+                >
+                  <div className="col-span-2 flex items-center gap-4">
+                    <Avatar
+                      icon="shield_lock"
+                      variant="primary"
+                      size="lg"
+                      className="rounded-xl! shadow-sm"
+                    />
+                    <div>
+                      <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">
+                        {item.name}
+                      </p>
+                      <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight">
+                        {item.description || '—'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 w-full md:block">
+                    <div className="flex flex-wrap items-center gap-1 flex-1">
+                      {(item.doors ?? []).length === 0 ? (
+                        <span className="text-text-light italic text-xs">—</span>
+                      ) : (
+                        (item.doors ?? []).map((d) => (
+                          <Badge key={`${d.deviceId}-${d.doorIndex}`} variant="neutral" className="text-[10px]">
+                            {d.deviceName}:#{d.doorIndex}
+                          </Badge>
+                        ))
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        icon="door_front"
+                        className="text-text-muted hover:text-primary"
+                        onClick={() => openDoorsModal(item)}
+                        title="Manage doors"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-4 md:mt-0 w-full">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      icon="edit"
+                      className="text-text-muted hover:text-text-dark"
+                      onClick={() => openEditModal(item)}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      icon="delete"
+                      className="text-text-muted hover:text-error-text hover:bg-error-bg"
+                      onClick={() => openDeleteModal(item)}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
@@ -391,6 +416,24 @@ export function AccessLevelsPage() {
             </p>
           </div>
         </Card>
+          </>
+        )}
+
+        {tabFilter === 'doors' && (
+          <Card className="p-12 text-center">
+            <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">door_front</span>
+            <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Doors</p>
+            <p className="text-text-muted text-sm">Manage doors and their assignments.</p>
+          </Card>
+        )}
+
+        {tabFilter === 'floors' && (
+          <Card className="p-12 text-center">
+            <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
+            <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Floors</p>
+            <p className="text-text-muted text-sm">Manage floors and building structure.</p>
+          </Card>
+        )}
       </div>
 
       {/* Create/Edit Modal */}

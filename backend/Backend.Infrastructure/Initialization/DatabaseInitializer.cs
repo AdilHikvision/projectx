@@ -19,12 +19,24 @@ public sealed class DatabaseInitializer(
     {
         await dbContext.Database.MigrateAsync(cancellationToken);
 
-        // One-time: add Username/Password columns if missing (migration may not have been applied)
+        // One-time: add columns if missing (migrations may not have been applied in order)
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS "DeviceIdentifier" character varying(120) DEFAULT ''
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS "LastSeenUtc" timestamp with time zone
+            """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE devices ADD COLUMN IF NOT EXISTS "Username" character varying(64)
             """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE devices ADD COLUMN IF NOT EXISTS "Password" character varying(120)
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            UPDATE devices SET "DeviceIdentifier" = 'device-' || REPLACE(CAST("Id" AS text), '-', '') WHERE "DeviceIdentifier" IS NULL OR "DeviceIdentifier" = ''
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_devices_DeviceIdentifier" ON devices ("DeviceIdentifier")
             """, cancellationToken);
 
         foreach (var role in SystemRoles.All)
@@ -41,9 +53,9 @@ public sealed class DatabaseInitializer(
         }
 
         var admin = seedAdminOptions.Value;
-        if (string.IsNullOrWhiteSpace(admin.Email) || string.IsNullOrWhiteSpace(admin.Password))
+        if (string.IsNullOrWhiteSpace(admin.Email))
         {
-            logger.LogWarning("SeedAdmin credentials are missing. Admin user was not created.");
+            logger.LogWarning("SeedAdmin email is missing. Admin user was not created.");
             return;
         }
 
@@ -57,7 +69,23 @@ public sealed class DatabaseInitializer(
             LastName = admin.LastName
         };
 
-        var createResult = await userManager.CreateAsync(user, admin.Password);
+        string password;
+        bool requiresSetup;
+        if (string.IsNullOrWhiteSpace(admin.Password))
+        {
+            password = "TempSetup_" + Guid.NewGuid().ToString("N")[..16] + "!";
+            requiresSetup = true;
+            logger.LogInformation("SeedAdmin password is missing. Admin created with temporary password; user must set password on first launch.");
+        }
+        else
+        {
+            password = admin.Password;
+            requiresSetup = false;
+        }
+
+        user.RequiresPasswordSetup = requiresSetup;
+
+        var createResult = await userManager.CreateAsync(user, password);
         if (!createResult.Succeeded)
         {
             var errors = string.Join("; ", createResult.Errors.Select(x => x.Description));

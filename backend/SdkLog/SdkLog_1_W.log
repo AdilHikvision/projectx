@@ -49,3 +49,196 @@
 [2026-03-08 01:09:28.208][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
 [2026-03-08 01:09:30.216][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
 [2026-03-08 01:09:30.262][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:32.266][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:32.329][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:34.341][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:34.387][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:36.393][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:36.455][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:38.460][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:38.537][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:40.545][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:40.591][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:42.605][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:42.653][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:44.664][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:44.709][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:46.715][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:46.777][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:48.784][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:49.065][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:09:54.083][ERR] Private connect 192.168.1.64:8000 sock=2084 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:09:54.083][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:09:54.083][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:09:56.092][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:56.139][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:09:56.139][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:09:58.142][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:09:58.204][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:00.208][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:00.255][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:02.266][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:02.328][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:04.343][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:04.389][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:06.399][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:06.460][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:08.476][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:08.522][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:10.537][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:10.630][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:12.631][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:12.694][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:14.700][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:14.762][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:16.768][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:16.846][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:18.859][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:19.064][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:19.064][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:10:21.078][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:21.140][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:26.155][ERR] Private connect 192.168.1.64:8000 sock=3312 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:10:26.155][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:10:26.155][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:10:28.161][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:28.238][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:30.248][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:30.310][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:32.317][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:32.364][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:34.372][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:34.433][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:34.433][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:10:36.442][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:36.504][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:38.514][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:38.574][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:40.588][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:40.664][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:42.674][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:42.720][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:44.722][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:44.768][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:44.768][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:10:46.775][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:46.836][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:48.843][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:49.029][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:51.032][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:51.095][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:10:53.102][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:10:53.211][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:10:58.218][ERR] Private connect 192.168.1.64:8000 sock=3060 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:10:58.218][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:10:58.218][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:11:00.220][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:00.298][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:02.303][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:02.380][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:04.386][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:04.433][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:04.433][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:11:06.441][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:06.503][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:08.518][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:08.579][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:10.586][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:10.633][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:12.639][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:12.701][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:14.716][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:14.778][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:16.793][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:16.886][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:18.898][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:19.100][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:21.103][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:21.180][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:23.184][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:23.263][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:23.263][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:11:28.273][ERR] Private connect 192.168.1.64:8000 sock=3352 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:11:28.273][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:11:28.273][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:11:30.288][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:30.334][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:32.348][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:32.395][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:34.410][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:34.472][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:36.480][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:36.542][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:38.559][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:38.604][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:40.608][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:40.654][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:42.666][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:42.712][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:44.720][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:44.750][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:46.753][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:46.830][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:46.830][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:11:48.837][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:49.038][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:51.047][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:51.110][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:11:51.110][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:11:53.111][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:53.173][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:11:55.176][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:11:55.207][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:00.223][ERR] Private connect 192.168.1.64:8000 sock=3480 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:12:00.223][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:12:00.223][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:12:02.230][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:02.276][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:04.283][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:04.329][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:06.336][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:06.383][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:06.383][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:12:08.387][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:08.434][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:10.445][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:10.507][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:12.518][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:12.580][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:14.584][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:14.646][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:16.649][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:16.695][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:18.702][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:18.765][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:18.765][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:12:20.768][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:20.846][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:22.850][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:22.943][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:24.958][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:25.005][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:27.020][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:27.067][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:32.083][ERR] Private connect 192.168.1.64:8000 sock=3560 this=0x2f4ece4 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-08 01:12:32.083][ERR] [192.168.1.64:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-08 01:12:32.083][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-08 01:12:34.098][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:34.145][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:36.146][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:36.192][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:38.207][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:38.269][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:38.269][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-08 01:12:40.284][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:40.330][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:42.341][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:42.401][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:44.404][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:44.467][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:46.475][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:46.521][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-08 01:12:48.532][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:48.611][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-08 01:12:50.623][DBG] CLongConfigSessionEx::start succ [userid:1][command:2514]
+[2026-03-08 01:12:50.668][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
