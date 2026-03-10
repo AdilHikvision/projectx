@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLoading } from '../context/LoadingContext'
-import { Button, Input } from '../components/ui'
+import { Button, Input } from '../components/atoms'
 import { apiRequest } from '../lib/api'
 
 interface SetupRequiredResponse {
@@ -45,15 +45,15 @@ export function SetupPasswordPage() {
     e.preventDefault()
     setError(null)
     if (!email?.trim()) {
-      setError('Введите email.')
+      setError('Please enter an email.')
       return
     }
     if (password !== confirmPassword) {
-      setError('Пароли не совпадают.')
+      setError('Passwords do not match.')
       return
     }
     if (password.length < 8) {
-      setError('Пароль должен содержать минимум 8 символов.')
+      setError('Password must be at least 8 characters.')
       return
     }
     startLoading()
@@ -65,7 +65,7 @@ export function SetupPasswordPage() {
       navigate('/login', { replace: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Не удалось задать пароль.')
+      setError(msg || 'Failed to set password.')
     } finally {
       stopLoading()
     }
@@ -73,197 +73,122 @@ export function SetupPasswordPage() {
 
   if (checking) {
     return (
-      <div className="fixed inset-0 z-9999 flex items-center justify-center bg-background-light" aria-busy="true">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background-light" aria-busy="true">
         <div className="flex flex-col items-center gap-4">
-          <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
-          <p className="text-sm font-bold text-text-muted uppercase tracking-widest">Проверка...</p>
+          <div className="w-12 h-12 border-4 border-slate-100 border-t-primary rounded-full animate-spin" />
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest animate-pulse">Initializing Setup...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="font-sans antialiased text-text-dark bg-background-light min-h-screen flex flex-col">
-      {/* Mobile View */}
-      <div className="md:hidden flex flex-col min-h-screen">
-        <header className="flex items-center justify-between px-6 py-4">
-          <div className="w-6" />
-          <h1 className="text-lg font-bold text-text-dark">Задание пароля</h1>
-          <div className="w-6" />
-        </header>
+    <div className="min-h-screen relative flex items-center justify-center p-6 sm:p-12 overflow-hidden bg-background-light font-sans antialiased text-text-dark">
+      {/* Background Elements */}
+      <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-5%] w-[40%] h-[40%] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
 
-        <div className="px-6 pt-8 pb-10">
-          <h2 className="text-[32px] font-bold leading-tight mb-3 text-text-dark">Первоначальная настройка</h2>
-          <p className="text-text-muted text-lg">Задайте пароль для учётной записи администратора</p>
-        </div>
+      <div className="w-full max-w-[480px] relative z-10 animate-in fade-in zoom-in-95 duration-500">
+        <div className="bg-surface rounded-[2.5rem] shadow-2xl p-8 sm:p-10 space-y-8 relative overflow-hidden group border-none">
 
-        <form className="px-6 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-error-bg text-error-text p-4 rounded-xl text-sm font-bold border border-error-text/10">
-              {error}
-            </div>
-          )}
-            <div className="space-y-2">
-              <label className="block text-base font-semibold text-text-dark">Email</label>
-              <Input
-                type="email"
-                placeholder="admin@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="py-2 text-sm"
-                required
-              />
-            </div>
-
-          <div className="space-y-2">
-            <label className="block text-base font-semibold text-text-dark">Новый пароль</label>
-            <div className="relative">
-              <Input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="py-2 text-sm pr-10"
-                required
-                minLength={8}
-              />
-              <span
-                className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-text-muted cursor-pointer"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? 'visibility_off' : 'visibility'}
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-base font-semibold text-text-dark">Подтвердите пароль</label>
-            <div className="relative">
-              <Input
-                type={showConfirmPassword ? 'text' : 'password'}
-                placeholder="••••••••"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="py-2 text-sm pr-10"
-                required
-                minLength={8}
-              />
-              <span
-                className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-text-muted cursor-pointer"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-              >
-                {showConfirmPassword ? 'visibility_off' : 'visibility'}
-              </span>
-            </div>
-          </div>
-
-          <Button
-            type="submit"
-            isLoading={isLoading}
-            fullWidth
-            className="rounded-xl gap-2 shadow-lg shadow-primary/20"
-          >
-            {isLoading ? 'Сохранение...' : 'Задать пароль'}
-            <span className="material-symbols-outlined text-lg">lock</span>
-          </Button>
-        </form>
-
-        <footer className="mt-auto px-6 py-8 text-center">
-          <div className="font-bold text-[10px] text-primary tracking-widest uppercase pb-4">
-            POWERED BY UNIFI ARCHITECTURE
-          </div>
-        </footer>
-      </div>
-
-      {/* Desktop View */}
-      <div className="hidden md:flex flex-col min-h-screen dot-background items-center justify-center p-6 bg-background-light">
-        <div className="w-full max-w-[440px] bg-surface rounded-[24px] shadow-2xl p-10 space-y-8 border border-border-base">
           <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-14 h-14 bg-primary rounded-xl flex items-center justify-center text-white">
-              <span className="material-symbols-outlined text-3xl">lock</span>
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 shadow-sm">
+              <span className="material-symbols-outlined text-3xl">admin_panel_settings</span>
             </div>
-            <div>
-              <h2 className="text-3xl font-bold text-text-dark">Задание пароля</h2>
-              <p className="text-text-muted mt-1">Первоначальная настройка администратора</p>
+            <div className="space-y-1">
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Initial Setup</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest leading-relaxed">Create your administrative account</p>
             </div>
           </div>
 
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
-              <div className="bg-error-bg text-error-text p-4 rounded-lg text-sm font-bold border border-error-text/10">
+              <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest text-center animate-in shake duration-500">
                 {error}
               </div>
             )}
-            <div className="space-y-2">
-              <label className="block text-[10px] font-extrabold text-text-dark tracking-widest uppercase">EMAIL</label>
-              <Input
-                type="email"
-                placeholder="admin@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="bg-slate-75 border-transparent focus:bg-white text-[15px]"
-                required
-              />
-            </div>
 
-            <div className="space-y-2">
-              <label className="block text-[10px] font-extrabold text-text-dark tracking-widest uppercase">НОВЫЙ ПАРОЛЬ</label>
-              <div className="relative">
-                <Input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Минимум 8 символов"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="bg-slate-75 border-transparent focus:bg-white text-[15px] pr-10"
-                  required
-                  minLength={8}
-                />
-                <span
-                  className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-muted cursor-pointer text-xl"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? 'visibility_off' : 'visibility'}
-                </span>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Admin Email</label>
+                <div className="relative">
+                  <Input
+                    type="email"
+                    placeholder="admin@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                    required
+                  />
+                  <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">verified</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Master Password</label>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Minimum 8 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      required
+                      minLength={8}
+                    />
+                    <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">lock</span>
+                    <button
+                      type="button"
+                      className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-text-light hover:text-text-dark transition-colors text-xl"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? 'visibility_off' : 'visibility'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Confirm Password</label>
+                  <div className="relative">
+                    <Input
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      placeholder="Repeat master password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      required
+                      minLength={8}
+                    />
+                    <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">shield</span>
+                    <button
+                      type="button"
+                      className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-text-light hover:text-text-dark transition-colors text-xl"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    >
+                      {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="block text-[10px] font-extrabold text-text-dark tracking-widest uppercase">ПОДТВЕРДИТЕ ПАРОЛЬ</label>
-              <div className="relative">
-                <Input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Повторите пароль"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="bg-slate-75 border-transparent focus:bg-white text-[15px] pr-10"
-                  required
-                  minLength={8}
-                />
-                <span
-                  className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-muted cursor-pointer text-xl"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                >
-                  {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                </span>
-              </div>
+            <div className="pt-2">
+              <Button
+                type="submit"
+                isLoading={isLoading}
+                fullWidth
+                size="lg"
+                className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
+              >
+                Complete Setup
+              </Button>
             </div>
-
-            <Button
-              type="submit"
-              isLoading={isLoading}
-              fullWidth
-              className="rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30"
-            >
-              {isLoading ? 'Сохранение...' : 'Задать пароль'}
-              <span className="material-symbols-outlined text-lg">east</span>
-            </Button>
           </form>
-        </div>
 
-        <div className="mt-8 flex gap-8 text-[11px] font-bold text-text-muted uppercase tracking-widest">
-          <a href="#" className="hover:text-primary transition-colors">Help Center</a>
-          <a href="#" className="hover:text-primary transition-colors">Privacy Policy</a>
-          <a href="#" className="hover:text-primary transition-colors">Terms of Service</a>
+          <div className="pt-4 text-center">
+            <p className="text-text-light/50 text-[9px] font-black uppercase tracking-[0.4em]">Powered by Unifi Architecture</p>
+          </div>
         </div>
       </div>
     </div>

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { AppLayout } from '../components/AppLayout'
+import { AppLayout } from '../components/templates'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
-import { Card, Badge, Button, PageHeader } from '../components/ui'
+import { Badge, Button } from '../components/atoms'
+import { PageHeader } from '../components/organisms'
 
 interface SystemStatusResponse {
   serverStatus: string
@@ -23,15 +24,6 @@ interface ServiceControlResponse {
   message: string
 }
 
-interface ManagedServiceResponse {
-  key: string
-  serviceName: string
-  displayName: string
-  port?: string | null
-  isControllable: boolean
-  serviceState: string
-  message: string
-}
 
 interface SdkHealthResponse {
   initialized: boolean
@@ -46,23 +38,23 @@ interface SdkHealthResponse {
 }
 
 function formatSdkError(sdk: SdkHealthResponse): { summary: string; detail: string } {
-  if (!sdk.lastErrorCode) return { summary: 'Нет ошибок', detail: '' }
+  if (!sdk.lastErrorCode) return { summary: 'No errors', detail: '' }
   const cat = sdk.lastErrorCategory || 'other'
   const device = sdk.lastErrorDevice ? ` (${sdk.lastErrorDevice})` : ''
   if (cat === 'network') {
     return {
-      summary: `Устройство вне сети или недоступно${device}`,
-      detail: sdk.lastErrorMessage || 'Проверьте подключение, маршрутизацию и доступность устройства.'
+      summary: `Device offline or unreachable${device}`,
+      detail: sdk.lastErrorMessage || 'Check connection, routing, and device availability.'
     }
   }
   if (cat === 'auth') {
     return {
-      summary: `Проверьте логин и права доступа${device}`,
-      detail: sdk.lastErrorMessage || 'Учётная запись не имеет нужных привилегий на устройстве.'
+      summary: `Check login and access rights${device}`,
+      detail: sdk.lastErrorMessage || 'Account does not have the required device privileges.'
     }
   }
   return {
-    summary: `${sdk.lastErrorCode}: ${sdk.lastErrorMessage || 'Ошибка SDK'}${device}`,
+    summary: `${sdk.lastErrorCode}: ${sdk.lastErrorMessage || 'SDK Error'}${device}`,
     detail: sdk.lastErrorHint || ''
   }
 }
@@ -72,7 +64,6 @@ export function SystemStatusPage() {
   const { startLoading, stopLoading, isLoading } = useLoading()
   const [status, setStatus] = useState<SystemStatusResponse | null>(null)
   const [sdkHealth, setSdkHealth] = useState<SdkHealthResponse | null>(null)
-  const [services, setServices] = useState<ManagedServiceResponse[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
@@ -84,14 +75,12 @@ export function SystemStatusPage() {
     if (!authToken) return
     if (showLoading) startLoading()
     try {
-      const [systemResponse, sdkResponse, servicesResponse] = await Promise.all([
+      const [systemResponse, sdkResponse] = await Promise.all([
         apiRequest<SystemStatusResponse>('/api/system/status', { token: authToken }),
         apiRequest<SdkHealthResponse>('/api/health/sdk'),
-        apiRequest<ManagedServiceResponse[]>('/api/system/services', { token: authToken }),
       ])
       setStatus(systemResponse)
       setSdkHealth(sdkResponse)
-      setServices(servicesResponse)
     } finally {
       if (showLoading) stopLoading()
     }
@@ -101,15 +90,15 @@ export function SystemStatusPage() {
     let isDisposed = false
     let timer: number | null = null
 
-    ;(async () => {
-      try {
-        await loadStatus(true)
-      } catch (e) {
-        if (!isDisposed) {
-          setError(e instanceof Error ? e.message : 'Не удалось загрузить статус системы')
+      ; (async () => {
+        try {
+          await loadStatus(true)
+        } catch (e) {
+          if (!isDisposed) {
+            setError(e instanceof Error ? e.message : 'Failed to load system status')
+          }
         }
-      }
-    })()
+      })()
 
     timer = window.setInterval(() => {
       loadStatus(false).catch(() => undefined)
@@ -138,249 +127,143 @@ export function SystemStatusPage() {
       setActionMessage(response.message)
       await loadStatus()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Операция над службой завершилась ошибкой')
+      setError(e instanceof Error ? e.message : 'Service operation failed')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  async function controlServiceByKey(key: string, action: 'start' | 'stop' | 'restart') {
-    if (!authToken) return
-    setIsSubmitting(true)
-    setError(null)
-    setActionMessage(null)
-    try {
-      const response = await apiRequest<ServiceControlResponse>(`/api/system/services/${key}/${action}`, {
-        method: 'POST',
-        token: authToken,
-        headers: localControlKey ? { 'X-Local-Control-Key': localControlKey } : undefined,
-      })
-      setActionMessage(response.message)
-      await loadStatus()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Операция над сервисом завершилась ошибкой')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
 
-  async function controlAll(action: 'start' | 'stop' | 'restart') {
-    if (!authToken) return
-    setIsSubmitting(true)
-    setError(null)
-    setActionMessage(null)
-    try {
-      const response = await apiRequest<ServiceControlResponse[]>(`/api/system/services/${action}-all`, {
-        method: 'POST',
-        token: authToken,
-        headers: localControlKey ? { 'X-Local-Control-Key': localControlKey } : undefined,
-      })
-      const failed = response.filter((x) => !x.success)
-      setActionMessage(
-        failed.length === 0
-          ? `Команда ${action.toUpperCase()} ALL выполнена успешно`
-          : `${action.toUpperCase()} ALL: ${failed.length} сервис(ов) завершились с ошибкой`,
-      )
-      await loadStatus()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Массовая операция завершилась ошибкой')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
 
   return (
-    <AppLayout>
-      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
-        {/* Unified Page Header */}
-        <PageHeader
-          title="System Operational Status"
-          description="Real-time monitoring and control of backend services."
-          actions={
-            <Button variant="outline" size="sm" icon="restart_alt" onClick={() => loadStatus(true)} isLoading={isLoading}>
-              Refresh Status
-            </Button>
-          }
-        />
+    <AppLayout onAction={() => loadStatus(true)}>
+      <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+        <div className="p-6 md:p-8 space-y-6">
+          <PageHeader
+            className="hidden md:flex"
+            title="Operational Integrity"
+            description="Deep diagnostics and orchestration of core system services."
+            actions={
+              <Button variant="outline" icon="sync" onClick={() => loadStatus(true)} isLoading={isLoading}>
+                Sync Diagnostics
+              </Button>
+            }
+          />
 
-        {error && (
-          <div className="bg-error-bg text-error-text p-4 rounded-xl text-sm font-bold border border-error-text/10 flex items-center gap-3">
-            <span className="material-symbols-outlined">error</span>
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest border border-error-text/10 shadow-sm animate-in zoom-in-95 duration-300">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base">error</span>
+                {error}
+              </div>
+            </div>
+          )}
 
-        {actionMessage && (
-          <div className="bg-primary/5 text-primary p-4 rounded-xl text-sm font-bold border border-primary/20 flex items-center gap-3">
-            <span className="material-symbols-outlined">info</span>
-            {actionMessage}
-          </div>
-        )}
+          {actionMessage && (
+            <div className="p-4 bg-primary/5 text-primary rounded-2xl text-[10px] font-black uppercase tracking-widest border border-primary/20 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-base">info</span>
+                {actionMessage}
+              </div>
+            </div>
+          )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-sm font-black text-text-dark uppercase tracking-widest">Main Node Status</h3>
+          {/* Main Node Card */}
+          <div className="bg-surface rounded-3xl shadow-md overflow-hidden border-none text-text-light">
+            <div className="px-6 py-5 border-b border-border-light flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">dns</span>
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-text-dark leading-tight lowercase first-letter:uppercase">Master Controller</h3>
+                  <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Global Node Status</p>
+                </div>
+              </div>
               <Badge variant={status?.serverStatus === 'Online' ? 'success' : 'error'} dot>
                 {status?.serverStatus || 'Offline'}
               </Badge>
             </div>
-            {!status ? (
-              <div className="flex items-center justify-center py-12 text-text-muted text-sm">
-                Нет данных
+
+            <div className="p-6 space-y-6">
+              {!status ? (
+                <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest">Awaiting status broadcast...</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { label: 'Latency', value: status.dbLatencyMs ? `${status.dbLatencyMs.toFixed(1)}ms` : '—', icon: 'speed' },
+                    { label: 'Platform', value: status.serviceState, icon: 'deployed_code' },
+                    { label: 'Database', value: status.dbStatus, icon: 'database' },
+                    { label: 'Check-in', value: new Date(status.utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), icon: 'schedule' },
+                  ].map((item) => (
+                    <div key={item.label} className="p-3 bg-background-light rounded-2xl shadow-sm border-none">
+                      <div className="flex items-center gap-2 mb-1 opacity-50">
+                        <span className="material-symbols-outlined text-[14px]">{item.icon}</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">{item.label}</span>
+                      </div>
+                      <p className="text-xs font-bold text-text-dark truncate">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-2">
+                <Button fullWidth size="sm" onClick={() => controlMainService('start')} isLoading={isSubmitting} icon="play_arrow">Start</Button>
+                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting} icon="stop">Stop</Button>
+                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('restart')} isLoading={isSubmitting} icon="restart_alt">Reset</Button>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-8">
-                {[
-                  { label: 'Service Identity', value: status.serviceName },
-                  { label: 'Execution State', value: status.serviceState, isBadge: true },
-                  { label: 'Database Engine', value: status.dbStatus, isBadge: true },
-                  { label: 'DB Latency', value: status.dbLatencyMs ? `${status.dbLatencyMs.toFixed(1)} ms` : '-' },
-                  { label: 'Last Check-in', value: new Date(status.utc).toLocaleString() },
-                  { label: 'Health Message', value: status.serviceMessage },
-                ].map((item, idx) => (
-                  <div key={idx} className="flex flex-col gap-1 border-b border-border-light pb-2">
-                    <span className="text-xs font-bold text-text-muted uppercase tracking-wider">{item.label}</span>
-                    {item.isBadge ? (
-                      <Badge variant={item.value === 'Running' || item.value === 'Online' ? 'success' : 'warning'}>
-                        {item.value}
-                      </Badge>
-                    ) : (
-                      <span className="text-sm font-bold text-text-dark">{item.value}</span>
-                    )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* SDK Card */}
+            <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none text-text-light leading-none">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">SDK Health Profile</h3>
+                <Badge variant={sdkHealth?.initialized ? 'primary' : 'error'}>{sdkHealth?.initialized ? 'Initialized' : 'Void'}</Badge>
+              </div>
+
+              {!sdkHealth ? (
+                <div className="py-8 text-center text-xs italic text-text-light">Synchronizing library...</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between p-3 bg-background-light rounded-xl hover:shadow-sm transition-shadow">
+                    <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Active Links</span>
+                    <span className="text-sm font-black text-primary">{sdkHealth.connectedDevices} Stations</span>
                   </div>
-                ))}
-              </div>
-            )}
 
-            <div className="mt-8 pt-6 border-t border-border-base flex items-center justify-between">
-              <div className="flex gap-2">
-                <Button size="sm" onClick={() => controlMainService('start')} isLoading={isSubmitting}>Start</Button>
-                <Button size="sm" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting}>Stop</Button>
-                <Button size="sm" variant="secondary" onClick={() => controlMainService('restart')} isLoading={isSubmitting}>Restart</Button>
-              </div>
-              <p className="text-xs text-text-muted font-medium italic">Requires elevated loopback privileges</p>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-sm font-black text-text-dark uppercase tracking-widest">SDK Diagnosis</h3>
-              <Badge variant={sdkHealth?.initialized ? 'success' : 'error'} dot>
-                {sdkHealth?.initialized ? 'Initialized' : 'Idle'}
-              </Badge>
-            </div>
-            {!sdkHealth ? (
-              <div className="flex items-center justify-center py-12 text-text-muted italic text-sm">
-                Waiting for SDK heartbeat...
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-text-muted uppercase">Platform</span>
-                  <span className="text-sm font-black text-text-dark">{sdkHealth.platform}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-text-muted uppercase">Active Devices</span>
-                  <span className="text-sm font-black text-primary">{sdkHealth.connectedDevices}</span>
-                </div>
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-text-muted uppercase">Last Error Event</span>
-                  <div className={`p-3 rounded-lg text-xs ${sdkHealth.lastErrorCode ? 'bg-error-bg text-error-text border border-error-text/10' : 'bg-slate-75 text-text-muted'}`}>
+                  <div className={`p-4 rounded-2xl shadow-sm ${sdkHealth.lastErrorCode ? 'bg-error-bg text-error-text' : 'bg-slate-50 text-text-dark'}`}>
                     {(() => {
                       const { summary, detail } = formatSdkError(sdkHealth)
                       return (
                         <>
-                          <p className="font-bold">{summary}</p>
-                          {detail && <p className="mt-1 opacity-80">{detail}</p>}
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="material-symbols-outlined text-base">emergency_home</span>
+                            <p className="text-[10px] font-black uppercase tracking-widest">{summary}</p>
+                          </div>
+                          {detail && <p className="text-[10px] font-medium opacity-70 leading-snug pl-6">{detail}</p>}
                         </>
                       )
                     })()}
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-text-muted uppercase">Dynamic Search Paths</span>
-                  <div className="flex flex-wrap gap-1">
-                    {sdkHealth.librarySearchPaths.map((path, idx) => (
-                      <code key={idx} className="block w-full text-xs bg-slate-75 px-2 py-1 rounded truncate text-text-muted" title={path}>{path}</code>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </Card>
-        </div>
+                </>
+              )}
+            </div>
 
-        <Card noPadding className="overflow-hidden">
-          <div className="p-6 border-b border-border-base flex items-center justify-between bg-slate-75/30">
-            <h3 className="text-sm font-black text-text-dark uppercase tracking-widest">Service Process Manager</h3>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => controlAll('restart')} isLoading={isSubmitting}>Restart All</Button>
-              <Button variant="primary" size="sm" onClick={() => controlAll('start')} isLoading={isSubmitting}>Start All Assets</Button>
+            {/* Library Paths */}
+            <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none text-text-light">
+              <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Runtime Binary Paths</h3>
+              <div className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                {sdkHealth?.librarySearchPaths.map((path, idx) => (
+                  <code key={idx} className="block w-full text-[9px] font-mono bg-slate-50 px-2 py-1.5 rounded-lg truncate text-text-muted hover:shadow-sm transition-shadow">
+                    {path}
+                  </code>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-75 border-b border-border-base">
-                  <th className="px-8 py-4 text-xs font-black text-text-muted uppercase tracking-widest">Service Identity</th>
-                  <th className="px-8 py-4 text-xs font-black text-text-muted uppercase tracking-widest text-center">Listener</th>
-                  <th className="px-8 py-4 text-xs font-black text-text-muted uppercase tracking-widest">Runtime State</th>
-                  <th className="px-8 py-4 text-xs font-black text-text-muted uppercase tracking-widest">Log Summary</th>
-                  <th className="px-8 py-4 text-xs font-black text-text-muted uppercase tracking-widest text-right">Process Controls</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-light">
-                {services.map((service) => (
-                  <tr key={service.key} className="hover:bg-slate-75 transition-colors">
-                    <td className="px-8 py-5">
-                      <span className="text-sm font-bold text-text-dark">{service.displayName || service.serviceName}</span>
-                    </td>
-                    <td className="px-8 py-5 text-center">
-                      <code className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded font-bold">{service.port ?? 'N/A'}</code>
-                    </td>
-                    <td className="px-8 py-5">
-                      <Badge variant={service.serviceState === 'Running' ? 'success' : 'error'} dot>
-                        {service.serviceState}
-                      </Badge>
-                    </td>
-                    <td className="px-8 py-5">
-                      <span className="text-xs text-text-muted italic">{service.message}</span>
-                    </td>
-                    <td className="px-8 py-5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          icon="play_arrow"
-                          disabled={isSubmitting || !service.isControllable || service.serviceState === 'Running'}
-                          onClick={() => controlServiceByKey(service.key, 'start')}
-                          className="text-success-text hover:bg-success-bg"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          icon="stop"
-                          disabled={isSubmitting || !service.isControllable || service.serviceState === 'Stopped'}
-                          onClick={() => controlServiceByKey(service.key, 'stop')}
-                          className="text-error-text hover:bg-error-bg"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          icon="refresh"
-                          disabled={isSubmitting || !service.isControllable}
-                          onClick={() => controlServiceByKey(service.key, 'restart')}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        </div>
       </div>
     </AppLayout>
   )

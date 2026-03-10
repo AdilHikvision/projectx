@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { AppLayout } from '../components/AppLayout'
-import { Card, Badge, Button, PageHeader } from '../components/ui'
+import { AppLayout } from '../components/templates'
+import { Badge, Button } from '../components/atoms'
+import { PageHeader } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 
 interface AccessLevelDoor {
@@ -127,213 +128,161 @@ export function MonitoringPage() {
   }, [events, eventsFilter])
 
   return (
-    <AppLayout>
-      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
-        <PageHeader
-          title="Мониторинг"
-          description="Управление дверями по уровням доступа, лог событий и проходов."
-        />
+    <AppLayout onAction={() => { loadAccessLevels(); loadOnlineDoors(); loadEvents(); }}>
+      <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+        <div className="p-6 md:p-8 space-y-6">
+          <PageHeader
+            className="hidden md:flex"
+            title="Real-time Monitoring"
+            description="Live oversight of your entire security infrastructure."
+            actions={
+              <Button variant="outline" icon="refresh" onClick={() => { loadAccessLevels(); loadOnlineDoors(); loadEvents(); }}>
+                Sync Fleet
+              </Button>
+            }
+          />
 
-        {error && (
-          <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10">
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="p-4 bg-error-bg text-error-text rounded-2xl text-xs font-bold border border-error-text/10 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+              {error}
+            </div>
+          )}
 
-        {/* Access Levels with Doors */}
-        <Card noPadding className="overflow-hidden">
-          <div className="px-8 py-4 bg-slate-75 border-b border-border-base">
-            <h2 className="text-sm font-black text-text-dark uppercase tracking-widest">
-              Уровни доступа и двери
-            </h2>
-            <p className="text-xs text-text-muted mt-1">
-              Управление дверями, привязанными к уровням доступа (из БД)
-            </p>
-          </div>
-          <div className="divide-y divide-border-light">
-            {accessLevels.length === 0 ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">
-                Нет уровней доступа. Создайте политики на странице Access Levels.
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Global Status</h2>
+              <Badge variant="primary" className="animate-pulse">Live Feed</Badge>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-surface p-4 rounded-2xl shadow-md">
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Active Doors</p>
+                <p className="text-2xl font-black text-primary leading-none">{onlineDoors.length}</p>
               </div>
-            ) : (
-              accessLevels.map((level) => (
-                <div key={level.id} className="px-8 py-5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="material-symbols-outlined text-xl text-primary">shield_lock</span>
-                    <h3 className="text-base font-bold text-text-dark">{level.name}</h3>
-                    {level.description && (
-                      <span className="text-xs text-text-muted">— {level.description}</span>
-                    )}
-                  </div>
-                  {(level.doors ?? []).length === 0 ? (
-                    <p className="text-sm text-text-light italic pl-8">Нет привязанных дверей</p>
-                  ) : (
-                    <div className="pl-8 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="bg-surface p-4 rounded-2xl shadow-md">
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Levels</p>
+                <p className="text-2xl font-black text-text-dark leading-none">{accessLevels.length}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Access Levels Section */}
+          <div className="space-y-4">
+            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Door Control Units</h2>
+            <div className="space-y-3">
+              {accessLevels.length === 0 ? (
+                <div className="py-20 text-center bg-surface rounded-2xl border border-divider-light shadow-sm">
+                  <span className="material-symbols-outlined text-4xl text-text-light mb-2">lock_reset</span>
+                  <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">No access levels defined</p>
+                </div>
+              ) : (
+                accessLevels.map((level) => (
+                  <div key={level.id} className="bg-surface rounded-2xl shadow-md overflow-hidden transition-all group active:scale-[0.99] border-none">
+                    <div className="px-5 py-4 border-b border-border-light bg-slate-50/30 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                          <span className="material-symbols-outlined text-xl">shield_lock</span>
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-text-dark leading-tight">{level.name}</h3>
+                          {level.description && <p className="text-[10px] font-bold text-text-light uppercase tracking-tight">{level.description}</p>}
+                        </div>
+                      </div>
+                      <Badge variant="neutral">{level.doors?.length || 0} Doors</Badge>
+                    </div>
+                    <div className="p-2 space-y-1">
                       {(level.doors ?? []).map((d) => {
                         const online = isDoorOnline(d.deviceId, d.doorIndex)
+                        const controlKey = `${d.deviceId}-${d.doorIndex}`
                         return (
-                          <div
-                            key={`${d.deviceId}-${d.doorIndex}`}
-                            className="flex items-center justify-between gap-2 p-3 bg-slate-75 rounded-lg border border-border-light"
-                          >
-                            <div className="min-w-0">
-                              <p className="text-sm font-bold text-text-dark truncate">
-                                {d.deviceName} — Дверь #{d.doorIndex}
-                              </p>
-                              <Badge
-                                variant={online ? 'primary' : 'neutral'}
-                                className="text-[10px] mt-1"
-                              >
-                                {online ? 'Online' : 'Offline'}
-                              </Badge>
+                          <div key={controlKey} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors">
+                            <div>
+                              <p className="text-xs font-bold text-text-dark">{d.deviceName}</p>
+                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Port {d.doorIndex}</p>
                             </div>
-                            {online ? (
-                              <div className="flex flex-wrap gap-1 shrink-0">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  icon="lock_open"
-                                  className="text-[10px]"
-                                  onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')}
-                                  disabled={!!doorControlLoading}
-                                  title="Открыть"
-                                >
-                                  Открыть
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  icon="lock"
-                                  className="text-[10px]"
-                                  onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')}
-                                  disabled={!!doorControlLoading}
-                                  title="Закрыть"
-                                >
-                                  Закрыть
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  icon="door_open"
-                                  className="text-[10px]"
-                                  onClick={() =>
-                                    handleDoorControl(d.deviceId, d.doorIndex, 'alwaysOpen')
-                                  }
-                                  disabled={!!doorControlLoading}
-                                  title="Всегда открыта"
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  icon="door_sliding"
-                                  className="text-[10px]"
-                                  onClick={() =>
-                                    handleDoorControl(d.deviceId, d.doorIndex, 'alwaysClose')
-                                  }
-                                  disabled={!!doorControlLoading}
-                                  title="Всегда закрыта"
-                                />
-                              </div>
-                            ) : (
-                              <span className="text-[10px] text-error-text font-bold">
-                                Управление недоступно
-                              </span>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {online ? (
+                                <div className="flex gap-1">
+                                  <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+                                  <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+                                  <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+                                  <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+                                </div>
+                              ) : (
+                                <span className="text-[8px] font-black text-error-text uppercase tracking-widest px-2 py-1 bg-error-bg/30 rounded-full">Offline</span>
+                              )}
+                            </div>
                           </div>
                         )
                       })}
                     </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-          <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex justify-between items-center">
-            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
-              {accessLevels.length} уровней доступа
-            </p>
-            <Button variant="ghost" size="sm" icon="refresh" onClick={() => { loadAccessLevels(); loadOnlineDoors(); }}>
-              Обновить
-            </Button>
-          </div>
-        </Card>
-
-        {/* Events Log */}
-        <Card noPadding className="overflow-hidden">
-          <div className="px-8 py-4 bg-slate-75 border-b border-border-base flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-black text-text-dark uppercase tracking-widest">
-                Лог событий (обновление каждые 3 сек)
-              </h2>
-              <p className="text-xs text-text-muted mt-1">
-                Открытие/закрытие дверей и проходы людей в реальном времени
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {(['all', 'doors', 'access'] as const).map((f) => (
-                <Button
-                  key={f}
-                  variant={eventsFilter === f ? 'primary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setEventsFilter(f)}
-                >
-                  {f === 'all' ? 'Все' : f === 'doors' ? 'Двери' : 'Проходы'}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <div className="max-h-[400px] overflow-y-auto">
-            <div className="hidden md:grid grid-cols-12 px-8 py-3 bg-slate-50 border-b border-border-light text-xs font-black text-text-muted tracking-widest uppercase">
-              <div className="col-span-2">Время</div>
-              <div className="col-span-2">Тип</div>
-              <div className="col-span-3">Устройство</div>
-              <div className="col-span-5">Данные</div>
-            </div>
-            {filteredEvents.length === 0 ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">
-                Нет событий. События поступают с подключённых устройств.
-              </div>
-            ) : (
-              <div className="divide-y divide-border-light">
-                {[...filteredEvents].reverse().map((evt, idx) => (
-                  <div
-                    key={`${evt.occurredUtc}-${idx}`}
-                    className="grid grid-cols-1 md:grid-cols-12 gap-2 px-8 py-3 hover:bg-slate-75/50 text-sm"
-                  >
-                    <div className="md:col-span-2 text-xs text-text-muted font-mono">
-                      {new Date(evt.occurredUtc).toLocaleString('ru-RU')}
-                    </div>
-                    <div className="md:col-span-2">
-                      <Badge
-                        variant={
-                          evt.eventType === 2
-                            ? 'primary'
-                            : evt.eventType === 3
-                              ? 'error'
-                              : 'neutral'
-                        }
-                        className="text-[10px]"
-                      >
-                        {EVENT_TYPES[evt.eventType] ?? 'Unknown'}
-                      </Badge>
-                    </div>
-                    <div className="md:col-span-3 text-xs font-mono text-text-dark truncate">
-                      {evt.deviceIdentifier}
-                    </div>
-                    <div className="md:col-span-5 text-xs text-text-muted break-all">
-                      {evt.payload || '—'}
-                    </div>
                   </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Event Timeline */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Live Activity Timeline</h2>
+              <div className="flex gap-1 border border-divider-light rounded-lg p-0.5 bg-white">
+                {(['all', 'doors', 'access'] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setEventsFilter(f)}
+                    className={`px-3 py-1 rounded-md text-[9px] font-black uppercase tracking-widest transition-all ${eventsFilter === f ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'
+                      }`}
+                  >
+                    {f}
+                  </button>
                 ))}
               </div>
-            )}
+            </div>
+
+            <div className="space-y-3">
+              {filteredEvents.length === 0 ? (
+                <div className="py-20 text-center bg-surface/50 rounded-2xl border border-dashed border-divider-light">
+                  <span className="material-symbols-outlined text-4xl text-text-light/50 mb-2">browse_activity</span>
+                  <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Awaiting system heartbeats...</p>
+                </div>
+              ) : (
+                [...filteredEvents].reverse().slice(0, 50).map((evt, idx) => {
+                  const isGranted = evt.eventType === 2
+                  const isDenied = evt.eventType === 3
+                  const timeStr = new Date(evt.occurredUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  const icon = isDenied ? 'block' : isGranted ? 'verified_user' : 'meeting_room'
+
+                  return (
+                    <div key={`${evt.occurredUtc}-${idx}`} className="flex gap-4 group animate-in slide-in-from-left-2 duration-300">
+                      <div className="flex flex-col items-center shrink-0">
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm transition-transform group-hover:scale-110 ${isGranted ? 'bg-emerald-50 text-emerald-500' :
+                          isDenied ? 'bg-error-bg text-error-text' :
+                            'bg-surface text-primary'
+                          }`}>
+                          <span className="material-symbols-outlined text-xl">{icon}</span>
+                        </div>
+                        <div className="w-0.5 flex-1 bg-border-light group-last:bg-transparent mt-2" />
+                      </div>
+                      <div className="flex-1 pb-6">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className={`text-xs font-black uppercase tracking-widest ${isDenied ? 'text-error-text' : 'text-text-dark'}`}>
+                            {EVENT_TYPES[evt.eventType] || 'System Message'}
+                          </p>
+                          <p className="text-[10px] font-bold text-text-light font-mono">{timeStr}</p>
+                        </div>
+                        <div className="bg-surface p-3 rounded-2xl shadow-md">
+                          <p className="text-xs font-bold text-text-dark leading-tight mb-1">{evt.payload || 'Signal received from hub'}</p>
+                          <p className="text-[10px] font-black text-text-light uppercase tracking-tighter opacity-70">Station: {evt.deviceIdentifier}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
           </div>
-          <div className="px-8 py-4 border-t border-border-base bg-slate-75">
-            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
-              {filteredEvents.length} событий
-            </p>
-          </div>
-        </Card>
+        </div>
       </div>
     </AppLayout>
   )

@@ -10,7 +10,7 @@ interface AppLayoutProps {
 const routeMeta: Record<string, { title: string; breadcrumb?: string; actionText?: string; actionIcon?: string; searchPlaceholder: string }> = {
     '/': { title: 'Dashboard', breadcrumb: 'Main Site', searchPlaceholder: 'Search dashboard...' },
     '/devices': { title: 'Devices', breadcrumb: 'Main Site', actionText: 'Add Device', actionIcon: 'add', searchPlaceholder: 'Search devices...' },
-    '/monitoring': { title: 'Мониторинг', breadcrumb: 'Main Site', searchPlaceholder: 'Search monitoring...' },
+    '/monitoring': { title: 'Monitoring', breadcrumb: 'Main Site', searchPlaceholder: 'Search monitoring...' },
     '/people': { title: 'People Management', breadcrumb: 'Main Site', actionText: 'Add User', actionIcon: 'person_add', searchPlaceholder: 'Search Users & Visitors...' },
     '/access-levels': { title: 'Access Control', breadcrumb: 'Main Site', actionText: 'Create Policy', actionIcon: 'add_moderator', searchPlaceholder: 'Search policies...' },
     '/work-hours': { title: 'Attendance Tracking', breadcrumb: 'Main Site', actionText: 'Export Report', actionIcon: 'download', searchPlaceholder: 'Search attendance...' },
@@ -81,7 +81,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                         }
                     >
                         <span className="material-symbols-outlined shrink-0 text-xl">monitor_heart</span>
-                        Мониторинг
+                        Monitoring
                     </NavLink>
                     <NavLink
                         to="/access-levels"

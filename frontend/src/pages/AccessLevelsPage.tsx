@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { AppLayout } from '../components/AppLayout'
-import { Card, Badge, Button, Avatar, PageHeader, Input, Modal } from '../components/ui'
+import { AppLayout } from '../components/templates'
+import { Badge, Button, Input } from '../components/atoms'
+import { PageHeader, Modal } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 
@@ -104,10 +105,10 @@ export function AccessLevelsPage() {
   }, [token])
 
   useEffect(() => {
-    if (tabFilter === 'doors' && token) {
+    if (token) {
       loadDoors()
     }
-  }, [tabFilter, token, loadDoors])
+  }, [token, loadDoors])
 
   const filteredLevels = useMemo(() => {
     if (!searchQuery.trim()) return accessLevels
@@ -248,18 +249,18 @@ export function AccessLevelsPage() {
         prev.map((x) =>
           x.id === doorsItem.id
             ? {
-                ...x,
-                doors: [...(x.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
-              }
+              ...x,
+              doors: [...(x.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
+            }
             : x
         )
       )
       setDoorsItem((prev) =>
         prev
           ? {
-              ...prev,
-              doors: [...(prev.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
-            }
+            ...prev,
+            doors: [...(prev.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
+          }
           : null
       )
       setAddDoorDeviceId('')
@@ -293,275 +294,141 @@ export function AccessLevelsPage() {
   }
 
   return (
-    <AppLayout>
-      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
-        <PageHeader
-          title="Access Control Policies"
-          description="Manage access levels for employees and visitors."
-          actions={
-            <Button icon="add_moderator" size="md" onClick={openCreateModal}>
-              Create New Policy
-            </Button>
-          }
-        />
+    <AppLayout onAction={openCreateModal}>
+      <div className="flex-1 overflow-y-auto bg-background-light">
+        <div className="p-6 md:p-8 space-y-6">
+          <PageHeader
+            className="hidden md:flex"
+            title="Access Control Policies"
+            description="Manage access levels for employees and visitors."
+            actions={
+              <Button icon="add_moderator" size="md" onClick={openCreateModal}>
+                Create New Policy
+              </Button>
+            }
+          />
 
-        {error && (
-          <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10 max-h-40 overflow-y-auto whitespace-pre-wrap">
-            {error}
+          {error && (
+            <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10 max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {error}
+            </div>
+          )}
+
+          {/* Top Stats Tier */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6 mb-2">
+            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Policies</p>
+              <p className="text-2xl font-black text-primary leading-none">{accessLevels.length}</p>
+            </div>
+            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">System Zones</p>
+              <p className="text-2xl font-black text-primary leading-none">{doorsLoading ? '...' : doorsList.length}</p>
+            </div>
           </div>
-        )}
 
-        {/* Search */}
-        <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
-          <div className="flex-1 relative">
-            <Input
-              placeholder="Search by name or description..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              icon="search"
-              className="pr-9"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
-                aria-label="Clear search"
-              >
-                <span className="material-symbols-outlined text-lg">close</span>
-              </button>
-            )}
-          </div>
-        </div>
+          {/* Search + Tabs Section */}
+          <div className="space-y-4">
+            <h2 className="text-sm font-black text-text-dark uppercase tracking-widest pt-4">Defined Levels</h2>
 
-        {/* Tabs */}
-        <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
-          {ACCESS_TABS.map((t) => (
-            <button
-              key={t.value}
-              type="button"
-              onClick={() => setTabFilter(t.value)}
-              className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${
-                tabFilter === t.value
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-text-muted hover:text-text-dark'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tabFilter === 'access-level' && (
-          <>
-            {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4">
-              <Card className="relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                  <span className="material-symbols-outlined text-5xl">policy</span>
-                </div>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-3">Total Policies</p>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black text-text-dark">{accessLevels.length}</span>
-                  <Badge variant="primary">Active</Badge>
-                </div>
-              </Card>
+            <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+              <div className="flex-1 relative">
+                <Input
+                  placeholder="Search access levels..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  icon="search"
+                  className="bg-white border-divider-light"
+                />
+              </div>
             </div>
 
-            {/* Main List */}
-            <Card noPadding className="overflow-hidden">
-          <div className="hidden md:grid grid-cols-4 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
-            <div className="col-span-2">Policy</div>
-            <div>Doors</div>
-            <div className="text-right">Actions</div>
-          </div>
-
-          <div className="divide-y divide-border-light">
-            {filteredLevels.length === 0 ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">
-                {accessLevels.length === 0 && !isLoading
-                  ? 'No access levels. Click Create New Policy to add one.'
-                  : 'No access levels match your search.'}
-              </div>
-            ) : (
-              filteredLevels.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex flex-col md:grid grid-cols-4 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group"
+            <div className="flex overflow-x-auto no-scrollbar gap-8">
+              {ACCESS_TABS.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  onClick={() => setTabFilter(t.value)}
+                  className={`pb-2.5 text-xs font-black whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${tabFilter === t.value
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-text-light hover:text-text-muted'
+                    }`}
                 >
-                  <div className="col-span-2 flex items-center gap-4">
-                    <Avatar
-                      icon="shield_lock"
-                      variant="primary"
-                      size="lg"
-                      className="rounded-xl! shadow-sm"
-                    />
-                    <div>
-                      <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">
-                        {item.name}
-                      </p>
-                      <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight">
-                        {item.description || '—'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 w-full md:block">
-                    <div className="flex flex-wrap items-center gap-1 flex-1">
-                      {(item.doors ?? []).length === 0 ? (
-                        <span className="text-text-light italic text-xs">—</span>
-                      ) : (
-                        (item.doors ?? []).map((d) => (
-                          <Badge key={`${d.deviceId}-${d.doorIndex}`} variant="neutral" className="text-[10px]">
-                            {d.deviceName}:#{d.doorIndex}
-                          </Badge>
-                        ))
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        icon="door_front"
-                        className="text-text-muted hover:text-primary"
-                        onClick={() => openDoorsModal(item)}
-                        title="Manage doors"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 mt-4 md:mt-0 w-full">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      icon="edit"
-                      className="text-text-muted hover:text-text-dark"
-                      onClick={() => openEditModal(item)}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      icon="delete"
-                      className="text-text-muted hover:text-error-text hover:bg-error-bg"
-                      onClick={() => openDeleteModal(item)}
-                    />
-                  </div>
-                </div>
-              ))
-            )}
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
-            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
-              {filteredLevels.length} of {accessLevels.length} policies
-            </p>
-          </div>
-        </Card>
-          </>
-        )}
+          {tabFilter === 'access-level' && (
+            <div className="space-y-3">
+              {filteredLevels.length === 0 ? (
+                <div className="p-12 text-center text-text-light italic text-sm bg-surface rounded-2xl shadow-md border-none">
+                  {accessLevels.length === 0 && !isLoading
+                    ? 'No access levels yet.'
+                    : 'No results found.'}
+                </div>
+              ) : (
+                filteredLevels.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex justify-between items-center p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl active:scale-[0.99] transition-all cursor-pointer group border-none"
+                    onClick={() => openEditModal(item)}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 flex items-center justify-center bg-primary/10 rounded-2xl text-primary-dark group-hover:bg-primary/20 transition-colors shrink-0">
+                        <span className="material-symbols-outlined text-2xl !fill-1">
+                          {item.id === 'admin' ? 'shield' : item.name.toLowerCase().includes('staff') ? 'badge' : 'key'}
+                        </span>
+                      </div>
+                      <div>
+                        <h4 className="text-base font-black text-text-dark leading-tight">{item.name}</h4>
+                        <p className="text-xs font-bold text-text-light mt-1">
+                          {(item.doors ?? []).length} assigned zones • Active Protocol
+                        </p>
+                      </div>
+                    </div>
+                    <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
+                  </div>
+                )))}
+            </div>
+          )}
 
-        {tabFilter === 'doors' && (
-          <Card noPadding className="overflow-hidden">
-            {doorsLoading ? (
-              <div className="p-12 flex flex-col items-center justify-center gap-4">
-                <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
-                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">Loading doors...</p>
-              </div>
-            ) : doorsError ? (
-              <div className="p-8">
-                <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold border border-error-text/10">
-                  {doorsError}
-                </div>
-                <Button variant="outline" size="sm" className="mt-4" onClick={loadDoors}>
-                  Retry
-                </Button>
-              </div>
-            ) : doorsList.length === 0 ? (
-              <div className="p-12 text-center">
-                <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">door_front</span>
-                <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">No doors found</p>
-                <p className="text-text-muted text-sm">Add devices first, then doors will appear here.</p>
-              </div>
-            ) : (
-              <>
-                <div className="hidden md:grid grid-cols-8 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
-                  <div className="col-span-3">Device</div>
-                  <div className="col-span-2">Door</div>
-                  <div className="col-span-3">Access Levels</div>
-                </div>
-                <div className="divide-y divide-border-light">
-                  {Object.entries(
-                    doorsList.reduce<Record<string, DeviceDoor[]>>((acc, d) => {
-                      const key = d.deviceId
-                      if (!acc[key]) acc[key] = []
-                      acc[key].push(d)
-                      return acc
-                    }, {})
-                  ).map(([, doors]) => {
-                    const deviceName = doors[0]?.deviceName ?? ''
-                    return doors.map((door) => {
-                      const assignedLevels = accessLevels.filter(
-                        (al) => (al.doors ?? []).some((ad) => ad.deviceId === door.deviceId && ad.doorIndex === door.doorIndex)
-                      )
-                      return (
-                        <div
-                          key={`${door.deviceId}-${door.doorIndex}`}
-                          className="flex flex-col md:grid grid-cols-8 items-center px-6 py-4 md:px-8 hover:bg-slate-75/50 transition-colors gap-2"
-                        >
-                          <div className="col-span-3 flex items-center gap-3">
-                            <span className="material-symbols-outlined text-2xl text-text-muted">door_front</span>
-                            <div>
-                              <p className="text-sm font-bold text-text-dark">{deviceName}</p>
-                              <p className="text-[10px] text-text-light">{door.deviceId}</p>
-                            </div>
-                          </div>
-                          <div className="col-span-2">
-                            <Badge variant="neutral" className="text-xs">
-                              {door.doorName ?? `Door #${door.doorIndex}`}
-                            </Badge>
-                            {door.status && (
-                              <span
-                                className={`ml-2 text-[10px] ${door.status.toLowerCase().startsWith('offline') ? 'text-error-text font-bold' : 'text-text-muted'}`}
-                              >
-                                {door.status}
-                              </span>
-                            )}
-                          </div>
-                          <div className="col-span-3 flex flex-wrap gap-1 w-full md:justify-start">
-                            {assignedLevels.length === 0 ? (
-                              <span className="text-text-light italic text-xs">—</span>
-                            ) : (
-                              assignedLevels.map((al) => (
-                                <Badge key={al.id} variant="primary" className="text-[10px]">
-                                  {al.name}
-                                </Badge>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })
-                  })}
-                </div>
-                <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
-                  <p className="text-xs font-black text-text-muted uppercase tracking-widest">
-                    {doorsList.length} door(s) from {new Set(doorsList.map((d) => d.deviceId)).size} device(s)
-                  </p>
-                  <Button variant="ghost" size="sm" icon="refresh" onClick={loadDoors}>
-                    Refresh
-                  </Button>
-                </div>
-              </>
-            )}
-          </Card>
-        )}
+          {tabFilter === 'doors' && (
+            <div className="grid gap-3">
+              {doorsLoading ? (
+                <div className="p-12 text-center text-sm font-bold text-text-light uppercase tracking-widest">Loading doors...</div>
+              ) : doorsError ? (
+                <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold shadow-sm">{doorsError}</div>
+              ) : (
+                doorsList.map((door) => (
+                  <div key={`${door.deviceId}-${door.doorIndex}`} className="p-4 bg-surface rounded-2xl shadow-md flex justify-between items-center border-none">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 flex items-center justify-center bg-slate-75 rounded-xl text-text-muted">
+                        <span className="material-symbols-outlined">door_front</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-text-dark leading-tight">{door.deviceName}</p>
+                        <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{door.doorName || `Door #${door.doorIndex}`}</p>
+                      </div>
+                    </div>
+                    <Badge variant={door.status === 'Online' ? 'success' : 'neutral'}>{door.status || 'Offline'}</Badge>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
 
-        {tabFilter === 'floors' && (
-          <Card className="p-12 text-center">
-            <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
-            <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Floors</p>
-            <p className="text-text-muted text-sm">Manage floors and building structure.</p>
-          </Card>
-        )}
+          {tabFilter === 'floors' && (
+            <div className="p-12 text-center bg-surface rounded-2xl shadow-md">
+              <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
+              <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Floors</p>
+              <p className="text-text-muted text-sm italic">Manage floors and building structure.</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Create/Edit Modal */}
+      {/* Modals */}
       <Modal
         isOpen={modalMode === 'create' || modalMode === 'edit'}
         onClose={closeModals}
@@ -592,24 +459,44 @@ export function AccessLevelsPage() {
               placeholder="Brief description of this access level"
             />
           </div>
-          <div className="flex gap-2 pt-4">
+          <div className="flex flex-wrap gap-2 pt-4">
             <Button type="submit" disabled={!canCreateOrUpdate || isSubmitting} isLoading={isSubmitting}>
               {modalMode === 'create' ? 'Create Policy' : 'Save'}
             </Button>
-            <Button type="button" variant="outline" onClick={closeModals}>
+            {modalMode === 'edit' && editingItem && (
+              <Button type="button" variant="outline" icon="door_front" onClick={() => {
+                closeModals();
+                openDoorsModal(editingItem);
+              }}>
+                Manage Doors
+              </Button>
+            )}
+            <Button type="button" variant="outline" onClick={closeModals} disabled={isSubmitting}>
               Cancel
             </Button>
+            {modalMode === 'edit' && editingItem && (
+              <Button
+                type="button"
+                variant="ghost"
+                icon="delete"
+                className="ml-auto text-error-text hover:bg-error-bg"
+                onClick={() => {
+                  closeModals();
+                  openDeleteModal(editingItem);
+                }}
+              >
+                Delete
+              </Button>
+            )}
           </div>
         </form>
       </Modal>
 
-      {/* Delete Modal */}
       <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title="Delete Policy">
         {deletingItem && (
           <div className="space-y-4">
             <p className="text-sm text-text-dark">
-              Are you sure you want to delete <strong>{deletingItem.name}</strong>? This will also remove all
-              employee and visitor assignments to this access level. This action cannot be undone.
+              Are you sure you want to delete <strong>{deletingItem.name}</strong>? This action cannot be undone.
             </p>
             <div className="flex gap-2">
               <Button variant="danger" onClick={handleDelete} isLoading={isSubmitting}>
@@ -623,11 +510,9 @@ export function AccessLevelsPage() {
         )}
       </Modal>
 
-      {/* Manage Doors Modal */}
       <Modal isOpen={modalMode === 'doors'} onClose={closeModals} title={doorsItem ? `Doors: ${doorsItem.name}` : 'Manage Doors'}>
         {doorsItem && (
           <div className="space-y-4">
-            <p className="text-xs text-text-muted">Assign device doors to this access level. Employees and visitors with this level will have access to these doors.</p>
             <div className="space-y-2">
               <label className="block text-xs font-bold text-text-muted">Assigned doors</label>
               {(doorsItem.doors ?? []).length === 0 ? (
@@ -654,54 +539,36 @@ export function AccessLevelsPage() {
             </div>
             <div className="border-t border-border-base pt-4 space-y-3">
               <label className="block text-xs font-bold text-text-muted">Add door</label>
-              <div className="flex flex-wrap gap-2 items-end">
-                <div className="flex-1 min-w-[200px]">
-                  <select
-                    value={addDoorDeviceId ? `${addDoorDeviceId}:${addDoorIndex}` : ''}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      if (v) {
-                        const [did, idx] = v.split(':')
-                        setAddDoorDeviceId(did)
-                        setAddDoorIndex(parseInt(idx, 10))
-                      } else {
-                        setAddDoorDeviceId('')
-                        setAddDoorIndex(0)
-                      }
-                    }}
-                    className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs text-text-base focus:ring-2 focus:ring-primary/20 focus:border-primary/30 outline-none"
-                  >
-                    <option value="">Select door</option>
-                    {doorsList
-                      .filter(
-                        (d) =>
-                          !(d.status?.toLowerCase().startsWith('offline')) &&
-                          !(doorsItem?.doors ?? []).some((ad) => ad.deviceId === d.deviceId && ad.doorIndex === d.doorIndex)
-                      )
-                      .map((d) => (
-                        <option key={`${d.deviceId}-${d.doorIndex}`} value={`${d.deviceId}:${d.doorIndex}`}>
-                          {d.deviceName} — {d.doorName ?? `Door #${d.doorIndex}`}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <Button
-                  onClick={handleAddDoor}
-                  disabled={!addDoorDeviceId || isSubmitting}
-                  isLoading={isSubmitting}
-                  icon="add"
+              <div className="flex gap-2">
+                <select
+                  value={addDoorDeviceId ? `${addDoorDeviceId}:${addDoorIndex}` : ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v) {
+                      const [did, idx] = v.split(':')
+                      setAddDoorDeviceId(did)
+                      setAddDoorIndex(parseInt(idx, 10))
+                    } else {
+                      setAddDoorDeviceId('')
+                      setAddDoorIndex(0)
+                    }
+                  }}
+                  className="flex-1 h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
                 >
+                  <option value="">Select door</option>
+                  {doorsList.map((d) => (
+                    <option key={`${d.deviceId}-${d.doorIndex}`} value={`${d.deviceId}:${d.doorIndex}`}>
+                      {d.deviceName} — {d.doorName || `Door #${d.doorIndex}`}
+                    </option>
+                  ))}
+                </select>
+                <Button onClick={handleAddDoor} disabled={!addDoorDeviceId || isSubmitting} isLoading={isSubmitting} icon="add">
                   Add
                 </Button>
               </div>
-              <p className="text-[10px] text-text-light">
-                {doorsList.length === 0 ? 'Load doors first.' : 'Select a door from the list to assign to this access level.'}
-              </p>
             </div>
             <div className="flex justify-end pt-2">
-              <Button variant="outline" onClick={closeModals}>
-                Close
-              </Button>
+              <Button variant="outline" onClick={closeModals}>Close</Button>
             </div>
           </div>
         )}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { AppLayout } from '../components/AppLayout'
-import { Card, Badge, Button, Input, Avatar, PageHeader, Modal } from '../components/ui'
+import { AppLayout } from '../components/templates'
+import { Badge, Button, Input } from '../components/atoms'
+import { PageHeader, Modal } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 
@@ -62,21 +63,15 @@ interface AccessLevel {
 
 type TabType = 'employees' | 'visitors'
 
-const TABS: { value: TabType; label: string }[] = [
-  { value: 'employees', label: 'Employers' },
-  { value: 'visitors', label: 'Visitor' },
-]
-
 export function PeopleManagementPage() {
   const navigate = useNavigate()
   const { token } = useAuth()
-  const { startLoading, stopLoading, isLoading } = useLoading()
+  const { startLoading, stopLoading } = useLoading()
   const [tab, setTab] = useState<TabType>('employees')
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
   const [visitors, setVisitors] = useState<VisitorResponse[]>([])
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [error, setError] = useState<string | null>(null)
   const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null)
   const [editingEmployee, setEditingEmployee] = useState<EmployeeDetailResponse | null>(null)
@@ -94,7 +89,6 @@ export function PeopleManagementPage() {
     accessLevelIds: [] as string[],
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [hasChanges, setHasChanges] = useState(false)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
   const [syncProgress, setSyncProgress] = useState(0)
   const [syncResult, setSyncResult] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
@@ -116,14 +110,12 @@ export function PeopleManagementPage() {
     try {
       const params = new URLSearchParams()
       if (searchQuery.trim()) params.set('search', searchQuery.trim())
-      if (statusFilter === 'active') params.set('isActive', 'true')
-      if (statusFilter === 'inactive') params.set('isActive', 'false')
       const list = await apiRequest<EmployeeResponse[]>(`/api/employees?${params}`, { token })
       setEmployees(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки сотрудников')
+      setError(e instanceof Error ? e.message : 'Failed to load employees')
     }
-  }, [token, searchQuery, statusFilter])
+  }, [token, searchQuery])
 
   const loadVisitors = useCallback(async () => {
     if (!token) return
@@ -131,14 +123,12 @@ export function PeopleManagementPage() {
     try {
       const params = new URLSearchParams()
       if (searchQuery.trim()) params.set('search', searchQuery.trim())
-      if (statusFilter === 'active') params.set('isActive', 'true')
-      if (statusFilter === 'inactive') params.set('isActive', 'false')
       const list = await apiRequest<VisitorResponse[]>(`/api/visitors?${params}`, { token })
       setVisitors(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки посетителей')
+      setError(e instanceof Error ? e.message : 'Failed to load visitors')
     }
-  }, [token, searchQuery, statusFilter])
+  }, [token, searchQuery])
 
   const loadAccessLevels = useCallback(async () => {
     if (!token) return
@@ -157,20 +147,22 @@ export function PeopleManagementPage() {
   useEffect(() => {
     if (!token) return
     startLoading()
-    if (tab === 'employees') {
-      loadEmployees().finally(stopLoading)
-    } else {
-      loadVisitors().finally(stopLoading)
-    }
-  }, [tab, token, loadEmployees, loadVisitors, startLoading, stopLoading])
-
-  const filteredEmployees = useMemo(() => employees, [employees])
-  const filteredVisitors = useMemo(() => visitors, [visitors])
+    // Always load both on initial or tab change to keep stats accurate
+    Promise.all([
+      loadEmployees(),
+      loadVisitors()
+    ]).finally(stopLoading)
+  }, [token, loadEmployees, loadVisitors, startLoading, stopLoading])
 
   const activeCount = useMemo(() => {
-    if (tab === 'employees') return employees.filter((e) => e.isActive).length
-    return visitors.filter((v) => v.isActive).length
-  }, [tab, employees, visitors])
+    return employees.filter((e) => e.isActive).length + visitors.filter((v) => v.isActive).length
+  }, [employees, visitors])
+
+  const openSyncModal = () => setSyncModalOpen(true)
+  const closeSyncModal = () => {
+    setSyncModalOpen(false)
+    setSyncResult('idle')
+  }
 
   async function openCreateModal() {
     setEditingEmployee(null)
@@ -220,56 +212,8 @@ export function PeopleManagementPage() {
         visitDateUtc: new Date().toISOString().slice(0, 10),
         accessLevelIds: [],
       })
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки следующего ID')
+      setError(e instanceof Error ? e.message : 'Failed to load next ID')
     }
-  }
-
-  function openEditEmployee(item: EmployeeResponse) {
-    if (!token) return
-    setError(null)
-    apiRequest<EmployeeDetailResponse>(`/api/employees/${item.id}`, { token })
-      .then((detail) => {
-        setEditingEmployee(detail)
-        setEditingVisitor(null)
-        setFormData({
-          firstName: detail.firstName,
-          lastName: detail.lastName,
-          personnelNumber: detail.personnelNumber ?? '',
-          employeeNo: detail.employeeNo ?? '',
-          gender: detail.gender ?? '',
-          validFrom: detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : '',
-          validTo: detail.validToUtc ? detail.validToUtc.slice(0, 10) : '',
-          documentNumber: '',
-          visitDateUtc: new Date().toISOString().slice(0, 10),
-          accessLevelIds: detail.accessLevels.map((a) => a.id),
-        })
-        setModalMode('edit')
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
-  }
-
-  function openEditVisitor(item: VisitorResponse) {
-    if (!token) return
-    setError(null)
-    apiRequest<VisitorDetailResponse>(`/api/visitors/${item.id}`, { token })
-      .then((detail) => {
-        setEditingVisitor(detail)
-        setEditingEmployee(null)
-        setFormData({
-          firstName: detail.firstName,
-          lastName: detail.lastName,
-          personnelNumber: '',
-          employeeNo: '',
-          gender: '',
-          validFrom: '',
-          validTo: '',
-          documentNumber: detail.documentNumber ?? '',
-          visitDateUtc: detail.visitDateUtc.slice(0, 10),
-          accessLevelIds: detail.accessLevels.map((a) => a.id),
-        })
-        setModalMode('edit')
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
   }
 
   async function handleSubmit() {
@@ -294,7 +238,6 @@ export function PeopleManagementPage() {
             }),
           })
           await loadEmployees()
-          setHasChanges(true)
         } else {
           await apiRequest('/api/visitors', {
             method: 'POST',
@@ -326,7 +269,6 @@ export function PeopleManagementPage() {
             }),
           })
           await loadEmployees()
-          setHasChanges(true)
         } else if (editingVisitor) {
           await apiRequest(`/api/visitors/${editingVisitor.id}`, {
             method: 'PUT',
@@ -344,26 +286,9 @@ export function PeopleManagementPage() {
       }
       setModalMode(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка сохранения')
+      setError(e instanceof Error ? e.message : 'Save failed')
     } finally {
       setIsSubmitting(false)
-    }
-  }
-
-  async function handleDelete(item: EmployeeResponse | VisitorResponse) {
-    if (!token) return
-    if (!confirm(`Удалить ${item.firstName} ${item.lastName} из БД и со всех устройств?`)) return
-    try {
-      if (tab === 'employees') {
-        await apiRequest(`/api/employees/${item.id}`, { method: 'DELETE', token })
-        await loadEmployees()
-        setHasChanges(true)
-      } else {
-        await apiRequest(`/api/visitors/${item.id}`, { method: 'DELETE', token })
-        await loadVisitors()
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка удаления')
     }
   }
 
@@ -376,9 +301,39 @@ export function PeopleManagementPage() {
     }))
   }
 
+  async function openImportModal() {
+    if (!token) return
+    setImportModalOpen(true)
+    setImportResult(null)
+    setImportSelectedDeviceIds([])
+    setError(null)
+    try {
+      const list = await apiRequest<{ id: string; name: string; ipAddress: string }[]>('/api/devices', { token })
+      setDevices(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load devices')
+    }
+  }
+
+  const closeImportModal = () => {
+    setImportModalOpen(false)
+    setImportResult(null)
+    setImportSelectedDeviceIds([])
+    setDevices([])
+  }
+
+  const toggleImportDevice = (id: string) => {
+    setImportSelectedDeviceIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  const selectAllImportDevices = () => {
+    setImportSelectedDeviceIds(devices.map((d) => d.id))
+  }
+
   async function runSync() {
     if (!token) return
-    setSyncModalOpen(true)
     setSyncResult('loading')
     setSyncError(null)
     setSyncProgress(0)
@@ -399,56 +354,17 @@ export function PeopleManagementPage() {
       if (failed.length > 0) {
         setSyncResult('error')
         setSyncError(
-          failed.map((f) => `Устройство «${f.deviceName}»: ${f.error ?? 'Ошибка'}`).join('\n')
+          failed.map((f) => `Device "${f.deviceName}": ${f.error ?? 'Error'}`).join('\n')
         )
       } else {
         setSyncResult('success')
-        setHasChanges(false)
       }
     } catch (e) {
       clearInterval(progressInterval)
       setSyncProgress(100)
       setSyncResult('error')
-      setSyncError(e instanceof Error ? e.message : 'Ошибка синхронизации')
+      setSyncError(e instanceof Error ? e.message : 'Sync failed')
     }
-  }
-
-  function closeSyncModal() {
-    setSyncModalOpen(false)
-    setSyncResult('idle')
-    setSyncError(null)
-    setSyncProgress(0)
-  }
-
-  async function openImportModal() {
-    if (!token) return
-    setImportModalOpen(true)
-    setImportResult(null)
-    setImportSelectedDeviceIds([])
-    setError(null)
-    try {
-      const list = await apiRequest<{ id: string; name: string; ipAddress: string }[]>('/api/devices', { token })
-      setDevices(list)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки устройств')
-    }
-  }
-
-  function closeImportModal() {
-    setImportModalOpen(false)
-    setImportResult(null)
-    setImportSelectedDeviceIds([])
-    setDevices([])
-  }
-
-  function toggleImportDevice(id: string) {
-    setImportSelectedDeviceIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    )
-  }
-
-  function selectAllImportDevices() {
-    setImportSelectedDeviceIds(devices.map((d) => d.id))
   }
 
   async function runImport() {
@@ -469,455 +385,257 @@ export function PeopleManagementPage() {
       })
       setImportResult(res)
       await loadEmployees()
-      setHasChanges(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка импорта')
+      setError(e instanceof Error ? e.message : 'Import failed')
     } finally {
       setImportLoading(false)
     }
   }
 
-  const list = tab === 'employees' ? filteredEmployees : filteredVisitors
+  const list = tab === 'employees'
+    ? employees.map(e => ({ ...e, type: 'employee' as const }))
+    : visitors.map(v => ({ ...v, type: 'visitor' as const }))
 
   return (
-    <AppLayout>
-      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
-        <PageHeader
-          title="People"
-          description="Manage employees and visitors with their access levels."
-          actions={
-            <div className="flex items-center gap-2">
-              {tab === 'employees' && (
-                <Button
-                  size="sm"
-                  icon="sync"
-                  variant={hasChanges ? 'secondary' : 'outline'}
-                  disabled={!hasChanges}
-                  onClick={() => runSync()}
-                  className={
-                    hasChanges
-                      ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-400'
-                      : 'bg-white text-slate-400 border-slate-200'
-                  }
-                >
+    <AppLayout onAction={openCreateModal}>
+      <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+        <div className="p-6 md:p-8 space-y-6">
+          <PageHeader
+            className="hidden md:flex"
+            title="People Management"
+            description="Manage your workforce, visitors, and their security credentials."
+            actions={
+              <div className="flex gap-2">
+                <Button variant="outline" icon="sync" size="md" onClick={openSyncModal} className="shadow-sm">
                   Sync
                 </Button>
-              )}
-              <Button size="sm" icon="upload" variant="outline" onClick={openImportModal}>
-                Import
-              </Button>
-              <Button size="sm" icon="person_add" onClick={openCreateModal}>
-                {tab === 'employees' ? 'Add Employer' : 'Add Visitor'}
-              </Button>
+                <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
+                  Import
+                </Button>
+                <Button icon="person_add" size="md" onClick={openCreateModal} className="shadow-md">
+                  Add People
+                </Button>
+              </div>
+            }
+          />
+
+          {error && (
+            <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold shadow-sm max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {error}
             </div>
-          }
-        />
+          )}
 
-        {error && (
-          <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10 max-h-40 overflow-y-auto whitespace-pre-wrap">
-            {error}
+          {/* Top Stats Tier */}
+          <div className="grid grid-cols-3 gap-3 md:grid-cols-4 lg:grid-cols-6">
+            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Active</p>
+              <p className="text-2xl font-black text-primary leading-none">{activeCount}</p>
+            </div>
+            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Employees</p>
+              <p className="text-2xl font-black text-primary leading-none">{employees.length}</p>
+            </div>
+            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Visitors</p>
+              <p className="text-2xl font-black text-primary leading-none">{visitors.length}</p>
+            </div>
           </div>
-        )}
 
-        {/* Search */}
-        <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
-          <div className="flex-1 relative">
-            <Input
-              placeholder="Поиск по имени, табельному номеру, документу..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              icon="search"
-              className="pr-9"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
-                aria-label="Очистить поиск"
-              >
-                <span className="material-symbols-outlined text-lg">close</span>
-              </button>
-            )}
+          <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
+            <div className="relative flex-1 max-w-md">
+              <Input
+                placeholder={`Search ${tab}...`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                icon="search"
+                className="bg-white shadow-sm"
+              />
+            </div>
+            <div className="flex md:hidden gap-2">
+              <Button fullWidth variant="outline" icon="sync" size="sm" onClick={openSyncModal} className="shadow-sm">Sync</Button>
+              <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">Import</Button>
+            </div>
           </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-xs font-bold text-text-muted uppercase">Статус:</span>
+
+          {/* Tabs */}
+          <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-border-light">
             <button
-              type="button"
-              onClick={() =>
-                setStatusFilter(
-                  statusFilter === 'all' ? 'active' : statusFilter === 'active' ? 'inactive' : 'all'
-                )
-              }
-              className="px-2 py-1 rounded text-xs font-bold bg-slate-75 text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
+              onClick={() => setTab('employees')}
+              className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'employees' ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                }`}
             >
-              {statusFilter === 'all' ? 'Все' : statusFilter === 'active' ? 'Активные' : 'Неактивные'}
+              Employees
+            </button>
+            <button
+              onClick={() => setTab('visitors')}
+              className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'visitors' ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                }`}
+            >
+              Visitors
             </button>
           </div>
-        </div>
 
-        {/* Type filter tabs */}
-        <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
-          {TABS.map((t) => (
-            <button
-              key={t.value}
-              type="button"
-              onClick={() => setTab(t.value)}
-              className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${
-                tab === t.value
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-text-muted hover:text-text-dark'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {/* People List/Table */}
-        <Card noPadding className="overflow-hidden">
-          <div className="hidden md:grid md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
-            <div className="col-span-2">Identity & Label</div>
-            <div>Status</div>
-            <div>Access Levels</div>
-            <div>Cards / Faces / FPs</div>
-            <div className="text-right">Actions</div>
-          </div>
-
-          <div className="divide-y divide-border-light">
-            {isLoading ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">Загрузка...</div>
-            ) : list.length === 0 ? (
-              <div className="p-12 text-center text-text-muted italic text-sm">
-                {tab === 'employees'
-                  ? employees.length === 0
-                    ? 'No employers registered. Use Add Employer to create.'
-                    : 'No employers match your search or filter.'
-                  : visitors.length === 0
-                    ? 'No visitors registered. Use Add Visitor to create.'
-                    : 'No visitors match your search or filter.'}
+          {/* List Layout */}
+          <div className="space-y-3">
+            {list.length === 0 ? (
+              <div className="py-20 text-center bg-surface rounded-2xl shadow-md">
+                <span className="material-symbols-outlined text-text-light text-5xl mb-3">person_search</span>
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">No people found</p>
               </div>
             ) : (
               list.map((item) => {
-                const name = `${item.firstName} ${item.lastName}`
-                const initials = `${item.firstName[0] || ''}${item.lastName[0] || ''}`.toUpperCase()
-                const secondary =
-                  tab === 'employees'
-                    ? (item as EmployeeResponse).personnelNumber
-                    : (item as VisitorResponse).documentNumber
-                const visitDate =
-                  tab === 'visitors' ? (item as VisitorResponse).visitDateUtc?.slice(0, 10) : null
+                const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '')
+                const subtitle = item.type === 'employee'
+                  ? `ID: ${item.employeeNo || 'N/A'} • ${item.cardsCount} Cards • ${item.facesCount} Faces`
+                  : `Visit: ${item.visitDateUtc.slice(0, 10)} • ${item.cardsCount} Cards`
+
                 return (
                   <div
                     key={item.id}
-                    className="flex flex-col md:grid md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group cursor-pointer"
-                    onClick={() => navigate(`/people/${tab === 'employees' ? 'employee' : 'visitor'}/${item.id}`)}
+                    onClick={() => navigate(`/people/${item.type}/${item.id}`)}
+                    className="flex items-center justify-between p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl active:scale-[0.99] transition-all cursor-pointer group"
                   >
-                    <div className="col-span-2 flex items-center gap-4 min-w-0">
-                      <Avatar
-                        initials={initials || '?'}
-                        variant={item.isActive ? 'primary' : 'neutral'}
-                        size="lg"
-                        className="!rounded-xl shadow-sm"
-                      />
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 flex items-center justify-center bg-primary/10 rounded-2xl text-primary font-black text-sm uppercase">
+                        {initials || '?'}
+                      </div>
                       <div>
-                        <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">
-                          {name}
-                        </p>
-                        <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight uppercase">
-                          {secondary ?? '—'}
-                          {visitDate ? ` • ${visitDate}` : ''}
+                        <h4 className="text-base font-black text-text-dark leading-tight">{item.firstName} {item.lastName}</h4>
+                        <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-1">
+                          {subtitle}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-6 md:block">
-                      <Badge dot variant={item.isActive ? 'success' : 'neutral'}>
-                        {item.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </div>
-                    <div className="hidden md:block">
-                      <div className="flex flex-wrap gap-1">
-                        {item.accessLevelNames.length > 0
-                          ? item.accessLevelNames.map((n) => (
-                              <Badge key={n} variant="neutral">
-                                {n}
-                              </Badge>
-                            ))
-                          : '—'}
-                      </div>
-                    </div>
-                    <div className="hidden md:block text-sm text-text-muted">
-                      {item.cardsCount} / {item.facesCount} / {item.fingerprintsCount}
-                    </div>
-                    <div
-                      className="flex justify-end gap-2 mt-4 md:mt-0 md:justify-self-end"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        icon="edit"
-                        className="text-text-muted hover:text-text-dark"
-                        onClick={() =>
-                          tab === 'employees'
-                            ? openEditEmployee(item as EmployeeResponse)
-                            : openEditVisitor(item as VisitorResponse)
-                        }
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        icon="delete"
-                        className="text-text-muted hover:text-error-text hover:bg-error-bg"
-                        onClick={() => handleDelete(item)}
-                      />
+                    <div className="flex items-center gap-2">
+                      <Badge variant={item.isActive ? 'success' : 'neutral'}>{item.isActive ? 'Active' : 'Inactive'}</Badge>
+                      <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
                     </div>
                   </div>
                 )
               })
             )}
           </div>
-
-          <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
-            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
-              {list.length} of {tab === 'employees' ? employees.length : visitors.length} records, {activeCount} active
-            </p>
-          </div>
-        </Card>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
-            <div className="size-12 rounded-full bg-success-bg text-success-text flex items-center justify-center">
-              <span className="material-symbols-outlined">person_check</span>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Активных</p>
-              <p className="text-2xl font-black text-text-dark">{activeCount}</p>
-            </div>
-          </Card>
-          <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
-            <div className="size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined">badge</span>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Сотрудников</p>
-              <p className="text-2xl font-black text-text-dark">{employees.length}</p>
-            </div>
-          </Card>
-          <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
-            <div className="size-12 rounded-full bg-primary/5 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined">meeting_room</span>
-            </div>
-            <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Посетителей</p>
-              <p className="text-2xl font-black text-text-dark">{visitors.length}</p>
-            </div>
-          </Card>
         </div>
       </div>
 
-      {syncModalOpen && (
-        <Modal
-          isOpen={syncModalOpen}
-          title="Синхронизация с устройствами"
-          onClose={closeSyncModal}
-          actions={
-            syncResult !== 'loading' ? (
-              <Button size="sm" onClick={closeSyncModal}>
-                Закрыть
-              </Button>
-            ) : undefined
-          }
-        >
-          <div className="space-y-4">
-            {syncResult === 'loading' && (
-              <div className="-mx-6 -mt-6 mb-4 h-1.5 bg-slate-100 overflow-hidden rounded-t-xl">
-                <div
-                  className="h-full bg-green-500 transition-all duration-300"
-                  style={{ width: `${syncProgress}%` }}
-                />
-              </div>
-            )}
-            {syncResult === 'loading' && (
-              <p className="text-sm text-text-muted">Загрузка изменений на устройства...</p>
-            )}
-            {syncResult === 'success' && (
-              <div className="rounded-lg bg-green-500/10 border border-green-500/30 px-4 py-3 text-sm text-green-700 dark:text-green-400">
-                Синхронизация успешна
-              </div>
-            )}
-            {syncResult === 'error' && syncError && (
-              <div className="rounded-lg bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive whitespace-pre-wrap">
-                {syncError}
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-
-      {importModalOpen && (
-        <Modal
-          isOpen={importModalOpen}
-          title="Импорт с устройств"
-          onClose={closeImportModal}
-          actions={
-            <>
-              <Button size="sm" variant="outline" onClick={closeImportModal}>
-                {importResult ? 'Закрыть' : 'Отмена'}
-              </Button>
-              {!importResult && (
-                <Button
-                  size="sm"
-                  onClick={runImport}
-                  disabled={importLoading || importSelectedDeviceIds.length === 0}
-                >
-                  {importLoading ? 'Импорт...' : `Импортировать (${importSelectedDeviceIds.length})`}
-                </Button>
-              )}
-            </>
-          }
-        >
-          <div className="space-y-4">
-            {!importResult ? (
-              <>
-                <p className="text-sm text-text-muted">
-                  Выберите устройства, с которых импортировать пользователей (сотрудников и посетителей).
-                </p>
-                {devices.length === 0 ? (
-                  <p className="text-sm text-text-muted">Устройства не найдены.</p>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={selectAllImportDevices}
-                      className="text-xs font-bold text-primary hover:underline"
-                    >
-                      Выбрать все
-                    </button>
-                    <div className="max-h-64 overflow-y-auto space-y-2 border border-border-base rounded-lg p-2">
-                      {devices.map((d) => (
-                        <label
-                          key={d.id}
-                          className="flex items-center gap-3 p-2 rounded hover:bg-slate-50 cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={importSelectedDeviceIds.includes(d.id)}
-                            onChange={() => toggleImportDevice(d.id)}
-                            className="rounded border-border-base text-primary focus:ring-primary"
-                          />
-                          <span className="text-sm font-medium text-text-dark">{d.name}</span>
-                          <span className="text-xs text-text-muted">{d.ipAddress}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex gap-4 text-sm">
-                  <span className="text-green-600 dark:text-green-400">
-                    Импортировано: {importResult.importedCount}
-                  </span>
-                  <span className="text-amber-600 dark:text-amber-400">
-                    Пропущено (дубликаты): {importResult.skippedCount}
-                  </span>
-                  {importResult.errorCount > 0 && (
-                    <span className="text-destructive">Ошибки: {importResult.errorCount}</span>
-                  )}
-                </div>
-                {importResult.items.length > 0 && (
-                  <div className="max-h-48 overflow-y-auto border border-border-base rounded-lg p-2 text-xs space-y-1">
-                    {importResult.items.map((item, i) => (
-                      <div
-                        key={i}
-                        className={
-                          item.success
-                            ? 'text-text-dark'
-                            : 'text-destructive'
-                        }
-                      >
-                        {item.employeeNo} — {item.name} ({item.deviceName})
-                        {item.message && ` — ${item.message}`}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-
-      {modalMode && (
-        <Modal
-          isOpen={!!modalMode}
-          title={modalMode === 'create' ? (tab === 'employees' ? 'Добавить сотрудника' : 'Добавить посетителя') : 'Редактировать'}
-          onClose={() => setModalMode(null)}
-          actions={
-            <>
-              <Button variant="outline" size="sm" onClick={() => setModalMode(null)}>
-                Отмена
-              </Button>
-              <Button size="sm" onClick={handleSubmit} disabled={isSubmitting}>
-                {isSubmitting ? 'Сохранение...' : 'Сохранить'}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs font-bold text-text-muted uppercase mb-1">Имя</p>
-                <Input
-                  value={formData.firstName}
-                  onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
-                  placeholder="Имя"
-                />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-text-muted uppercase mb-1">Фамилия</p>
-                <Input
-                  value={formData.lastName}
-                  onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
-                  placeholder="Фамилия"
-                />
-              </div>
+      {/* Modals */}
+      <Modal
+        isOpen={syncModalOpen}
+        title="Sync with Devices"
+        onClose={closeSyncModal}
+      >
+        <div className="space-y-4">
+          {syncResult === 'loading' && (
+            <div className="h-1.5 bg-slate-100 overflow-hidden rounded-full">
+              <div className="h-full bg-primary transition-all duration-300" style={{ width: `${syncProgress}%` }} />
             </div>
-            {tab === 'employees' ? (
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Табельный номер</p>
-                  <Input
-                    value={formData.personnelNumber}
-                    onChange={(e) => setFormData((p) => ({ ...p, personnelNumber: e.target.value }))}
-                    placeholder="Опционально"
-                  />
+          )}
+          {syncResult === 'success' && <div className="p-3 bg-success-bg text-success-text rounded-lg text-sm font-bold">Sync successful</div>}
+          {syncResult === 'error' && <div className="p-3 bg-error-bg text-error-text rounded-lg text-sm font-bold whitespace-pre-wrap">{syncError}</div>}
+          <div className="flex justify-end gap-2 pt-4">
+            {syncResult === 'idle' && <Button onClick={runSync}>Start Sync</Button>}
+            <Button variant="outline" onClick={closeSyncModal}>Close</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={importModalOpen}
+        title="Import from Devices"
+        onClose={closeImportModal}
+      >
+        <div className="space-y-4">
+          {!importResult ? (
+            <>
+              <p className="text-sm text-text-muted">Select devices to import users from.</p>
+              <div className="max-h-64 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
+                {devices.map((d) => (
+                  <label key={d.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 cursor-pointer border border-transparent transition-all">
+                    <input
+                      type="checkbox"
+                      checked={importSelectedDeviceIds.includes(d.id)}
+                      onChange={() => toggleImportDevice(d.id)}
+                      className="rounded border-border-light text-primary focus:ring-primary"
+                    />
+                    <div>
+                      <p className="text-sm font-bold text-text-dark">{d.name}</p>
+                      <p className="text-xs text-text-light">{d.ipAddress}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="flex justify-between items-center pt-2">
+                <button type="button" onClick={selectAllImportDevices} className="text-xs font-bold text-primary hover:underline">Select All</button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={closeImportModal}>Cancel</Button>
+                  <Button onClick={runImport} disabled={importLoading || importSelectedDeviceIds.length === 0} isLoading={importLoading}>Import</Button>
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Employee ID</p>
-                  <Input
-                    value={formData.employeeNo}
-                    onChange={(e) => setFormData((p) => ({ ...p, employeeNo: e.target.value }))}
-                    placeholder="Идентификатор для устройств Hikvision (до 32 символов)"
-                  />
+              </div>
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="text-center p-3 bg-slate-50 rounded-xl">
+                  <p className="text-[10px] font-black text-text-light uppercase">Imported</p>
+                  <p className="text-xl font-black text-success-text">{importResult.importedCount}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Пол</p>
-                  <select
-                    value={formData.gender}
-                    onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
-                    className="w-full rounded-lg border border-border-base bg-slate-50 px-3 py-2 text-sm text-text-dark focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                  >
-                    <option value="">Не указан</option>
-                    <option value="male">Мужской</option>
-                    <option value="female">Женский</option>
-                    <option value="unknown">Неизвестно</option>
-                  </select>
+                <div className="text-center p-3 bg-slate-50 rounded-xl">
+                  <p className="text-[10px] font-black text-text-light uppercase">Skipped</p>
+                  <p className="text-xl font-black text-text-muted">{importResult.skippedCount}</p>
                 </div>
+                <div className="text-center p-3 bg-slate-50 rounded-xl">
+                  <p className="text-[10px] font-black text-text-light uppercase">Errors</p>
+                  <p className="text-xl font-black text-error-text">{importResult.errorCount}</p>
+                </div>
+              </div>
+              <Button fullWidth variant="outline" onClick={closeImportModal}>Close</Button>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!modalMode}
+        title={modalMode === 'create' ? `Add ${tab === 'employees' ? 'Employee' : 'Visitor'}` : 'Edit Details'}
+        onClose={() => setModalMode(null)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">First Name</label>
+              <Input
+                value={formData.firstName}
+                onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
+                placeholder="Required"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Last Name</label>
+              <Input
+                value={formData.lastName}
+                onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
+                placeholder="Required"
+              />
+            </div>
+          </div>
+
+          {tab === 'employees' ? (
+            <>
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Gender</label>
+                <select
+                  value={formData.gender}
+                  onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
+                  className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
+                >
+                  <option value="">Unknown / Other</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Период действия (от)</p>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid From</label>
                   <Input
                     type="date"
                     value={formData.validFrom}
@@ -925,7 +643,7 @@ export function PeopleManagementPage() {
                   />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Период действия (до)</p>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid To</label>
                   <Input
                     type="date"
                     value={formData.validTo}
@@ -933,51 +651,51 @@ export function PeopleManagementPage() {
                   />
                 </div>
               </div>
-            ) : (
-              <>
-                <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Номер документа</p>
-                  <Input
-                    value={formData.documentNumber}
-                    onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
-                    placeholder="Опционально"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Дата визита</p>
-                  <Input
-                    type="date"
-                    value={formData.visitDateUtc}
-                    onChange={(e) => setFormData((p) => ({ ...p, visitDateUtc: e.target.value }))}
-                  />
-                </div>
-              </>
-            )}
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Document Number</label>
+                <Input
+                  value={formData.documentNumber}
+                  onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Visit Date</label>
+                <Input
+                  type="date"
+                  value={formData.visitDateUtc}
+                  onChange={(e) => setFormData((p) => ({ ...p, visitDateUtc: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
+
+          {accessLevels.length > 0 && (
             <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Уровни доступа</p>
-              <div className="flex flex-wrap gap-2">
-                {accessLevels.map((al) => (
-                  <label
-                    key={al.id}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border-base cursor-pointer hover:bg-slate-75"
-                  >
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Access Levels</label>
+              <div className="max-h-32 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
+                {accessLevels.map((level) => (
+                  <label key={level.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={formData.accessLevelIds.includes(al.id)}
-                      onChange={() => toggleAccessLevel(al.id)}
-                      className="rounded"
+                      checked={formData.accessLevelIds.includes(level.id)}
+                      onChange={() => toggleAccessLevel(level.id)}
+                      className="rounded border-border-light text-primary focus:ring-primary"
                     />
-                    <span className="text-sm">{al.name}</span>
+                    <span className="text-sm font-bold text-text-dark">{level.name}</span>
                   </label>
                 ))}
-                {accessLevels.length === 0 && (
-                  <span className="text-sm text-text-muted">Нет уровней доступа</span>
-                )}
               </div>
             </div>
+          )}
+          <div className="flex gap-2 pt-4">
+            <Button fullWidth onClick={handleSubmit} isLoading={isSubmitting} disabled={!formData.firstName || isSubmitting}>Save</Button>
+            <Button fullWidth variant="outline" onClick={() => setModalMode(null)}>Cancel</Button>
           </div>
-        </Modal>
-      )}
+        </div>
+      </Modal>
     </AppLayout>
   )
 }

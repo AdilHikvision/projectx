@@ -28,7 +28,7 @@ interface AuthContextValue {
   token: string | null
   user: AuthUser | null
   isAuthenticated: boolean
-  /** true пока проверяется сессия (валидация токена через /api/auth/me) */
+  /** true while session is being validated (via /api/auth/me) */
   isLoading: boolean
   login: (request: LoginRequest) => Promise<void>
   logout: () => void
@@ -43,10 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(STORAGE_TOKEN_KEY))
   const [user, setUser] = useState<AuthUser | null>(() => {
     const storedUser = localStorage.getItem(STORAGE_USER_KEY)
-    if (!storedUser) {
-      return null
-    }
-
+    if (!storedUser) return null
     try {
       return JSON.parse(storedUser) as AuthUser
     } catch {
@@ -72,8 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const me = await apiRequest<{ id: string; email: string; roles: string[] }>('/api/auth/me', { token: storedToken })
-        setUser({ id: me.id, email: me.email ?? '', roles: me.roles ?? [] })
-        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify({ id: me.id, email: me.email ?? '', roles: me.roles ?? [] }))
+        const nextUser = { id: me.id, email: me.email ?? '', roles: me.roles ?? [] }
+        setUser(nextUser)
+        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(nextUser))
       } catch {
         logout()
       } finally {
