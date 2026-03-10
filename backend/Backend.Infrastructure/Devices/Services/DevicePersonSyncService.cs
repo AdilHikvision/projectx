@@ -287,6 +287,97 @@ public sealed class DevicePersonSyncService(
         return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
     }
 
+    public async Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
+        if (device is null)
+            return new DeviceSyncResult(false, "Устройство не найдено.");
+
+        var client = CreateClient(device);
+        var escapedNo = Uri.EscapeDataString(employeeNo);
+
+        // Часть устройств Hikvision ожидает HTTP DELETE (methodNotAllowed при PUT)
+        var (success, _, error) = await client.DeleteAsync(
+            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
+            cancellationToken: cancellationToken);
+        if (success)
+            return new DeviceSyncResult(true, null);
+
+        // Некоторые устройства принимают employeeNo в query string с пустым телом (PUT)
+        (success, _, error) = await client.PutAsync(
+            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
+            "{}",
+            "application/json",
+            cancellationToken);
+        if (success)
+            return new DeviceSyncResult(true, null);
+
+        var path = "ISAPI/AccessControl/UserInfoDetail/Delete?format=json";
+
+        // Пробуем разные форматы JSON — устройства Hikvision различаются по ожидаемой структуре
+        var formats = new[]
+        {
+            // 1. EmployeeNoList с массивом (PascalCase)
+            JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = new[] { employeeNo } } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+            // 2. EmployeeNoList с одним значением (PascalCase)
+            JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = employeeNo } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+            // 3. camelCase
+            JsonSerializer.Serialize(new { userInfoDetail = new { employeeNoList = new { employeeNo = new[] { employeeNo } } } }),
+            // 4. Прямой employeeNo в UserInfoDetail
+            JsonSerializer.Serialize(new { UserInfoDetail = new { employeeNo } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+        };
+
+        string? lastError = error;
+        foreach (var body in formats)
+        {
+            // DELETE с телом (устройство вернуло methodNotAllowed для PUT)
+            (success, _, error) = await client.DeleteAsync(path, body, "application/json", cancellationToken);
+            if (success)
+                return new DeviceSyncResult(true, null);
+            lastError = error;
+            (success, _, error) = await client.PutAsync(path, body, "application/json", cancellationToken);
+            if (success)
+                return new DeviceSyncResult(true, null);
+            lastError = error;
+            (success, _, error) = await client.PostAsync(path, body, "application/json", cancellationToken);
+            if (success)
+                return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+
+        // Fallback: XML
+        var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
+        var xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?>
+<UserInfoDetail xmlns=""http://www.hikvision.com/ver20/XMLSchema"">
+  <EmployeeNoList>
+    <EmployeeNo>{escaped}</EmployeeNo>
+  </EmployeeNoList>
+</UserInfoDetail>";
+        (success, _, error) = await client.DeleteAsync(
+            "ISAPI/AccessControl/UserInfoDetail/Delete",
+            xmlBody,
+            "application/xml",
+            cancellationToken);
+        if (success)
+            return new DeviceSyncResult(true, null);
+
+        var (xmlSuccess, _, xmlError) = await client.PutAsync(
+            "ISAPI/AccessControl/UserInfoDetail/Delete",
+            xmlBody,
+            "application/xml",
+            cancellationToken);
+        if (xmlSuccess)
+            return new DeviceSyncResult(true, null);
+
+        (xmlSuccess, _, xmlError) = await client.PostAsync(
+            "ISAPI/AccessControl/UserInfoDetail/Delete",
+            xmlBody,
+            "application/xml",
+            cancellationToken);
+
+        return xmlSuccess ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, lastError ?? xmlError);
+    }
+
     private static int[] GetDoorRightForDevice(IEnumerable<AccessLevel?> accessLevels, Guid deviceId)
     {
         var doorIndices = new HashSet<int>();
@@ -313,49 +404,41 @@ public sealed class DevicePersonSyncService(
         var givenName = parts.Length > 0 ? parts[0] : name;
         var familyName = parts.Length > 1 ? parts[1] : (parts.Length == 1 ? parts[0] : "");
 
-        var doorNo = doorRight.Length > 0
-            ? doorRight.Select(i => i + 1).ToArray()
-            : Array.Empty<int>();
+        // doorNo: 1-based для ISAPI. Если дверей нет — используем дверь 1 (обязательно для многих устройств).
+        var doorNoList = doorRight.Length > 0
+            ? doorRight.Select(i => i + 1).ToList()
+            : [1];
 
         var genderValue = string.IsNullOrWhiteSpace(gender) ? "unknown" : gender.Trim().ToLowerInvariant();
         if (genderValue is not ("male" or "female"))
             genderValue = "unknown";
 
-        var beginTime = validFromUtc?.ToString("yyyy-MM-ddTHH:mm:ssZ") ?? "1970-01-01T00:00:00Z";
-        var endTime = validToUtc?.ToString("yyyy-MM-ddTHH:mm:ssZ") ?? "2099-12-31T23:59:59Z";
+        // Формат без Z — устройства Hikvision (Value/Pro/Controllers) ожидают "yyyy-MM-ddTHH:mm:ss"
+        var beginTime = validFromUtc?.ToString("yyyy-MM-ddTHH:mm:ss") ?? "1970-01-01T00:00:00";
+        var endTime = validToUtc?.ToString("yyyy-MM-ddTHH:mm:ss") ?? "2099-12-31T23:59:59";
 
-        object userInfo;
-        if (doorNo.Length > 0)
+        // doorRight — строка "1" или "1,2,3" (формат, ожидаемый Face Recognition Terminals и Controllers)
+        var doorRightStr = string.Join(",", doorNoList);
+
+        // RightPlan — обязателен для многих устройств (MessageParametersLack без него)
+        var rightPlan = doorNoList.Select(d => new { doorNo = d, planTemplateNo = "1" }).ToArray();
+
+        var userInfo = new
         {
-            userInfo = new
-            {
-                employeeNo,
-                name,
-                type = userType,
-                givenName,
-                familyName,
-                gender = genderValue,
-                personType = "normal",
-                personRole = "basic",
-                Valid = new { enable = true, beginTime, endTime, timeType = "local" },
-                doorRight = new { doorNo }
-            };
-        }
-        else
-        {
-            userInfo = new
-            {
-                employeeNo,
-                name,
-                type = userType,
-                givenName,
-                familyName,
-                gender = genderValue,
-                personType = "normal",
-                personRole = "basic",
-                Valid = new { enable = true, beginTime, endTime, timeType = "local" }
-            };
-        }
+            employeeNo,
+            name,
+            type = userType,
+            userType = "normal",
+            givenName,
+            familyName,
+            gender = genderValue,
+            doorRight = doorRightStr,
+            RightPlan = rightPlan,
+            localUIRight = false,
+            maxOpenDoorTime = 0,
+            userVerifyMode = "",
+            Valid = new { enable = true, beginTime, endTime, timeType = "local" }
+        };
 
         var body = JsonSerializer.Serialize(new { UserInfo = userInfo });
 

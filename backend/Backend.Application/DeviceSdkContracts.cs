@@ -123,4 +123,43 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> DeleteFaceFromDeviceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Удаляет отпечаток с устройства.</summary>
     Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(string employeeNo, int fingerIndex, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет пользователя (Person) с устройства по employeeNo.</summary>
+    Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Пользователь, полученный с устройства Hikvision (UserInfo Search).</summary>
+public sealed record ImportedUser(
+    string EmployeeNo,
+    string Name,
+    string? GivenName,
+    string? FamilyName,
+    int Type,
+    string? UserType,
+    string? Gender,
+    string? ValidBeginTime,
+    string? ValidEndTime,
+    Guid SourceDeviceId,
+    string SourceDeviceName);
+
+/// <summary>Результат импорта пользователей с устройств.</summary>
+public sealed record PersonImportResult(
+    int ImportedCount,
+    int SkippedCount,
+    int ErrorCount,
+    IReadOnlyCollection<PersonImportItem> Items);
+
+public sealed record PersonImportItem(
+    string EmployeeNo,
+    string Name,
+    Guid DeviceId,
+    string DeviceName,
+    bool Success,
+    string? Message);
+
+public interface IDevicePersonImportService
+{
+    /// <summary>Получает список пользователей с устройства через ISAPI UserInfo Search.</summary>
+    Task<IReadOnlyCollection<ImportedUser>> FetchUsersFromDeviceAsync(Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Импортирует пользователей с выбранных устройств в БД (создаёт Employee или Visitor).</summary>
+    Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default);
 }

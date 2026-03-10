@@ -56,6 +56,16 @@ public sealed class IsapiClient
         string jsonBody,
         CancellationToken cancellationToken = default)
     {
+        return await PostAsync(path, jsonBody, "application/json", cancellationToken);
+    }
+
+    /// <summary>Выполняет POST с произвольным телом и Content-Type.</summary>
+    public async Task<(bool Success, string? Content, string? Error)> PostAsync(
+        string path,
+        string body,
+        string contentType,
+        CancellationToken cancellationToken = default)
+    {
         string? lastError = null;
         foreach (var port in _ports)
         {
@@ -63,7 +73,7 @@ public sealed class IsapiClient
                 port,
                 path,
                 HttpMethod.Post,
-                new StringContent(jsonBody, Encoding.UTF8, "application/json"),
+                new StringContent(body, Encoding.UTF8, contentType),
                 cancellationToken);
             if (success)
                 return (true, content, null);
@@ -80,6 +90,37 @@ public sealed class IsapiClient
         string jsonBody,
         CancellationToken cancellationToken = default)
     {
+        return await PutAsync(path, jsonBody, "application/json", cancellationToken);
+    }
+
+    /// <summary>Выполняет DELETE с опциональным телом (некоторые устройства ожидают DELETE вместо PUT).</summary>
+    public async Task<(bool Success, string? Content, string? Error)> DeleteAsync(
+        string path,
+        string? body = null,
+        string? contentType = null,
+        CancellationToken cancellationToken = default)
+    {
+        HttpContent? content = null;
+        if (body != null && contentType != null)
+            content = new StringContent(body, Encoding.UTF8, contentType);
+        string? lastError = null;
+        foreach (var port in _ports)
+        {
+            var (success, c, error, isAuthError) = await TryRequestAsync(port, path, HttpMethod.Delete, content, cancellationToken);
+            if (success) return (true, c, null);
+            if (isAuthError) return (false, null, error);
+            lastError = error;
+        }
+        return (false, null, lastError ?? "Устройство недоступно или не поддерживает запрос.");
+    }
+
+    /// <summary>Выполняет PUT с произвольным телом и Content-Type.</summary>
+    public async Task<(bool Success, string? Content, string? Error)> PutAsync(
+        string path,
+        string body,
+        string contentType,
+        CancellationToken cancellationToken = default)
+    {
         string? lastError = null;
         foreach (var port in _ports)
         {
@@ -87,7 +128,7 @@ public sealed class IsapiClient
                 port,
                 path,
                 HttpMethod.Put,
-                new StringContent(jsonBody, Encoding.UTF8, "application/json"),
+                new StringContent(body, Encoding.UTF8, contentType),
                 cancellationToken);
             if (success)
                 return (true, content, null);

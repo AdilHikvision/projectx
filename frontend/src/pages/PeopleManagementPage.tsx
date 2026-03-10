@@ -85,6 +85,10 @@ export function PeopleManagementPage() {
     firstName: '',
     lastName: '',
     personnelNumber: '',
+    employeeNo: '',
+    gender: '',
+    validFrom: '',
+    validTo: '',
     documentNumber: '',
     visitDateUtc: new Date().toISOString().slice(0, 10),
     accessLevelIds: [] as string[],
@@ -95,6 +99,16 @@ export function PeopleManagementPage() {
   const [syncProgress, setSyncProgress] = useState(0)
   const [syncResult, setSyncResult] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [importModalOpen, setImportModalOpen] = useState(false)
+  const [devices, setDevices] = useState<{ id: string; name: string; ipAddress: string }[]>([])
+  const [importSelectedDeviceIds, setImportSelectedDeviceIds] = useState<string[]>([])
+  const [importLoading, setImportLoading] = useState(false)
+  const [importResult, setImportResult] = useState<{
+    importedCount: number
+    skippedCount: number
+    errorCount: number
+    items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+  } | null>(null)
 
   const loadEmployees = useCallback(async () => {
     if (!token) return
@@ -158,27 +172,56 @@ export function PeopleManagementPage() {
     return visitors.filter((v) => v.isActive).length
   }, [tab, employees, visitors])
 
-  const totalCount = useMemo(() => {
-    if (tab === 'employees') return employees.length
-    return visitors.length
-  }, [tab, employees, visitors])
-
-  function openCreateModal() {
-    setFormData({
-      firstName: '',
-      lastName: '',
-      personnelNumber: '',
-      employeeNo: '',
-      gender: '',
-      validFrom: '',
-      validTo: '',
-      documentNumber: '',
-      visitDateUtc: new Date().toISOString().slice(0, 10),
-      accessLevelIds: [],
-    })
+  async function openCreateModal() {
     setEditingEmployee(null)
     setEditingVisitor(null)
     setModalMode('create')
+    setError(null)
+    try {
+      if (tab === 'employees') {
+        const res = await apiRequest<{ nextPersonnelNumber: string }>('/api/employees/next-personnel-number', { token: token ?? undefined })
+        setFormData({
+          firstName: '',
+          lastName: '',
+          personnelNumber: res.nextPersonnelNumber,
+          employeeNo: res.nextPersonnelNumber,
+          gender: '',
+          validFrom: '',
+          validTo: '',
+          documentNumber: '',
+          visitDateUtc: new Date().toISOString().slice(0, 10),
+          accessLevelIds: [],
+        })
+      } else {
+        const res = await apiRequest<{ nextDocumentNumber: string }>('/api/visitors/next-document-number', { token: token ?? undefined })
+        setFormData({
+          firstName: '',
+          lastName: '',
+          personnelNumber: '',
+          employeeNo: '',
+          gender: '',
+          validFrom: '',
+          validTo: '',
+          documentNumber: res.nextDocumentNumber,
+          visitDateUtc: new Date().toISOString().slice(0, 10),
+          accessLevelIds: [],
+        })
+      }
+    } catch (e) {
+      setFormData({
+        firstName: '',
+        lastName: '',
+        personnelNumber: '',
+        employeeNo: '',
+        gender: '',
+        validFrom: '',
+        validTo: '',
+        documentNumber: '',
+        visitDateUtc: new Date().toISOString().slice(0, 10),
+        accessLevelIds: [],
+      })
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки следующего ID')
+    }
   }
 
   function openEditEmployee(item: EmployeeResponse) {
@@ -309,7 +352,7 @@ export function PeopleManagementPage() {
 
   async function handleDelete(item: EmployeeResponse | VisitorResponse) {
     if (!token) return
-    if (!confirm(`Деактивировать ${item.firstName} ${item.lastName}?`)) return
+    if (!confirm(`Удалить ${item.firstName} ${item.lastName} из БД и со всех устройств?`)) return
     try {
       if (tab === 'employees') {
         await apiRequest(`/api/employees/${item.id}`, { method: 'DELETE', token })
@@ -377,6 +420,63 @@ export function PeopleManagementPage() {
     setSyncProgress(0)
   }
 
+  async function openImportModal() {
+    if (!token) return
+    setImportModalOpen(true)
+    setImportResult(null)
+    setImportSelectedDeviceIds([])
+    setError(null)
+    try {
+      const list = await apiRequest<{ id: string; name: string; ipAddress: string }[]>('/api/devices', { token })
+      setDevices(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки устройств')
+    }
+  }
+
+  function closeImportModal() {
+    setImportModalOpen(false)
+    setImportResult(null)
+    setImportSelectedDeviceIds([])
+    setDevices([])
+  }
+
+  function toggleImportDevice(id: string) {
+    setImportSelectedDeviceIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  function selectAllImportDevices() {
+    setImportSelectedDeviceIds(devices.map((d) => d.id))
+  }
+
+  async function runImport() {
+    if (!token || importSelectedDeviceIds.length === 0) return
+    setImportLoading(true)
+    setImportResult(null)
+    setError(null)
+    try {
+      const res = await apiRequest<{
+        importedCount: number
+        skippedCount: number
+        errorCount: number
+        items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+      }>('/api/people/import-from-devices', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ deviceIds: importSelectedDeviceIds }),
+      })
+      setImportResult(res)
+      await loadEmployees()
+      setHasChanges(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка импорта')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
   const list = tab === 'employees' ? filteredEmployees : filteredVisitors
 
   return (
@@ -403,6 +503,9 @@ export function PeopleManagementPage() {
                   Sync
                 </Button>
               )}
+              <Button size="sm" icon="upload" variant="outline" onClick={openImportModal}>
+                Import
+              </Button>
               <Button size="sm" icon="person_add" onClick={openCreateModal}>
                 {tab === 'employees' ? 'Add Employer' : 'Add Visitor'}
               </Button>
@@ -473,7 +576,7 @@ export function PeopleManagementPage() {
 
         {/* People List/Table */}
         <Card noPadding className="overflow-hidden">
-          <div className="hidden md:grid grid-cols-5 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
+          <div className="hidden md:grid md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
             <div className="col-span-2">Identity & Label</div>
             <div>Status</div>
             <div>Access Levels</div>
@@ -507,10 +610,10 @@ export function PeopleManagementPage() {
                 return (
                   <div
                     key={item.id}
-                    className="flex flex-col md:grid grid-cols-5 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group cursor-pointer"
+                    className="flex flex-col md:grid md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group cursor-pointer"
                     onClick={() => navigate(`/people/${tab === 'employees' ? 'employee' : 'visitor'}/${item.id}`)}
                   >
-                    <div className="col-span-2 flex items-center gap-4">
+                    <div className="col-span-2 flex items-center gap-4 min-w-0">
                       <Avatar
                         initials={initials || '?'}
                         variant={item.isActive ? 'primary' : 'neutral'}
@@ -547,7 +650,7 @@ export function PeopleManagementPage() {
                       {item.cardsCount} / {item.facesCount} / {item.fingerprintsCount}
                     </div>
                     <div
-                      className="flex justify-end gap-2 mt-4 md:mt-0"
+                      className="flex justify-end gap-2 mt-4 md:mt-0 md:justify-self-end"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Button
@@ -646,6 +749,101 @@ export function PeopleManagementPage() {
             {syncResult === 'error' && syncError && (
               <div className="rounded-lg bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive whitespace-pre-wrap">
                 {syncError}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {importModalOpen && (
+        <Modal
+          isOpen={importModalOpen}
+          title="Импорт с устройств"
+          onClose={closeImportModal}
+          actions={
+            <>
+              <Button size="sm" variant="outline" onClick={closeImportModal}>
+                {importResult ? 'Закрыть' : 'Отмена'}
+              </Button>
+              {!importResult && (
+                <Button
+                  size="sm"
+                  onClick={runImport}
+                  disabled={importLoading || importSelectedDeviceIds.length === 0}
+                >
+                  {importLoading ? 'Импорт...' : `Импортировать (${importSelectedDeviceIds.length})`}
+                </Button>
+              )}
+            </>
+          }
+        >
+          <div className="space-y-4">
+            {!importResult ? (
+              <>
+                <p className="text-sm text-text-muted">
+                  Выберите устройства, с которых импортировать пользователей (сотрудников и посетителей).
+                </p>
+                {devices.length === 0 ? (
+                  <p className="text-sm text-text-muted">Устройства не найдены.</p>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={selectAllImportDevices}
+                      className="text-xs font-bold text-primary hover:underline"
+                    >
+                      Выбрать все
+                    </button>
+                    <div className="max-h-64 overflow-y-auto space-y-2 border border-border-base rounded-lg p-2">
+                      {devices.map((d) => (
+                        <label
+                          key={d.id}
+                          className="flex items-center gap-3 p-2 rounded hover:bg-slate-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={importSelectedDeviceIds.includes(d.id)}
+                            onChange={() => toggleImportDevice(d.id)}
+                            className="rounded border-border-base text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm font-medium text-text-dark">{d.name}</span>
+                          <span className="text-xs text-text-muted">{d.ipAddress}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex gap-4 text-sm">
+                  <span className="text-green-600 dark:text-green-400">
+                    Импортировано: {importResult.importedCount}
+                  </span>
+                  <span className="text-amber-600 dark:text-amber-400">
+                    Пропущено (дубликаты): {importResult.skippedCount}
+                  </span>
+                  {importResult.errorCount > 0 && (
+                    <span className="text-destructive">Ошибки: {importResult.errorCount}</span>
+                  )}
+                </div>
+                {importResult.items.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto border border-border-base rounded-lg p-2 text-xs space-y-1">
+                    {importResult.items.map((item, i) => (
+                      <div
+                        key={i}
+                        className={
+                          item.success
+                            ? 'text-text-dark'
+                            : 'text-destructive'
+                        }
+                      >
+                        {item.employeeNo} — {item.name} ({item.deviceName})
+                        {item.message && ` — ${item.message}`}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

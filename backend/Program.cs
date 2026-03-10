@@ -848,6 +848,21 @@ app.MapGet("/api/employees", async (
     return Results.Ok(list.Select(MapEmployeeResponse));
 }).RequireAuthorization();
 
+app.MapGet("/api/employees/next-personnel-number", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var numbers = await dbContext.Employees
+        .Where(x => x.PersonnelNumber != null && x.PersonnelNumber != "")
+        .Select(x => x.PersonnelNumber!)
+        .ToListAsync(cancellationToken);
+    var max = 0;
+    foreach (var n in numbers)
+    {
+        if (int.TryParse(n.Trim(), out var val) && val > max)
+            max = val;
+    }
+    return Results.Ok(new { nextPersonnelNumber = (max + 1).ToString() });
+}).RequireAuthorization();
+
 app.MapGet("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var e = await dbContext.Employees
@@ -871,7 +886,21 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
         return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
 
     var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
-    if (personnelNumber != null)
+    if (personnelNumber == null)
+    {
+        var numbers = await dbContext.Employees
+            .Where(x => x.PersonnelNumber != null && x.PersonnelNumber != "")
+            .Select(x => x.PersonnelNumber!)
+            .ToListAsync(cancellationToken);
+        var max = 0;
+        foreach (var n in numbers)
+        {
+            if (int.TryParse(n.Trim(), out var val) && val > max)
+                max = val;
+        }
+        personnelNumber = (max + 1).ToString();
+    }
+    else
     {
         var exists = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == personnelNumber, cancellationToken);
         if (exists)
@@ -1004,13 +1033,38 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
     return Results.Ok(MapEmployeeDetailResponse(updated));
 }).RequireAuthorization();
 
-app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
-    var entity = await dbContext.Employees.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    var entity = await dbContext.Employees
+        .Include(e => e.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .ThenInclude(al => al!.Doors)
+        .Include(e => e.Faces)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
-    entity.IsActive = false;
-    entity.UpdatedUtc = DateTime.UtcNow;
+
+    var employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(entity.EmployeeNo) ? entity.EmployeeNo!.Trim()
+        : !string.IsNullOrWhiteSpace(entity.PersonnelNumber) ? entity.PersonnelNumber!.Trim()
+        : entity.Id.ToString("N")[..Math.Min(32, 32)]);
+
+    var deviceIds = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.DeletePersonFromDeviceAsync(employeeNo, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Delete employee {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, deviceId, result.Message);
+    }
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    foreach (var face in entity.Faces)
+    {
+        var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+        if (File.Exists(fullPath)) File.Delete(fullPath);
+    }
+
+    dbContext.EmployeeAccessLevels.RemoveRange(entity.AccessLevels);
+    dbContext.Employees.Remove(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
 }).RequireAuthorization();
@@ -1099,6 +1153,21 @@ app.MapGet("/api/visitors", async (
     return Results.Ok(list.Select(MapVisitorResponse));
 }).RequireAuthorization();
 
+app.MapGet("/api/visitors/next-document-number", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var numbers = await dbContext.Visitors
+        .Where(x => x.DocumentNumber != null && x.DocumentNumber != "")
+        .Select(x => x.DocumentNumber!)
+        .ToListAsync(cancellationToken);
+    var max = 0;
+    foreach (var n in numbers)
+    {
+        if (int.TryParse(n.Trim(), out var val) && val > max)
+            max = val;
+    }
+    return Results.Ok(new { nextDocumentNumber = (max + 1).ToString() });
+}).RequireAuthorization();
+
 app.MapGet("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var v = await dbContext.Visitors
@@ -1118,12 +1187,28 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
     if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
         return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
 
+    var documentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim();
+    if (documentNumber == null)
+    {
+        var numbers = await dbContext.Visitors
+            .Where(x => x.DocumentNumber != null && x.DocumentNumber != "")
+            .Select(x => x.DocumentNumber!)
+            .ToListAsync(cancellationToken);
+        var max = 0;
+        foreach (var n in numbers)
+        {
+            if (int.TryParse(n.Trim(), out var val) && val > max)
+                max = val;
+        }
+        documentNumber = (max + 1).ToString();
+    }
+
     var entity = new Visitor
     {
         Id = Guid.NewGuid(),
         FirstName = firstName,
         LastName = lastName,
-        DocumentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim(),
+        DocumentNumber = documentNumber,
         VisitDateUtc = request.VisitDateUtc ?? DateTime.UtcNow,
         IsActive = true,
         CreatedUtc = DateTime.UtcNow
@@ -1185,13 +1270,36 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
     return Results.Ok(MapVisitorDetailResponse(updated));
 }).RequireAuthorization();
 
-app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
-    var entity = await dbContext.Visitors.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    var entity = await dbContext.Visitors
+        .Include(v => v.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .ThenInclude(al => al!.Doors)
+        .Include(v => v.Faces)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
-    entity.IsActive = false;
-    entity.UpdatedUtc = DateTime.UtcNow;
+
+    var employeeNo = entity.Id.ToString("N")[..Math.Min(32, 32)];
+
+    var deviceIds = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.DeletePersonFromDeviceAsync(employeeNo, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Delete visitor {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, deviceId, result.Message);
+    }
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    foreach (var face in entity.Faces)
+    {
+        var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+        if (File.Exists(fullPath)) File.Delete(fullPath);
+    }
+
+    dbContext.VisitorAccessLevels.RemoveRange(entity.AccessLevels);
+    dbContext.Visitors.Remove(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
 }).RequireAuthorization();
@@ -1205,6 +1313,28 @@ app.MapPost("/api/visitors/{id:guid}/sync", async (Guid id, SyncToDevicesRequest
         results.Add(new { deviceId, success = result.Success, message = result.Message });
     }
     return Results.Ok(results);
+}).RequireAuthorization();
+
+app.MapPost("/api/people/import-from-devices", async (ImportFromDevicesRequest request, IDevicePersonImportService importService, CancellationToken cancellationToken) =>
+{
+    if (request.DeviceIds is null || request.DeviceIds.Length == 0)
+        return Results.BadRequest(new { message = "Выберите хотя бы одно устройство." });
+    var result = await importService.ImportFromDevicesAsync(request.DeviceIds, cancellationToken);
+    return Results.Ok(new
+    {
+        importedCount = result.ImportedCount,
+        skippedCount = result.SkippedCount,
+        errorCount = result.ErrorCount,
+        items = result.Items.Select(x => new
+        {
+            x.EmployeeNo,
+            x.Name,
+            x.DeviceId,
+            x.DeviceName,
+            x.Success,
+            x.Message
+        })
+    });
 }).RequireAuthorization();
 
 // Cards
@@ -1650,6 +1780,12 @@ static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
     return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
 }
 
+static string TruncateEmployeeNo(string s)
+{
+    if (string.IsNullOrEmpty(s)) return s;
+    return s.Length > 32 ? s[..32] : s;
+}
+
 static bool IsLoopbackRequest(HttpContext httpContext)
 {
     var remoteIp = httpContext.Connection.RemoteIpAddress;
@@ -1737,6 +1873,8 @@ public sealed record UpdateEmployeeRequest(string FirstName, string LastName, st
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, Guid[]? AccessLevelIds);
 public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, bool? IsActive, Guid[]? AccessLevelIds);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
+
+public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds);
 public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
 public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
 public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime VisitDateUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);

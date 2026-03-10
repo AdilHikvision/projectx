@@ -25,10 +25,12 @@
 ### Формат
 - **Request/Response**: JSON (`?format=json`)
 - **Person ID**: `employeeNo` — уникальный идентификатор (до 32 байт)
-- **UserInfo/Record** (POST) — для Face Recognition Terminals (прошивка 2023+):
+- **UserInfo/Record** (POST) — для Face Recognition Terminals и Controllers:
   - `employeeNo`, `name`, `type` (1=активен, 2=неактивен)
-  - `givenName`, `familyName` — имя и фамилия (обязательны для новой прошивки)
-  - `doorRight.doorNo` — массив номеров дверей (1-based)
+  - `userType`, `givenName`, `familyName` — имя и фамилия (обязательны для новой прошивки)
+  - `doorRight` — строка: `"1"` или `"1,2,3"` (номера дверей 1-based)
+  - **RightPlan** — обязателен (иначе MessageParametersLack): массив `[{ doorNo, planTemplateNo: "1" }]`
+  - `localUIRight`, `maxOpenDoorTime`, `userVerifyMode` — для совместимости с Controllers
 
 ---
 

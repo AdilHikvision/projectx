@@ -190,6 +190,7 @@
 
 - **Backend:** сущности Card, Face, Fingerprint; миграция AddCardsFacesFingerprints; EmployeeNo в Employee.
 - **Backend:** IsapiClient (Digest Auth), DevicePersonSyncService — синхронизация UserInfo, CardInfo, Face, Fingerprint на устройства Hikvision через ISAPI.
+- **Backend:** Удаление сотрудника/посетителя — полное удаление из БД и со всех устройств (UserInfoDetail/Delete), включая файлы лиц.
 - **API:** `/api/employees`, `/api/visitors`, `/api/cards`, `/api/faces`, `/api/fingerprints` — полный CRUD + sync endpoints.
 - **Frontend:** PeopleManagementPage — табы Сотрудники/Посетители, CRUD, уровни доступа.
 - **Frontend:** PersonDetailPage (`/people/:type/:id`) — карты, лица, отпечатки с добавлением и синхронизацией на устройства.
