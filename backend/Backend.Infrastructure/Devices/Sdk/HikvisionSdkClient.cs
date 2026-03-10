@@ -145,6 +145,91 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return Task.FromResult(new PullEventsResult(output, unreachable));
     }
 
+    public async Task<int?> TryGetDoorCountViaSdkAsync(string deviceIdentifier, string ipAddress, int port, string username, string password, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            EnsureSdkReady();
+        }
+        catch (DllNotFoundException)
+        {
+            _logger.LogDebug("SDK недоступен, пропускаем получение дверей через SDK");
+            return null;
+        }
+
+        var wasConnected = _sessions.ContainsKey(deviceIdentifier);
+        try
+        {
+            if (!wasConnected)
+            {
+                await ConnectAsync(deviceIdentifier, ipAddress, port, username, password, cancellationToken);
+            }
+
+            if (!_sessions.TryGetValue(deviceIdentifier, out var session))
+                return null;
+
+            var xml = Native.TryGetAcsAbilityXml(session.UserId, _logger);
+            if (string.IsNullOrWhiteSpace(xml))
+                return null;
+
+            var count = ParseDoorCountFromAcsAbility(xml);
+            if (count > 0)
+            {
+                _logger.LogInformation("SDK ACS_ABILITY для {Device}: {Count} дверей", deviceIdentifier, count);
+                return count;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "TryGetDoorCountViaSdk failed for {Device}", deviceIdentifier);
+        }
+        finally
+        {
+            if (!wasConnected)
+            {
+                await DisconnectAsync(deviceIdentifier, cancellationToken);
+            }
+        }
+
+        return null;
+    }
+
+    private static int ParseDoorCountFromAcsAbility(string xml)
+    {
+        try
+        {
+            var doc = XDocument.Parse(xml);
+            var root = doc.Root;
+            if (root == null) return 0;
+
+            var ns = root.GetDefaultNamespace();
+            var acs = root.Descendants().FirstOrDefault(x =>
+                string.Equals(x.Name.LocalName, "AcsAbility", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Name.LocalName, "acsAbility", StringComparison.OrdinalIgnoreCase));
+            if (acs == null) acs = root;
+
+            var doorNum = acs.Descendants().FirstOrDefault(x =>
+                string.Equals(x.Name.LocalName, "maxDoorNum", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Name.LocalName, "doorNum", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Name.LocalName, "doorCount", StringComparison.OrdinalIgnoreCase));
+            if (doorNum != null && int.TryParse(doorNum.Value?.Trim(), out var n) && n > 0)
+                return Math.Min(n, 64);
+
+            var gateNum = acs.Descendants().FirstOrDefault(x =>
+                string.Equals(x.Name.LocalName, "maxGateNum", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(x.Name.LocalName, "gateNum", StringComparison.OrdinalIgnoreCase));
+            if (gateNum != null && int.TryParse(gateNum.Value?.Trim(), out var g) && g > 0)
+                return Math.Min(g, 64);
+        }
+        catch
+        {
+            // ignore parse errors
+        }
+
+        return 0;
+    }
+
     public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1073,18 +1158,22 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         }
 
         var cwd = Directory.GetCurrentDirectory();
-        var baseDir = AppContext.BaseDirectory;
+        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         result.Add(baseDir);
         result.Add(Path.Combine(baseDir, "HCNetSDKCom"));
         if (OperatingSystem.IsWindows())
         {
+            // backend/winSDK/lib — при запуске из backend или после копирования в output
             result.Add(Path.GetFullPath(Path.Combine(cwd, "winSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(cwd, "backend", "winSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(baseDir, "winSDK", "lib")));
             result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "winSDK", "lib")));
-            // HPNetSDK исключён — нужен HCNetSDK (NET_DVR_ActivateDevice)
         }
         else
         {
             result.Add(Path.GetFullPath(Path.Combine(cwd, "linuxSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(cwd, "backend", "linuxSDK", "lib")));
+            result.Add(Path.GetFullPath(Path.Combine(baseDir, "linuxSDK", "lib")));
             result.Add(Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "linuxSDK", "lib")));
         }
 
@@ -1199,6 +1288,34 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         [DllImport(SdkLib)]
         public static extern bool NET_DVR_GetSadpInfoList(int lUserID, ref NET_DVR_SADPINFO_LIST lpSadpInfoList);
+
+        public const uint ACS_ABILITY = 0x801;
+
+        [DllImport(SdkLib, CharSet = CharSet.Ansi)]
+        public static extern bool NET_DVR_GetDeviceAbility(int lUserID, uint dwAbilityType, byte[]? pInBuf, uint dwInLength, byte[] pOutBuf, uint dwOutLength);
+
+        public static string? TryGetAcsAbilityXml(int userId, ILogger logger)
+        {
+            var buf = new byte[8192];
+            try
+            {
+                if (!NET_DVR_GetDeviceAbility(userId, ACS_ABILITY, null, 0, buf, (uint)buf.Length))
+                {
+                    var err = NET_DVR_GetLastError();
+                    logger.LogDebug("NET_DVR_GetDeviceAbility ACS_ABILITY failed, error={Err}", err);
+                    return null;
+                }
+
+                var end = Array.IndexOf(buf, (byte)0);
+                var len = end >= 0 ? end : buf.Length;
+                return Encoding.UTF8.GetString(buf, 0, len).Trim();
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "NET_DVR_GetDeviceAbility failed");
+                return null;
+            }
+        }
 
         /// <summary>Activate inactive device via direct TCP (HCNetSDK). No SADP multicast required.</summary>
         [DllImport(SdkLib, CharSet = CharSet.Ansi)]

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using Backend.Application.Devices;
 using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Persistence;
@@ -110,6 +111,7 @@ public sealed class EventListenerService(
     }
 
     private DateTime _lastReconnectUtc = DateTime.MinValue;
+    private bool _sdkUnavailableLogged;
 
     private async Task TryReconnectOfflineDevicesAsync(CancellationToken cancellationToken)
     {
@@ -144,6 +146,12 @@ public sealed class EventListenerService(
                     device.Password,
                     cancellationToken);
                 logger.LogDebug("Reconnected device {Identifier} ({Ip}:{Port})", device.DeviceIdentifier, device.IpAddress, device.Port);
+            }
+            catch (DllNotFoundException ex) when (!_sdkUnavailableLogged)
+            {
+                _sdkUnavailableLogged = true;
+                logger.LogWarning("Hikvision SDK (hcnetsdk) не найден. Переподключение устройств отключено. Укажите Hikvision:SdkPath в appsettings или скопируйте DLL в папку приложения. {Message}", ex.Message);
+                break;
             }
             catch (Exception ex)
             {

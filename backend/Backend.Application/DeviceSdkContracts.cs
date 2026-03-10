@@ -37,7 +37,8 @@ public sealed record DeviceConnection(
 public sealed record DeviceRealtimeStatus(
     string DeviceIdentifier,
     DeviceConnectivityStatus Status,
-    DateTime? LastSeenUtc);
+    DateTime? LastSeenUtc,
+    string? StatusMessage = null);
 
 public sealed record DeviceEvent(
     string DeviceIdentifier,
@@ -70,11 +71,56 @@ public interface IEventListenerService
 
 public interface IDeviceStatusBroadcaster
 {
-    Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, CancellationToken cancellationToken = default);
+    Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, string? statusMessage = null, CancellationToken cancellationToken = default);
 }
 
 public interface IDeviceArpStatusService
 {
     Task<DeviceRealtimeStatus?> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<DeviceRealtimeStatus>> GetStatusesAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed record DeviceDoor(Guid DeviceId, string DeviceName, int DoorIndex, string? DoorName, string? Status);
+
+public interface IDeviceDoorService
+{
+    Task<IReadOnlyCollection<DeviceDoor>> GetDoorsAsync(Guid? deviceId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Режим управления дверью: открыть, закрыть, всегда открыта, всегда закрыта.</summary>
+public enum DoorControlAction
+{
+    Open,
+    Close,
+    AlwaysOpen,
+    AlwaysClose
+}
+
+public interface IDeviceDoorControlService
+{
+    /// <summary>Выполняет действие над дверью (открыть/закрыть/всегда открыта/всегда закрыта).</summary>
+    Task<(bool Success, string? Message)> ControlDoorAsync(Guid deviceId, int doorIndex, DoorControlAction action, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Результат синхронизации Person/Card/Face/Fingerprint на устройство.</summary>
+public sealed record DeviceSyncResult(bool Success, string? Message);
+
+public interface IDevicePersonSyncService
+{
+    /// <summary>Синхронизирует сотрудника на устройство (UserInfo Record).</summary>
+    Task<DeviceSyncResult> SyncEmployeeAsync(Guid employeeId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует посетителя на устройство (UserInfo Record).</summary>
+    Task<DeviceSyncResult> SyncVisitorAsync(Guid visitorId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует карту на устройство (CardInfo Record).</summary>
+    Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует лицо на устройство (FDLib pictureUpload).</summary>
+    Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует отпечаток на устройство (FingerPrintDownload).</summary>
+    Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет карту с устройства.</summary>
+    Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет лицо с устройства.</summary>
+    Task<DeviceSyncResult> DeleteFaceFromDeviceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет отпечаток с устройства.</summary>
+    Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(string employeeNo, int fingerIndex, Guid deviceId, CancellationToken cancellationToken = default);
 }

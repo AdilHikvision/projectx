@@ -24,6 +24,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<AccessLevelDoor> AccessLevelDoors => Set<AccessLevelDoor>();
     public DbSet<EmployeeAccessLevel> EmployeeAccessLevels => Set<EmployeeAccessLevel>();
     public DbSet<VisitorAccessLevel> VisitorAccessLevels => Set<VisitorAccessLevel>();
+    public DbSet<Card> Cards => Set<Card>();
+    public DbSet<Face> Faces => Set<Face>();
+    public DbSet<Fingerprint> Fingerprints => Set<Fingerprint>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -66,7 +69,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.FirstName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.PersonnelNumber).HasMaxLength(80);
-            entity.HasIndex(x => x.PersonnelNumber).IsUnique();
+            entity.Property(x => x.EmployeeNo).HasMaxLength(32);
+            entity.Property(x => x.Gender).HasMaxLength(16);
+            entity.HasIndex(x => x.PersonnelNumber).IsUnique().HasFilter("PersonnelNumber IS NOT NULL");
+            entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
         });
 
         builder.Entity<Visitor>(entity =>
@@ -111,6 +117,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => new { x.VisitorId, x.AccessLevelId });
             entity.HasOne(x => x.Visitor).WithMany(x => x.AccessLevels).HasForeignKey(x => x.VisitorId);
             entity.HasOne(x => x.AccessLevel).WithMany(x => x.VisitorAccessLevels).HasForeignKey(x => x.AccessLevelId);
+        });
+
+        builder.Entity<Card>(entity =>
+        {
+            entity.ToTable("cards");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.CardNo).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CardNumber).HasMaxLength(120);
+            entity.HasOne(x => x.Employee).WithMany(x => x.Cards).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Visitor).WithMany(x => x.Cards).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.CardNo).IsUnique();
+            entity.HasCheckConstraint("CK_Cards_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+        });
+
+        builder.Entity<Face>(entity =>
+        {
+            entity.ToTable("faces");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FilePath).HasMaxLength(500).IsRequired();
+            entity.HasOne(x => x.Employee).WithMany(x => x.Faces).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Visitor).WithMany(x => x.Faces).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasCheckConstraint("CK_Faces_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+        });
+
+        builder.Entity<Fingerprint>(entity =>
+        {
+            entity.ToTable("fingerprints");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TemplateData).IsRequired();
+            entity.HasOne(x => x.Employee).WithMany(x => x.Fingerprints).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Visitor).WithMany(x => x.Fingerprints).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasCheckConstraint("CK_Fingerprints_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
         });
     }
 }

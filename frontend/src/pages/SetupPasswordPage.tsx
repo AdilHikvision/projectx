@@ -44,6 +44,10 @@ export function SetupPasswordPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    if (!email?.trim()) {
+      setError('Введите email.')
+      return
+    }
     if (password !== confirmPassword) {
       setError('Пароли не совпадают.')
       return
@@ -99,17 +103,17 @@ export function SetupPasswordPage() {
               {error}
             </div>
           )}
-          <div className="space-y-2">
-            <label className="block text-base font-semibold text-text-dark">Email</label>
-            <Input
-              type="email"
-              placeholder="admin@projectx.local"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="py-2 text-sm"
-              required
-            />
-          </div>
+            <div className="space-y-2">
+              <label className="block text-base font-semibold text-text-dark">Email</label>
+              <Input
+                type="email"
+                placeholder="admin@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="py-2 text-sm"
+                required
+              />
+            </div>
 
           <div className="space-y-2">
             <label className="block text-base font-semibold text-text-dark">Новый пароль</label>
@@ -194,7 +198,7 @@ export function SetupPasswordPage() {
               <label className="block text-[10px] font-extrabold text-text-dark tracking-widest uppercase">EMAIL</label>
               <Input
                 type="email"
-                placeholder="admin@projectx.local"
+                placeholder="admin@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="bg-slate-75 border-transparent focus:bg-white text-[15px]"

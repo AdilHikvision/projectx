@@ -182,9 +182,17 @@
 
 ### Planned
 
-- [planned] CRUD для сотрудников и посетителей.
-- [planned] CRUD для карт / отпечатков / лиц.
+- [done] CRUD для сотрудников и посетителей.
+- [done] CRUD для карт / отпечатков / лиц.
 - [planned] Time Attendance (сбор и расчёт).
+
+### CRUD People & Credentials (март 2026)
+
+- **Backend:** сущности Card, Face, Fingerprint; миграция AddCardsFacesFingerprints; EmployeeNo в Employee.
+- **Backend:** IsapiClient (Digest Auth), DevicePersonSyncService — синхронизация UserInfo, CardInfo, Face, Fingerprint на устройства Hikvision через ISAPI.
+- **API:** `/api/employees`, `/api/visitors`, `/api/cards`, `/api/faces`, `/api/fingerprints` — полный CRUD + sync endpoints.
+- **Frontend:** PeopleManagementPage — табы Сотрудники/Посетители, CRUD, уровни доступа.
+- **Frontend:** PersonDetailPage (`/people/:type/:id`) — карты, лица, отпечатки с добавлением и синхронизацией на устройства.
 - [planned] Payroll (базовый расчёт).
 - [planned] Инсталлятор с проверкой SDK/DB/службы.
 - [planned] E2E и интеграционные тесты для device flow и SDK health.

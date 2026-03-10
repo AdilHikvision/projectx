@@ -56,4 +56,9 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
     {
         return Task.FromResult<(bool, string?)>((false, null)); // Mock: no SDK, caller should try SADP
     }
+
+    public Task<int?> TryGetDoorCountViaSdkAsync(string deviceIdentifier, string ipAddress, int port, string username, string password, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<int?>(null); // Mock: SDK недоступен
+    }
 }

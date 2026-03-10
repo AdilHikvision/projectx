@@ -25,6 +25,7 @@ interface Device {
   status: DeviceStatus
   lastSeenUtc?: string | null
   username?: string | null
+  statusMessage?: string | null
 }
 
 interface DeviceStatusResponse {
@@ -32,6 +33,7 @@ interface DeviceStatusResponse {
   deviceIdentifier: string
   status: DeviceStatus
   lastSeenUtc?: string | null
+  statusMessage?: string | null
 }
 
 interface DiscoveredDevice {
@@ -74,6 +76,7 @@ function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
     ...device,
     status: status.status,
     lastSeenUtc: status.lastSeenUtc ?? device.lastSeenUtc,
+    statusMessage: status.statusMessage ?? device.statusMessage,
   }
 }
 
@@ -101,6 +104,7 @@ function applyStatusWithDebounce(
 
 function getOfflineReason(device: Device): string {
   if (device.status !== 'Offline') return ''
+  if (device.statusMessage) return device.statusMessage
   if (!device.lastSeenUtc) return 'Устройство никогда не подключалось'
   try {
     const d = new Date(device.lastSeenUtc)
@@ -239,9 +243,23 @@ export function DevicesPage() {
             skipNegotiation: true,
             transport: HttpTransportType.WebSockets,
           })
-          .withAutomaticReconnect()
-          .configureLogging(LogLevel.Warning)
+          .withAutomaticReconnect({
+            nextRetryDelayInMilliseconds: (retryContext) =>
+              Math.min(1000 * 2 ** retryContext.previousRetryCount, 30000),
+          })
+          .configureLogging(LogLevel.Error)
           .build()
+
+        hub.onreconnecting(() => {
+          setInfo('Переподключение к серверу...')
+        })
+        hub.onreconnected(() => {
+          setInfo(null)
+          fetchStatusesRef.current()
+        })
+        hub.onclose((err) => {
+          if (err) setInfo('Соединение потеряно. Обновление статусов через опрос.')
+        })
 
         hub.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
           const offlineMap = offlineDebounceRef.current

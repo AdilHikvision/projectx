@@ -1,164 +1,604 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/AppLayout'
-import { Card, Badge, Button, Input, Avatar, PageHeader } from '../components/ui'
+import { Card, Badge, Button, Input, Avatar, PageHeader, Modal } from '../components/ui'
+import { useLoading } from '../context/LoadingContext'
+import { apiRequest } from '../lib/api'
 
-const people = [
-  { initials: 'JD', name: 'Johnathan Doe', email: 'j.doe@company.com', status: 'Active' as const, dept: 'Engineering', access: 'Full Access', lastActivity: '2 mins ago', variant: 'primary' as const },
-  { initials: 'JS', name: 'Jane Smith', email: 'jane.smith@design.io', status: 'Pending' as const, dept: 'Marketing', access: 'Office Only', lastActivity: 'Never', variant: 'primary' as const },
-  { initials: 'RB', name: 'Robert Brown', email: 'r.brown@hr.corp', status: 'Disabled' as const, dept: 'HR', access: 'Restricted', lastActivity: 'Yesterday, 4:12 PM', variant: 'neutral' as const },
-  { initials: 'MW', name: 'Michael Wilson', email: 'm.wilson@ops.net', status: 'Active' as const, dept: 'Operations', access: 'Full Access', lastActivity: '5 mins ago', variant: 'primary' as const },
+interface AccessLevelRef {
+  id: string
+  name: string
+}
+
+interface EmployeeResponse {
+  id: string
+  firstName: string
+  lastName: string
+  personnelNumber?: string | null
+  employeeNo?: string | null
+  gender?: string | null
+  validFromUtc?: string | null
+  validToUtc?: string | null
+  isActive: boolean
+  accessLevelNames: string[]
+  cardsCount: number
+  facesCount: number
+  fingerprintsCount: number
+}
+
+interface EmployeeDetailResponse extends EmployeeResponse {
+  accessLevels: AccessLevelRef[]
+  cards: { id: string; cardNo: string; cardNumber?: string | null }[]
+  faces: { id: string; fdid: number }[]
+  fingerprints: { id: string; fingerIndex: number }[]
+}
+
+interface VisitorResponse {
+  id: string
+  firstName: string
+  lastName: string
+  documentNumber?: string | null
+  visitDateUtc: string
+  isActive: boolean
+  accessLevelNames: string[]
+  cardsCount: number
+  facesCount: number
+  fingerprintsCount: number
+}
+
+interface VisitorDetailResponse extends VisitorResponse {
+  accessLevels: AccessLevelRef[]
+  cards: { id: string; cardNo: string; cardNumber?: string | null }[]
+  faces: { id: string; fdid: number }[]
+  fingerprints: { id: string; fingerIndex: number }[]
+}
+
+interface AccessLevel {
+  id: string
+  name: string
+  description?: string | null
+}
+
+type TabType = 'employees' | 'visitors'
+
+const TABS: { value: TabType; label: string }[] = [
+  { value: 'employees', label: 'Employers' },
+  { value: 'visitors', label: 'Visitor' },
 ]
 
 export function PeopleManagementPage() {
+  const navigate = useNavigate()
+  const { token } = useAuth()
+  const { startLoading, stopLoading, isLoading } = useLoading()
+  const [tab, setTab] = useState<TabType>('employees')
+  const [employees, setEmployees] = useState<EmployeeResponse[]>([])
+  const [visitors, setVisitors] = useState<VisitorResponse[]>([])
+  const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [error, setError] = useState<string | null>(null)
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null)
+  const [editingEmployee, setEditingEmployee] = useState<EmployeeDetailResponse | null>(null)
+  const [editingVisitor, setEditingVisitor] = useState<VisitorDetailResponse | null>(null)
+  const [formData, setFormData] = useState({
+    firstName: '',
+    lastName: '',
+    personnelNumber: '',
+    documentNumber: '',
+    visitDateUtc: new Date().toISOString().slice(0, 10),
+    accessLevelIds: [] as string[],
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [hasChanges, setHasChanges] = useState(false)
+  const [syncModalOpen, setSyncModalOpen] = useState(false)
+  const [syncProgress, setSyncProgress] = useState(0)
+  const [syncResult, setSyncResult] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [syncError, setSyncError] = useState<string | null>(null)
+
+  const loadEmployees = useCallback(async () => {
+    if (!token) return
+    setError(null)
+    try {
+      const params = new URLSearchParams()
+      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      if (statusFilter === 'active') params.set('isActive', 'true')
+      if (statusFilter === 'inactive') params.set('isActive', 'false')
+      const list = await apiRequest<EmployeeResponse[]>(`/api/employees?${params}`, { token })
+      setEmployees(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки сотрудников')
+    }
+  }, [token, searchQuery, statusFilter])
+
+  const loadVisitors = useCallback(async () => {
+    if (!token) return
+    setError(null)
+    try {
+      const params = new URLSearchParams()
+      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      if (statusFilter === 'active') params.set('isActive', 'true')
+      if (statusFilter === 'inactive') params.set('isActive', 'false')
+      const list = await apiRequest<VisitorResponse[]>(`/api/visitors?${params}`, { token })
+      setVisitors(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки посетителей')
+    }
+  }, [token, searchQuery, statusFilter])
+
+  const loadAccessLevels = useCallback(async () => {
+    if (!token) return
+    try {
+      const list = await apiRequest<AccessLevel[]>(`/api/access-levels`, { token })
+      setAccessLevels(list)
+    } catch {
+      setAccessLevels([])
+    }
+  }, [token])
+
+  useEffect(() => {
+    loadAccessLevels()
+  }, [loadAccessLevels])
+
+  useEffect(() => {
+    if (!token) return
+    startLoading()
+    if (tab === 'employees') {
+      loadEmployees().finally(stopLoading)
+    } else {
+      loadVisitors().finally(stopLoading)
+    }
+  }, [tab, token, loadEmployees, loadVisitors, startLoading, stopLoading])
+
+  const filteredEmployees = useMemo(() => employees, [employees])
+  const filteredVisitors = useMemo(() => visitors, [visitors])
+
+  const activeCount = useMemo(() => {
+    if (tab === 'employees') return employees.filter((e) => e.isActive).length
+    return visitors.filter((v) => v.isActive).length
+  }, [tab, employees, visitors])
+
+  const totalCount = useMemo(() => {
+    if (tab === 'employees') return employees.length
+    return visitors.length
+  }, [tab, employees, visitors])
+
+  function openCreateModal() {
+    setFormData({
+      firstName: '',
+      lastName: '',
+      personnelNumber: '',
+      employeeNo: '',
+      gender: '',
+      validFrom: '',
+      validTo: '',
+      documentNumber: '',
+      visitDateUtc: new Date().toISOString().slice(0, 10),
+      accessLevelIds: [],
+    })
+    setEditingEmployee(null)
+    setEditingVisitor(null)
+    setModalMode('create')
+  }
+
+  function openEditEmployee(item: EmployeeResponse) {
+    if (!token) return
+    setError(null)
+    apiRequest<EmployeeDetailResponse>(`/api/employees/${item.id}`, { token })
+      .then((detail) => {
+        setEditingEmployee(detail)
+        setEditingVisitor(null)
+        setFormData({
+          firstName: detail.firstName,
+          lastName: detail.lastName,
+          personnelNumber: detail.personnelNumber ?? '',
+          employeeNo: detail.employeeNo ?? '',
+          gender: detail.gender ?? '',
+          validFrom: detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : '',
+          validTo: detail.validToUtc ? detail.validToUtc.slice(0, 10) : '',
+          documentNumber: '',
+          visitDateUtc: new Date().toISOString().slice(0, 10),
+          accessLevelIds: detail.accessLevels.map((a) => a.id),
+        })
+        setModalMode('edit')
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
+  }
+
+  function openEditVisitor(item: VisitorResponse) {
+    if (!token) return
+    setError(null)
+    apiRequest<VisitorDetailResponse>(`/api/visitors/${item.id}`, { token })
+      .then((detail) => {
+        setEditingVisitor(detail)
+        setEditingEmployee(null)
+        setFormData({
+          firstName: detail.firstName,
+          lastName: detail.lastName,
+          personnelNumber: '',
+          employeeNo: '',
+          gender: '',
+          validFrom: '',
+          validTo: '',
+          documentNumber: detail.documentNumber ?? '',
+          visitDateUtc: detail.visitDateUtc.slice(0, 10),
+          accessLevelIds: detail.accessLevels.map((a) => a.id),
+        })
+        setModalMode('edit')
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
+  }
+
+  async function handleSubmit() {
+    if (!token) return
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      if (modalMode === 'create') {
+        if (tab === 'employees') {
+          await apiRequest('/api/employees', {
+            method: 'POST',
+            token,
+            body: JSON.stringify({
+              firstName: formData.firstName.trim(),
+              lastName: formData.lastName.trim(),
+              personnelNumber: formData.personnelNumber.trim() || null,
+              employeeNo: formData.employeeNo.trim() || null,
+              gender: formData.gender.trim() || null,
+              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
+              accessLevelIds: formData.accessLevelIds,
+            }),
+          })
+          await loadEmployees()
+          setHasChanges(true)
+        } else {
+          await apiRequest('/api/visitors', {
+            method: 'POST',
+            token,
+            body: JSON.stringify({
+              firstName: formData.firstName.trim(),
+              lastName: formData.lastName.trim(),
+              documentNumber: formData.documentNumber.trim() || null,
+              visitDateUtc: formData.visitDateUtc + 'T00:00:00Z',
+              accessLevelIds: formData.accessLevelIds,
+            }),
+          })
+          await loadVisitors()
+        }
+      } else {
+        if (editingEmployee) {
+          await apiRequest(`/api/employees/${editingEmployee.id}`, {
+            method: 'PUT',
+            token,
+            body: JSON.stringify({
+              firstName: formData.firstName.trim(),
+              lastName: formData.lastName.trim(),
+              personnelNumber: formData.personnelNumber.trim() || null,
+              employeeNo: formData.employeeNo.trim() || null,
+              gender: formData.gender.trim() || null,
+              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
+              accessLevelIds: formData.accessLevelIds,
+            }),
+          })
+          await loadEmployees()
+          setHasChanges(true)
+        } else if (editingVisitor) {
+          await apiRequest(`/api/visitors/${editingVisitor.id}`, {
+            method: 'PUT',
+            token,
+            body: JSON.stringify({
+              firstName: formData.firstName.trim(),
+              lastName: formData.lastName.trim(),
+              documentNumber: formData.documentNumber.trim() || null,
+              visitDateUtc: formData.visitDateUtc + 'T00:00:00Z',
+              accessLevelIds: formData.accessLevelIds,
+            }),
+          })
+          await loadVisitors()
+        }
+      }
+      setModalMode(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сохранения')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function handleDelete(item: EmployeeResponse | VisitorResponse) {
+    if (!token) return
+    if (!confirm(`Деактивировать ${item.firstName} ${item.lastName}?`)) return
+    try {
+      if (tab === 'employees') {
+        await apiRequest(`/api/employees/${item.id}`, { method: 'DELETE', token })
+        await loadEmployees()
+        setHasChanges(true)
+      } else {
+        await apiRequest(`/api/visitors/${item.id}`, { method: 'DELETE', token })
+        await loadVisitors()
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка удаления')
+    }
+  }
+
+  function toggleAccessLevel(id: string) {
+    setFormData((prev) => ({
+      ...prev,
+      accessLevelIds: prev.accessLevelIds.includes(id)
+        ? prev.accessLevelIds.filter((x) => x !== id)
+        : [...prev.accessLevelIds, id],
+    }))
+  }
+
+  async function runSync() {
+    if (!token) return
+    setSyncModalOpen(true)
+    setSyncResult('loading')
+    setSyncError(null)
+    setSyncProgress(0)
+
+    const progressInterval = setInterval(() => {
+      setSyncProgress((p) => Math.min(p + 8, 90))
+    }, 200)
+
+    try {
+      const res = await apiRequest<{ results: { success: boolean; deviceName: string; error?: string }[] }>(
+        '/api/sync/employees',
+        { method: 'POST', token }
+      )
+      clearInterval(progressInterval)
+      setSyncProgress(100)
+
+      const failed = res.results?.filter((r) => !r.success) ?? []
+      if (failed.length > 0) {
+        setSyncResult('error')
+        setSyncError(
+          failed.map((f) => `Устройство «${f.deviceName}»: ${f.error ?? 'Ошибка'}`).join('\n')
+        )
+      } else {
+        setSyncResult('success')
+        setHasChanges(false)
+      }
+    } catch (e) {
+      clearInterval(progressInterval)
+      setSyncProgress(100)
+      setSyncResult('error')
+      setSyncError(e instanceof Error ? e.message : 'Ошибка синхронизации')
+    }
+  }
+
+  function closeSyncModal() {
+    setSyncModalOpen(false)
+    setSyncResult('idle')
+    setSyncError(null)
+    setSyncProgress(0)
+  }
+
+  const list = tab === 'employees' ? filteredEmployees : filteredVisitors
+
   return (
     <AppLayout>
-      <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-
-        {/* Top Actions */}
-        {/* Unified Page Header */}
+      <div className="p-6 md:p-8 space-y-8 flex-1 overflow-y-auto">
         <PageHeader
-          title="Users & Visitors"
-          description="Manage digital credentials and physical access points for your organization."
+          title="People"
+          description="Manage employees and visitors with their access levels."
           actions={
-            <>
-              <Button variant="outline" size="sm" icon="file_download">
-                Export
+            <div className="flex items-center gap-2">
+              {tab === 'employees' && (
+                <Button
+                  size="sm"
+                  icon="sync"
+                  variant={hasChanges ? 'secondary' : 'outline'}
+                  disabled={!hasChanges}
+                  onClick={() => runSync()}
+                  className={
+                    hasChanges
+                      ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-400'
+                      : 'bg-white text-slate-400 border-slate-200'
+                  }
+                >
+                  Sync
+                </Button>
+              )}
+              <Button size="sm" icon="person_add" onClick={openCreateModal}>
+                {tab === 'employees' ? 'Add Employer' : 'Add Visitor'}
               </Button>
-              <Button size="sm" icon="person_add">
-                Add User
-              </Button>
-            </>
+            </div>
           }
         />
 
-        {/* Filters */}
-        <Card noPadding className="flex flex-wrap items-center gap-3 p-2">
-          <Input
-            icon="search"
-            placeholder="Search by name, email, or department..."
-            containerClassName="flex-1 min-w-[280px]"
-            className="border-none bg-slate-75"
-          />
-          <div className="h-8 w-px bg-border-base mx-1 hidden lg:block"></div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="secondary">All Users</Button>
-            <Button size="sm" variant="ghost">Employees</Button>
-            <Button size="sm" variant="ghost">Visitors</Button>
+        {error && (
+          <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10 max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {error}
           </div>
-          <div className="flex items-center gap-2 ml-auto">
-            <Button variant="outline" size="sm" className="gap-1 font-semibold text-text-base">
-              Status <span className="material-symbols-outlined text-[12px]">expand_more</span>
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1 font-semibold text-text-base">
-              Department <span className="material-symbols-outlined text-[12px]">expand_more</span>
-            </Button>
-          </div>
-        </Card>
+        )}
 
-        {/* Table Container */}
-        <Card noPadding className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px]">
-            <thead>
-              <tr className="bg-slate-75 border-b border-border-base">
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Name & Email</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Department</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Access Level</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider">Last Activity</th>
-                <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase tracking-wider text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-light">
-              {people.map((person, idx) => (
-                <tr key={idx} className="hover:bg-slate-75 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <Avatar initials={person.initials} variant={person.variant} size="md" />
+        {/* Search */}
+        <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+          <div className="flex-1 relative">
+            <Input
+              placeholder="Поиск по имени, табельному номеру, документу..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              icon="search"
+              className="pr-9"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
+                aria-label="Очистить поиск"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2 items-center">
+            <span className="text-xs font-bold text-text-muted uppercase">Статус:</span>
+            <button
+              type="button"
+              onClick={() =>
+                setStatusFilter(
+                  statusFilter === 'all' ? 'active' : statusFilter === 'active' ? 'inactive' : 'all'
+                )
+              }
+              className="px-2 py-1 rounded text-xs font-bold bg-slate-75 text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
+            >
+              {statusFilter === 'all' ? 'Все' : statusFilter === 'active' ? 'Активные' : 'Неактивные'}
+            </button>
+          </div>
+        </div>
+
+        {/* Type filter tabs */}
+        <div className="flex border-b border-border-light overflow-x-auto no-scrollbar gap-8">
+          {TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTab(t.value)}
+              className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${
+                tab === t.value
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-dark'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* People List/Table */}
+        <Card noPadding className="overflow-hidden">
+          <div className="hidden md:grid grid-cols-5 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
+            <div className="col-span-2">Identity & Label</div>
+            <div>Status</div>
+            <div>Access Levels</div>
+            <div>Cards / Faces / FPs</div>
+            <div className="text-right">Actions</div>
+          </div>
+
+          <div className="divide-y divide-border-light">
+            {isLoading ? (
+              <div className="p-12 text-center text-text-muted italic text-sm">Загрузка...</div>
+            ) : list.length === 0 ? (
+              <div className="p-12 text-center text-text-muted italic text-sm">
+                {tab === 'employees'
+                  ? employees.length === 0
+                    ? 'No employers registered. Use Add Employer to create.'
+                    : 'No employers match your search or filter.'
+                  : visitors.length === 0
+                    ? 'No visitors registered. Use Add Visitor to create.'
+                    : 'No visitors match your search or filter.'}
+              </div>
+            ) : (
+              list.map((item) => {
+                const name = `${item.firstName} ${item.lastName}`
+                const initials = `${item.firstName[0] || ''}${item.lastName[0] || ''}`.toUpperCase()
+                const secondary =
+                  tab === 'employees'
+                    ? (item as EmployeeResponse).personnelNumber
+                    : (item as VisitorResponse).documentNumber
+                const visitDate =
+                  tab === 'visitors' ? (item as VisitorResponse).visitDateUtc?.slice(0, 10) : null
+                return (
+                  <div
+                    key={item.id}
+                    className="flex flex-col md:grid grid-cols-5 items-center px-6 py-5 md:px-8 hover:bg-slate-75/50 transition-colors relative group cursor-pointer"
+                    onClick={() => navigate(`/people/${tab === 'employees' ? 'employee' : 'visitor'}/${item.id}`)}
+                  >
+                    <div className="col-span-2 flex items-center gap-4">
+                      <Avatar
+                        initials={initials || '?'}
+                        variant={item.isActive ? 'primary' : 'neutral'}
+                        size="lg"
+                        className="!rounded-xl shadow-sm"
+                      />
                       <div>
-                        <div className="text-sm font-bold text-text-dark">{person.name}</div>
-                        <div className="text-xs text-text-muted">{person.email}</div>
+                        <p className="text-base font-black text-text-dark group-hover:text-primary transition-colors">
+                          {name}
+                        </p>
+                        <p className="text-xs font-bold text-text-muted mt-0.5 tracking-tight uppercase">
+                          {secondary ?? '—'}
+                          {visitDate ? ` • ${visitDate}` : ''}
+                        </p>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <Badge
-                      dot
-                      variant={person.status === 'Active' ? 'success' : person.status === 'Pending' ? 'warning' : 'neutral'}
+                    <div className="flex items-center gap-6 md:block">
+                      <Badge dot variant={item.isActive ? 'success' : 'neutral'}>
+                        {item.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </div>
+                    <div className="hidden md:block">
+                      <div className="flex flex-wrap gap-1">
+                        {item.accessLevelNames.length > 0
+                          ? item.accessLevelNames.map((n) => (
+                              <Badge key={n} variant="neutral">
+                                {n}
+                              </Badge>
+                            ))
+                          : '—'}
+                      </div>
+                    </div>
+                    <div className="hidden md:block text-sm text-text-muted">
+                      {item.cardsCount} / {item.facesCount} / {item.fingerprintsCount}
+                    </div>
+                    <div
+                      className="flex justify-end gap-2 mt-4 md:mt-0"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {person.status}
-                    </Badge>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-text-base">{person.dept}</td>
-                  <td className="px-6 py-4">
-                    <Badge variant="neutral">{person.access}</Badge>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-text-muted">{person.lastActivity}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="sm" icon="edit" className="p-2 h-auto" />
-                      <Button variant="ghost" size="sm" icon="more_vert" className="p-2 h-auto" />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {/* Additional Guest Row */}
-              <tr className="hover:bg-slate-75 transition-colors group">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <Avatar icon="badge" variant="neutral" size="md" className="bg-primary/10 text-primary" />
-                    <div>
-                      <div className="text-sm font-bold text-text-dark">Guest Visitor</div>
-                      <div className="text-xs text-text-muted">Contractor #402</div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        icon="edit"
+                        className="text-text-muted hover:text-text-dark"
+                        onClick={() =>
+                          tab === 'employees'
+                            ? openEditEmployee(item as EmployeeResponse)
+                            : openEditVisitor(item as VisitorResponse)
+                        }
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        icon="delete"
+                        className="text-text-muted hover:text-error-text hover:bg-error-bg"
+                        onClick={() => handleDelete(item)}
+                      />
                     </div>
                   </div>
-                </td>
-                <td className="px-6 py-4">
-                  <Badge dot variant="success">Active</Badge>
-                </td>
-                <td className="px-6 py-4 text-sm text-text-base">External</td>
-                <td className="px-6 py-4">
-                  <Badge variant="primary">Temporary</Badge>
-                </td>
-                <td className="px-6 py-4 text-sm text-text-muted">Today, 9:00 AM</td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" icon="schedule" className="p-2 h-auto" />
-                    <Button variant="ghost" size="sm" icon="more_vert" className="p-2 h-auto" />
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                )
+              })
+            )}
+          </div>
 
-          {/* Pagination */}
-          <div className="px-6 py-4 bg-slate-75 border-t border-border-base flex items-center justify-between">
-            <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest whitespace-nowrap">SHOWING 1-5 OF 24 RESULTS</p>
-            <div className="flex gap-1.5">
-              <Button variant="outline" size="sm" icon="chevron_left" disabled />
-              <Button size="sm" className="text-[10px]">1</Button>
-              <Button variant="ghost" size="sm" className="text-[10px] text-text-base">2</Button>
-              <Button variant="outline" size="sm" icon="chevron_right" />
-            </div>
+          <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
+            <p className="text-xs font-black text-text-muted uppercase tracking-widest">
+              {list.length} of {tab === 'employees' ? employees.length : visitors.length} records, {activeCount} active
+            </p>
           </div>
         </Card>
 
-        {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
             <div className="size-12 rounded-full bg-success-bg text-success-text flex items-center justify-center">
               <span className="material-symbols-outlined">person_check</span>
             </div>
             <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Active Today</p>
-              <p className="text-2xl font-black text-text-dark">18</p>
+              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Активных</p>
+              <p className="text-2xl font-black text-text-dark">{activeCount}</p>
             </div>
           </Card>
           <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
             <div className="size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined">group_add</span>
+              <span className="material-symbols-outlined">badge</span>
             </div>
             <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Pending Invites</p>
-              <p className="text-2xl font-black text-text-dark">4</p>
+              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Сотрудников</p>
+              <p className="text-2xl font-black text-text-dark">{employees.length}</p>
             </div>
           </Card>
           <Card className="flex items-center gap-4 transition-all hover:border-primary/20">
@@ -166,13 +606,180 @@ export function PeopleManagementPage() {
               <span className="material-symbols-outlined">meeting_room</span>
             </div>
             <div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Active Visitors</p>
-              <p className="text-2xl font-black text-text-dark">2</p>
+              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Посетителей</p>
+              <p className="text-2xl font-black text-text-dark">{visitors.length}</p>
             </div>
           </Card>
         </div>
-
       </div>
+
+      {syncModalOpen && (
+        <Modal
+          isOpen={syncModalOpen}
+          title="Синхронизация с устройствами"
+          onClose={closeSyncModal}
+          actions={
+            syncResult !== 'loading' ? (
+              <Button size="sm" onClick={closeSyncModal}>
+                Закрыть
+              </Button>
+            ) : undefined
+          }
+        >
+          <div className="space-y-4">
+            {syncResult === 'loading' && (
+              <div className="-mx-6 -mt-6 mb-4 h-1.5 bg-slate-100 overflow-hidden rounded-t-xl">
+                <div
+                  className="h-full bg-green-500 transition-all duration-300"
+                  style={{ width: `${syncProgress}%` }}
+                />
+              </div>
+            )}
+            {syncResult === 'loading' && (
+              <p className="text-sm text-text-muted">Загрузка изменений на устройства...</p>
+            )}
+            {syncResult === 'success' && (
+              <div className="rounded-lg bg-green-500/10 border border-green-500/30 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+                Синхронизация успешна
+              </div>
+            )}
+            {syncResult === 'error' && syncError && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive whitespace-pre-wrap">
+                {syncError}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {modalMode && (
+        <Modal
+          isOpen={!!modalMode}
+          title={modalMode === 'create' ? (tab === 'employees' ? 'Добавить сотрудника' : 'Добавить посетителя') : 'Редактировать'}
+          onClose={() => setModalMode(null)}
+          actions={
+            <>
+              <Button variant="outline" size="sm" onClick={() => setModalMode(null)}>
+                Отмена
+              </Button>
+              <Button size="sm" onClick={handleSubmit} disabled={isSubmitting}>
+                {isSubmitting ? 'Сохранение...' : 'Сохранить'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs font-bold text-text-muted uppercase mb-1">Имя</p>
+                <Input
+                  value={formData.firstName}
+                  onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
+                  placeholder="Имя"
+                />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-text-muted uppercase mb-1">Фамилия</p>
+                <Input
+                  value={formData.lastName}
+                  onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
+                  placeholder="Фамилия"
+                />
+              </div>
+            </div>
+            {tab === 'employees' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Табельный номер</p>
+                  <Input
+                    value={formData.personnelNumber}
+                    onChange={(e) => setFormData((p) => ({ ...p, personnelNumber: e.target.value }))}
+                    placeholder="Опционально"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Employee ID</p>
+                  <Input
+                    value={formData.employeeNo}
+                    onChange={(e) => setFormData((p) => ({ ...p, employeeNo: e.target.value }))}
+                    placeholder="Идентификатор для устройств Hikvision (до 32 символов)"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Пол</p>
+                  <select
+                    value={formData.gender}
+                    onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
+                    className="w-full rounded-lg border border-border-base bg-slate-50 px-3 py-2 text-sm text-text-dark focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">Не указан</option>
+                    <option value="male">Мужской</option>
+                    <option value="female">Женский</option>
+                    <option value="unknown">Неизвестно</option>
+                  </select>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Период действия (от)</p>
+                  <Input
+                    type="date"
+                    value={formData.validFrom}
+                    onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Период действия (до)</p>
+                  <Input
+                    type="date"
+                    value={formData.validTo}
+                    onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Номер документа</p>
+                  <Input
+                    value={formData.documentNumber}
+                    onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
+                    placeholder="Опционально"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-text-muted uppercase mb-1">Дата визита</p>
+                  <Input
+                    type="date"
+                    value={formData.visitDateUtc}
+                    onChange={(e) => setFormData((p) => ({ ...p, visitDateUtc: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+            <div>
+              <p className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Уровни доступа</p>
+              <div className="flex flex-wrap gap-2">
+                {accessLevels.map((al) => (
+                  <label
+                    key={al.id}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border-base cursor-pointer hover:bg-slate-75"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formData.accessLevelIds.includes(al.id)}
+                      onChange={() => toggleAccessLevel(al.id)}
+                      className="rounded"
+                    />
+                    <span className="text-sm">{al.name}</span>
+                  </label>
+                ))}
+                {accessLevels.length === 0 && (
+                  <span className="text-sm text-text-muted">Нет уровней доступа</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
     </AppLayout>
   )
 }

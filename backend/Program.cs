@@ -5,6 +5,7 @@ using Backend.Application.Security;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure;
+using Backend.Infrastructure.Devices;
 using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Identity;
 using Backend.Infrastructure.Persistence;
@@ -220,6 +221,9 @@ app.MapPost("/api/auth/login", async (
 
 app.MapGet("/api/auth/setup-required", async (UserManager<ApplicationUser> userManager, CancellationToken cancellationToken) =>
 {
+    var hasUsers = await userManager.Users.AnyAsync(cancellationToken);
+    if (!hasUsers)
+        return Results.Ok(new { required = true, email = "" });
     var adminWithSetup = await userManager.Users
         .Where(u => u.RequiresPasswordSetup)
         .Select(u => new { u.Email })
@@ -232,6 +236,7 @@ app.MapGet("/api/auth/setup-required", async (UserManager<ApplicationUser> userM
 app.MapPost("/api/auth/setup-admin-password", async (
     SetupAdminPasswordRequest request,
     UserManager<ApplicationUser> userManager,
+    RoleManager<IdentityRole<Guid>> roleManager,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
@@ -241,9 +246,47 @@ app.MapPost("/api/auth/setup-admin-password", async (
     if (request.Password.Length < 8)
         return Results.BadRequest(new { message = "Password must be at least 8 characters." });
 
-    var user = await userManager.FindByEmailAsync(request.Email);
-    if (user is null || !user.RequiresPasswordSetup)
-        return Results.BadRequest(new { message = "Setup is not required for this user." });
+    var newEmail = request.Email!.Trim();
+    var user = await userManager.Users
+        .FirstOrDefaultAsync(u => u.RequiresPasswordSetup, cancellationToken);
+
+    if (user is null)
+    {
+        if (await userManager.Users.AnyAsync(cancellationToken))
+            return Results.BadRequest(new { message = "Setup is not required for this user." });
+        var emailExists = await userManager.FindByEmailAsync(newEmail);
+        if (emailExists is not null)
+            return Results.BadRequest(new { message = "This email is already in use." });
+        foreach (var role in SystemRoles.All)
+        {
+            if (!await roleManager.RoleExistsAsync(role))
+                await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+        }
+        user = new ApplicationUser
+        {
+            Id = Guid.NewGuid(),
+            UserName = newEmail,
+            Email = newEmail,
+            EmailConfirmed = true,
+            FirstName = "Administrator",
+            LastName = "",
+            RequiresPasswordSetup = false
+        };
+        var createResult = await userManager.CreateAsync(user, request.Password);
+        if (!createResult.Succeeded)
+        {
+            var err = string.Join("; ", createResult.Errors.Select(e => e.Description));
+            return Results.BadRequest(new { message = err });
+        }
+        await userManager.AddToRoleAsync(user, SystemRoles.Admin);
+        return Results.Ok(new { message = "Password set successfully." });
+    }
+
+    var emailTaken = await userManager.FindByEmailAsync(newEmail);
+    if (emailTaken is not null && emailTaken.Id != user.Id)
+        return Results.BadRequest(new { message = "This email is already in use." });
+    user.Email = newEmail;
+    user.UserName = newEmail;
 
     var result = await userManager.RemovePasswordAsync(user);
     if (result.Succeeded)
@@ -331,6 +374,37 @@ app.MapPost("/api/devices/activate", async (
     return sadpSuccess ? Results.Ok(new { success = true, message = "Activation sent (SADP)." }) : Results.BadRequest(new { message = sadpMessage ?? "Activation failed." });
 }).AllowAnonymous();
 
+app.MapGet("/api/devices/doors", async (
+    Guid? deviceId,
+    IDeviceDoorService doorService,
+    CancellationToken cancellationToken) =>
+{
+    var doors = await doorService.GetDoorsAsync(deviceId, cancellationToken);
+    return Results.Ok(doors);
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/{deviceId:guid}/doors/{doorIndex:int}/control", async (
+    Guid deviceId,
+    int doorIndex,
+    DoorControlRequest request,
+    IDeviceDoorControlService doorControlService,
+    CancellationToken cancellationToken) =>
+{
+    var action = request.Action?.ToLowerInvariant() switch
+    {
+        "open" => DoorControlAction.Open,
+        "close" => DoorControlAction.Close,
+        "alwaysopen" or "always_open" => DoorControlAction.AlwaysOpen,
+        "alwaysclose" or "always_close" => DoorControlAction.AlwaysClose,
+        _ => (DoorControlAction?)null
+    };
+    if (action is null)
+        return Results.BadRequest(new { message = "Action must be one of: open, close, alwaysOpen, alwaysClose." });
+
+    var (success, message) = await doorControlService.ControlDoorAsync(deviceId, doorIndex, action.Value, cancellationToken);
+    return success ? Results.Ok(new { success = true }) : Results.BadRequest(new { message = message ?? "Command failed." });
+}).RequireAuthorization();
+
 app.MapGet("/api/devices", async (
     AppDbContext dbContext,
     IDeviceArpStatusService arpStatusService,
@@ -341,7 +415,7 @@ app.MapGet("/api/devices", async (
     return Results.Ok(devices.Select(d =>
     {
         var st = statuses.GetValueOrDefault(d.DeviceIdentifier);
-        return MapDeviceResponse(d, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc);
+        return MapDeviceResponse(d, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage);
     }));
 }).RequireAuthorization();
 
@@ -357,7 +431,7 @@ app.MapGet("/api/devices/{id:guid}", async (
         return Results.NotFound();
     }
     var st = await arpStatusService.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
-    return Results.Ok(MapDeviceResponse(device, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+    return Results.Ok(MapDeviceResponse(device, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage));
 }).RequireAuthorization();
 
 app.MapPost("/api/devices", async (
@@ -373,6 +447,24 @@ app.MapPost("/api/devices", async (
         return Results.Conflict(new { message = "Device with this identifier already exists." });
     }
 
+    var username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim();
+    var password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password;
+    if (string.IsNullOrEmpty(password))
+    {
+        return Results.BadRequest(new { message = "Пароль обязателен." });
+    }
+
+    var (valid, verifyMessage) = await DeviceCredentialVerifier.VerifyAsync(
+        request.IpAddress,
+        request.Port,
+        username,
+        password,
+        cancellationToken);
+    if (!valid)
+    {
+        return Results.BadRequest(new { message = verifyMessage ?? "Не удалось проверить учётные данные." });
+    }
+
     var device = new Device
     {
         Id = Guid.NewGuid(),
@@ -382,8 +474,8 @@ app.MapPost("/api/devices", async (
         Port = request.Port,
         Location = request.Location,
         DeviceType = request.DeviceType,
-        Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim(),
-        Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password,
+        Username = username,
+        Password = password,
         DeviceStatusId = SeedIds.DeviceStatusOffline,
         CreatedUtc = DateTime.UtcNow
     };
@@ -464,7 +556,7 @@ app.MapPut("/api/devices/{id:guid}", async (
 
     var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
     var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage));
 }).RequireAuthorization();
 
 app.MapDelete("/api/devices/{id:guid}", async (
@@ -506,7 +598,7 @@ app.MapPost("/api/devices/{id:guid}/connect", async (
     await connectionManager.ConnectAsync(device.DeviceIdentifier, device.IpAddress, device.Port, device.Username, device.Password, cancellationToken);
     var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
     var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage));
 }).RequireAuthorization();
 
 app.MapPost("/api/devices/{id:guid}/disconnect", async (
@@ -525,7 +617,7 @@ app.MapPost("/api/devices/{id:guid}/disconnect", async (
     await connectionManager.DisconnectAsync(device.DeviceIdentifier, cancellationToken);
     var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
     var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
-    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc));
+    return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage));
 }).RequireAuthorization();
 
 app.MapGet("/api/devices/{id:guid}/status", async (
@@ -543,13 +635,36 @@ app.MapGet("/api/devices/{id:guid}/status", async (
     var status = await arpStatusService.GetStatusAsync(device.DeviceIdentifier, cancellationToken);
     if (status is null)
     {
-        return Results.Ok(new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null));
+        return Results.Ok(new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null, null));
     }
     return Results.Ok(new DeviceStatusResponse(
         device.Id,
         device.DeviceIdentifier,
         MapConnectivityStatus(status.Status),
-        status.LastSeenUtc));
+        status.LastSeenUtc,
+        status.StatusMessage));
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/isapi-test", async (
+    Guid id,
+    AppDbContext dbContext,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.FindAsync([id], cancellationToken);
+    if (device is null) return Results.NotFound();
+
+    var username = configuration["Hikvision:Username"] ?? "admin";
+    var password = (configuration["Hikvision:Password"] ?? "").Trim();
+    if (string.IsNullOrEmpty(password)) password = "12345";
+    var cred = new NetworkCredential(
+        string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
+        string.IsNullOrWhiteSpace(device.Password) ? password : device.Password);
+
+    var client = new IsapiClient(device.IpAddress, device.Port, cred.UserName ?? "admin", cred.Password ?? "", TimeSpan.FromSeconds(10));
+    var (success, content, error) = await client.GetAsync("ISAPI/System/deviceInfo?format=json", cancellationToken);
+
+    return Results.Ok(new { success, error, deviceAddress = $"{device.IpAddress}:{device.Port}", contentLength = content?.Length ?? 0 });
 }).RequireAuthorization();
 
 app.MapGet("/api/devices/statuses", async (
@@ -572,10 +687,11 @@ app.MapGet("/api/devices/statuses", async (
                 device.Id,
                 device.DeviceIdentifier,
                 MapConnectivityStatus(realtime.Status),
-                realtime.LastSeenUtc);
+                realtime.LastSeenUtc,
+                realtime.StatusMessage);
         }
 
-        return new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null);
+        return new DeviceStatusResponse(device.Id, device.DeviceIdentifier, "Offline", null, null);
     });
 
     return Results.Ok(payload);
@@ -702,6 +818,654 @@ app.MapDelete("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbCon
     dbContext.AccessLevels.Remove(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
+}).RequireAuthorization();
+
+// Employees
+app.MapGet("/api/employees", async (
+    string? search,
+    bool? isActive,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var query = dbContext.Employees.AsNoTracking()
+        .Include(e => e.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Cards)
+        .Include(e => e.Faces)
+        .Include(e => e.Fingerprints)
+        .AsQueryable();
+    if (isActive.HasValue)
+        query = query.Where(e => e.IsActive == isActive.Value);
+    if (!string.IsNullOrWhiteSpace(search))
+    {
+        var s = search.Trim().ToLower();
+        query = query.Where(e =>
+            (e.FirstName != null && e.FirstName.ToLower().Contains(s)) ||
+            (e.LastName != null && e.LastName.ToLower().Contains(s)) ||
+            (e.PersonnelNumber != null && e.PersonnelNumber.ToLower().Contains(s)));
+    }
+    var list = await query.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(MapEmployeeResponse));
+}).RequireAuthorization();
+
+app.MapGet("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var e = await dbContext.Employees
+        .AsNoTracking()
+        .Include(x => x.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .Include(x => x.Cards)
+        .Include(x => x.Faces)
+        .Include(x => x.Fingerprints)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (e is null)
+        return Results.NotFound();
+    return Results.Ok(MapEmployeeDetailResponse(e));
+}).RequireAuthorization();
+
+app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    var firstName = (request.FirstName ?? "").Trim();
+    var lastName = (request.LastName ?? "").Trim();
+    if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
+        return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
+
+    var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
+    if (personnelNumber != null)
+    {
+        var exists = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == personnelNumber, cancellationToken);
+        if (exists)
+            return Results.Conflict(new { message = "Сотрудник с таким табельным номером уже существует." });
+    }
+
+    var employeeNo = string.IsNullOrWhiteSpace(request.EmployeeNo) ? personnelNumber : request.EmployeeNo.Trim();
+    if (employeeNo != null)
+    {
+        var exists = await dbContext.Employees.AnyAsync(x => x.EmployeeNo == employeeNo, cancellationToken);
+        if (exists)
+            return Results.Conflict(new { message = "Сотрудник с таким Employee ID уже существует." });
+    }
+
+    var entity = new Employee
+    {
+        Id = Guid.NewGuid(),
+        FirstName = firstName,
+        LastName = lastName,
+        PersonnelNumber = personnelNumber,
+        EmployeeNo = employeeNo ?? personnelNumber,
+        Gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim().ToLowerInvariant(),
+        ValidFromUtc = request.ValidFromUtc,
+        ValidToUtc = request.ValidToUtc,
+        IsActive = true,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Employees.Add(entity);
+
+    if (request.AccessLevelIds?.Length > 0)
+    {
+        foreach (var alId in request.AccessLevelIds)
+        {
+            if (await dbContext.AccessLevels.AnyAsync(x => x.Id == alId, cancellationToken))
+                dbContext.EmployeeAccessLevels.Add(new EmployeeAccessLevel { EmployeeId = entity.Id, AccessLevelId = alId });
+        }
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var deviceIds = request.AccessLevelIds?.Length > 0
+        ? await dbContext.AccessLevelDoors
+            .Where(d => request.AccessLevelIds.Contains(d.AccessLevelId))
+            .Select(d => d.DeviceId)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+        : [];
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.SyncEmployeeAsync(entity.Id, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Синхронизация сотрудника {EmployeeId} на устройство {DeviceId}: {Message}", entity.Id, deviceId, result.Message);
+    }
+
+    var created = await dbContext.Employees
+        .Include(e => e.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
+        .FirstAsync(x => x.Id == entity.Id, cancellationToken);
+    return Results.Created($"/api/employees/{entity.Id}", MapEmployeeDetailResponse(created));
+}).RequireAuthorization();
+
+app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Employees
+        .Include(e => e.AccessLevels)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    var firstName = (request.FirstName ?? "").Trim();
+    var lastName = (request.LastName ?? "").Trim();
+    if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
+        return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
+
+    var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
+    if (personnelNumber != null)
+    {
+        var exists = await dbContext.Employees.AnyAsync(x => x.Id != id && x.PersonnelNumber == personnelNumber, cancellationToken);
+        if (exists)
+            return Results.Conflict(new { message = "Сотрудник с таким табельным номером уже существует." });
+    }
+
+    var employeeNo = request.EmployeeNo != null ? (string.IsNullOrWhiteSpace(request.EmployeeNo) ? null : request.EmployeeNo.Trim()) : entity.EmployeeNo;
+    if (employeeNo != null)
+    {
+        var exists = await dbContext.Employees.AnyAsync(x => x.Id != id && x.EmployeeNo == employeeNo, cancellationToken);
+        if (exists)
+            return Results.Conflict(new { message = "Сотрудник с таким Employee ID уже существует." });
+    }
+
+    entity.FirstName = firstName;
+    entity.LastName = lastName;
+    entity.PersonnelNumber = personnelNumber;
+    if (request.EmployeeNo != null) entity.EmployeeNo = employeeNo ?? personnelNumber;
+    if (request.Gender != null) entity.Gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim().ToLowerInvariant();
+    entity.ValidFromUtc = request.ValidFromUtc;
+    entity.ValidToUtc = request.ValidToUtc;
+    if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
+    entity.UpdatedUtc = DateTime.UtcNow;
+
+    var accessLevelIds = (request.AccessLevelIds ?? entity.AccessLevels.Select(a => a.AccessLevelId).ToArray()).ToList();
+    if (request.AccessLevelIds is not null)
+    {
+        dbContext.EmployeeAccessLevels.RemoveRange(entity.AccessLevels);
+        foreach (var alId in request.AccessLevelIds)
+        {
+            if (await dbContext.AccessLevels.AnyAsync(x => x.Id == alId, cancellationToken))
+                dbContext.EmployeeAccessLevels.Add(new EmployeeAccessLevel { EmployeeId = id, AccessLevelId = alId });
+        }
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var deviceIds = accessLevelIds.Count > 0
+        ? await dbContext.AccessLevelDoors
+            .Where(d => accessLevelIds.Contains(d.AccessLevelId))
+            .Select(d => d.DeviceId)
+            .Distinct()
+            .ToListAsync(cancellationToken)
+        : [];
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.SyncEmployeeAsync(id, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Синхронизация сотрудника {EmployeeId} на устройство {DeviceId}: {Message}", id, deviceId, result.Message);
+    }
+
+    var updated = await dbContext.Employees
+        .Include(e => e.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
+        .FirstAsync(x => x.Id == id, cancellationToken);
+    return Results.Ok(MapEmployeeDetailResponse(updated));
+}).RequireAuthorization();
+
+app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Employees.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+    entity.IsActive = false;
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/employees/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var results = new List<object>();
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncEmployeeAsync(id, deviceId, cancellationToken);
+        results.Add(new { deviceId, success = result.Success, message = result.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+app.MapPost("/api/sync/employees", async (AppDbContext dbContext, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var employees = await dbContext.Employees
+        .AsNoTracking()
+        .Include(e => e.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .ThenInclude(al => al!.Doors)
+        .Where(e => e.IsActive)
+        .ToListAsync(cancellationToken);
+
+    var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
+    var results = new List<object>();
+
+    foreach (var emp in employees)
+    {
+        var deviceIds = emp.AccessLevels
+            .Where(a => a.AccessLevel != null)
+            .SelectMany(a => a.AccessLevel!.Doors)
+            .Select(d => d.DeviceId)
+            .Distinct()
+            .ToList();
+
+        foreach (var deviceId in deviceIds)
+        {
+            if (!devices.TryGetValue(deviceId, out var device))
+                continue;
+            var result = await syncService.SyncEmployeeAsync(emp.Id, deviceId, cancellationToken);
+            results.Add(new
+            {
+                employeeId = emp.Id,
+                employeeName = $"{emp.FirstName} {emp.LastName}".Trim(),
+                deviceId,
+                deviceName = device.Name,
+                success = result.Success,
+                error = result.Message
+            });
+        }
+    }
+
+    return Results.Ok(new { results });
+}).RequireAuthorization();
+
+// Visitors
+app.MapGet("/api/visitors", async (
+    string? search,
+    bool? isActive,
+    DateTime? visitDateFrom,
+    DateTime? visitDateTo,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var query = dbContext.Visitors.AsNoTracking()
+        .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
+        .AsQueryable();
+    if (isActive.HasValue)
+        query = query.Where(v => v.IsActive == isActive.Value);
+    if (visitDateFrom.HasValue)
+        query = query.Where(v => v.VisitDateUtc >= visitDateFrom.Value);
+    if (visitDateTo.HasValue)
+        query = query.Where(v => v.VisitDateUtc <= visitDateTo.Value);
+    if (!string.IsNullOrWhiteSpace(search))
+    {
+        var s = search.Trim().ToLower();
+        query = query.Where(v =>
+            (v.FirstName != null && v.FirstName.ToLower().Contains(s)) ||
+            (v.LastName != null && v.LastName.ToLower().Contains(s)) ||
+            (v.DocumentNumber != null && v.DocumentNumber.ToLower().Contains(s)));
+    }
+    var list = await query.OrderByDescending(v => v.VisitDateUtc).ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(MapVisitorResponse));
+}).RequireAuthorization();
+
+app.MapGet("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var v = await dbContext.Visitors
+        .AsNoTracking()
+        .Include(x => x.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(x => x.Cards).Include(x => x.Faces).Include(x => x.Fingerprints)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (v is null)
+        return Results.NotFound();
+    return Results.Ok(MapVisitorDetailResponse(v));
+}).RequireAuthorization();
+
+app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var firstName = (request.FirstName ?? "").Trim();
+    var lastName = (request.LastName ?? "").Trim();
+    if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
+        return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
+
+    var entity = new Visitor
+    {
+        Id = Guid.NewGuid(),
+        FirstName = firstName,
+        LastName = lastName,
+        DocumentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim(),
+        VisitDateUtc = request.VisitDateUtc ?? DateTime.UtcNow,
+        IsActive = true,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Visitors.Add(entity);
+
+    if (request.AccessLevelIds?.Length > 0)
+    {
+        foreach (var alId in request.AccessLevelIds)
+        {
+            if (await dbContext.AccessLevels.AnyAsync(x => x.Id == alId, cancellationToken))
+                dbContext.VisitorAccessLevels.Add(new VisitorAccessLevel { VisitorId = entity.Id, AccessLevelId = alId });
+        }
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var created = await dbContext.Visitors
+        .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
+        .FirstAsync(x => x.Id == entity.Id, cancellationToken);
+    return Results.Created($"/api/visitors/{entity.Id}", MapVisitorDetailResponse(created));
+}).RequireAuthorization();
+
+app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Visitors
+        .Include(v => v.AccessLevels)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    var firstName = (request.FirstName ?? "").Trim();
+    var lastName = (request.LastName ?? "").Trim();
+    if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
+        return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
+
+    entity.FirstName = firstName;
+    entity.LastName = lastName;
+    entity.DocumentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim();
+    if (request.VisitDateUtc.HasValue) entity.VisitDateUtc = request.VisitDateUtc.Value;
+    if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
+    entity.UpdatedUtc = DateTime.UtcNow;
+
+    if (request.AccessLevelIds is not null)
+    {
+        dbContext.VisitorAccessLevels.RemoveRange(entity.AccessLevels);
+        foreach (var alId in request.AccessLevelIds)
+        {
+            if (await dbContext.AccessLevels.AnyAsync(x => x.Id == alId, cancellationToken))
+                dbContext.VisitorAccessLevels.Add(new VisitorAccessLevel { VisitorId = id, AccessLevelId = alId });
+        }
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var updated = await dbContext.Visitors
+        .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
+        .FirstAsync(x => x.Id == id, cancellationToken);
+    return Results.Ok(MapVisitorDetailResponse(updated));
+}).RequireAuthorization();
+
+app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Visitors.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+    entity.IsActive = false;
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/visitors/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var results = new List<object>();
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncVisitorAsync(id, deviceId, cancellationToken);
+        results.Add(new { deviceId, success = result.Success, message = result.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+// Cards
+app.MapGet("/api/cards", async (Guid? employeeId, Guid? visitorId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var query = dbContext.Cards.AsNoTracking().Include(c => c.Employee).Include(c => c.Visitor).AsQueryable();
+    if (employeeId.HasValue) query = query.Where(c => c.EmployeeId == employeeId);
+    if (visitorId.HasValue) query = query.Where(c => c.VisitorId == visitorId);
+    var list = await query.OrderBy(c => c.CardNo).ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)));
+}).RequireAuthorization();
+
+app.MapGet("/api/cards/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var c = await dbContext.Cards.AsNoTracking().Include(x => x.Employee).Include(x => x.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (c is null) return Results.NotFound();
+    return Results.Ok(new { c.Id, c.CardNo, c.CardNumber, EmployeeId = c.EmployeeId, VisitorId = c.VisitorId, c.CreatedUtc });
+}).RequireAuthorization();
+
+app.MapPost("/api/cards", async (CreateCardRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.CardNo))
+        return Results.BadRequest(new { message = "CardNo обязателен." });
+    var cardNo = request.CardNo.Trim();
+    var exists = await dbContext.Cards.AnyAsync(x => x.CardNo == cardNo, cancellationToken);
+    if (exists)
+        return Results.Conflict(new { message = "Карта с таким номером уже существует." });
+
+    if (request.EmployeeId.HasValue == request.VisitorId.HasValue)
+        return Results.BadRequest(new { message = "Укажите либо EmployeeId, либо VisitorId (но не оба)." });
+
+    var card = new Card
+    {
+        Id = Guid.NewGuid(),
+        EmployeeId = request.EmployeeId,
+        VisitorId = request.VisitorId,
+        CardNo = cardNo,
+        CardNumber = string.IsNullOrWhiteSpace(request.CardNumber) ? null : request.CardNumber.Trim(),
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Cards.Add(card);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Sync card {CardNo} to device {DeviceId}: {Message}", cardNo, deviceId, result.Message);
+    }
+
+    return Results.Created($"/api/cards/{card.Id}", new { card.Id, card.CardNo, card.CardNumber });
+}).RequireAuthorization();
+
+app.MapPut("/api/cards/{id:guid}", async (Guid id, UpdateCardRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var card = await dbContext.Cards.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (card is null) return Results.NotFound();
+    if (!string.IsNullOrWhiteSpace(request.CardNumber))
+        card.CardNumber = request.CardNumber.Trim();
+    card.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { card.Id, card.CardNo, card.CardNumber });
+}).RequireAuthorization();
+
+app.MapDelete("/api/cards/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var card = await dbContext.Cards.Include(c => c.Employee).Include(c => c.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (card is null) return Results.NotFound();
+    var cardNo = card.CardNo;
+    var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
+    foreach (var deviceId in devices)
+        _ = syncService.DeleteCardFromDeviceAsync(cardNo, deviceId, cancellationToken);
+    dbContext.Cards.Remove(card);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/cards/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var results = new List<object>();
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncCardAsync(id, deviceId, cancellationToken);
+        results.Add(new { deviceId, success = result.Success, message = result.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+// Faces
+app.MapGet("/api/faces", async (Guid? employeeId, Guid? visitorId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var query = dbContext.Faces.AsNoTracking().AsQueryable();
+    if (employeeId.HasValue) query = query.Where(f => f.EmployeeId == employeeId);
+    if (visitorId.HasValue) query = query.Where(f => f.VisitorId == visitorId);
+    var list = await query.ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(f => new FaceRef(f.Id, f.FDID)));
+}).RequireAuthorization();
+
+app.MapGet("/api/faces/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var f = await dbContext.Faces.AsNoTracking().Include(x => x.Employee).Include(x => x.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (f is null) return Results.NotFound();
+    return Results.Ok(new { f.Id, f.FilePath, f.FDID, EmployeeId = f.EmployeeId, VisitorId = f.VisitorId, f.CreatedUtc });
+}).RequireAuthorization();
+
+app.MapGet("/api/faces/{id:guid}/image", async (Guid id, AppDbContext dbContext, IConfiguration configuration, CancellationToken cancellationToken) =>
+{
+    var face = await dbContext.Faces.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (face is null) return Results.NotFound();
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+    if (!File.Exists(fullPath)) return Results.NotFound();
+    return Results.File(fullPath, "image/jpeg");
+}).RequireAuthorization();
+
+app.MapPost("/api/faces", async (HttpRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { message = "Ожидается multipart/form-data." });
+    var form = await request.ReadFormAsync(cancellationToken);
+    var employeeId = form["EmployeeId"].FirstOrDefault() is { } eId && Guid.TryParse(eId, out var empId) ? empId : (Guid?)null;
+    var visitorId = form["VisitorId"].FirstOrDefault() is { } vId && Guid.TryParse(vId, out var visId) ? visId : (Guid?)null;
+    if (employeeId.HasValue == visitorId.HasValue)
+        return Results.BadRequest(new { message = "Укажите либо EmployeeId, либо VisitorId." });
+    var fdId = int.TryParse(form["FDID"].FirstOrDefault(), out var fdid) ? fdid : 1;
+    var file = form.Files.GetFile("Image");
+    if (file is null || file.Length == 0)
+        return Results.BadRequest(new { message = "Файл изображения обязателен." });
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    Directory.CreateDirectory(facesPath);
+    var fileName = $"{Guid.NewGuid():N}.jpg";
+    var filePath = Path.Combine(facesPath, fileName);
+    await using (var stream = File.Create(filePath))
+        await file.CopyToAsync(stream, cancellationToken);
+
+    var face = new Face
+    {
+        Id = Guid.NewGuid(),
+        EmployeeId = employeeId,
+        VisitorId = visitorId,
+        FilePath = fileName,
+        FDID = fdId,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Faces.Add(face);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var deviceIds = form["DeviceIds"].SelectMany(x => (x ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+        .Select(x => Guid.TryParse(x.Trim(), out var g) ? g : (Guid?)null)
+        .Where(g => g.HasValue).Cast<Guid>().ToList();
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Sync face {FaceId} to device {DeviceId}: {Message}", face.Id, deviceId, result.Message);
+    }
+
+    return Results.Created($"/api/faces/{face.Id}", new { face.Id, face.FilePath, face.FDID });
+}).RequireAuthorization();
+
+app.MapDelete("/api/faces/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, CancellationToken cancellationToken) =>
+{
+    var face = await dbContext.Faces.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (face is null) return Results.NotFound();
+    var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
+    foreach (var deviceId in devices)
+        _ = syncService.DeleteFaceFromDeviceAsync(id, deviceId, cancellationToken);
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+    if (File.Exists(fullPath)) File.Delete(fullPath);
+    dbContext.Faces.Remove(face);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/faces/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var results = new List<object>();
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncFaceAsync(id, deviceId, cancellationToken);
+        results.Add(new { deviceId, success = result.Success, message = result.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+// Fingerprints
+app.MapGet("/api/fingerprints", async (Guid? employeeId, Guid? visitorId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var query = dbContext.Fingerprints.AsNoTracking().AsQueryable();
+    if (employeeId.HasValue) query = query.Where(f => f.EmployeeId == employeeId);
+    if (visitorId.HasValue) query = query.Where(f => f.VisitorId == visitorId);
+    var list = await query.ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(f => new FingerprintRef(f.Id, f.FingerIndex)));
+}).RequireAuthorization();
+
+app.MapGet("/api/fingerprints/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var f = await dbContext.Fingerprints.AsNoTracking().Include(x => x.Employee).Include(x => x.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (f is null) return Results.NotFound();
+    return Results.Ok(new { f.Id, f.FingerIndex, EmployeeId = f.EmployeeId, VisitorId = f.VisitorId, f.CreatedUtc });
+}).RequireAuthorization();
+
+app.MapPost("/api/fingerprints", async (CreateFingerprintRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (request.EmployeeId.HasValue == request.VisitorId.HasValue)
+        return Results.BadRequest(new { message = "Укажите либо EmployeeId, либо VisitorId." });
+    if (request.TemplateData is null || request.TemplateData.Length == 0)
+        return Results.BadRequest(new { message = "TemplateData (base64) обязателен." });
+    byte[] templateData;
+    try { templateData = Convert.FromBase64String(request.TemplateData); }
+    catch { return Results.BadRequest(new { message = "TemplateData должен быть в формате base64." }); }
+    var fingerIndex = Math.Clamp(request.FingerIndex, 1, 10);
+
+    var fp = new Fingerprint
+    {
+        Id = Guid.NewGuid(),
+        EmployeeId = request.EmployeeId,
+        VisitorId = request.VisitorId,
+        TemplateData = templateData,
+        FingerIndex = fingerIndex,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Fingerprints.Add(fp);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
+        if (!result.Success)
+            logger.LogWarning("Sync fingerprint {FpId} to device {DeviceId}: {Message}", fp.Id, deviceId, result.Message);
+    }
+
+    return Results.Created($"/api/fingerprints/{fp.Id}", new { fp.Id, fp.FingerIndex });
+}).RequireAuthorization();
+
+app.MapDelete("/api/fingerprints/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var fp = await dbContext.Fingerprints.Include(f => f.Employee).Include(f => f.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (fp is null) return Results.NotFound();
+    var employeeNo = fp.Employee != null
+        ? (string.IsNullOrWhiteSpace(fp.Employee.EmployeeNo) ? fp.Employee.PersonnelNumber : fp.Employee.EmployeeNo) ?? fp.Employee.Id.ToString("N")[..32]
+        : fp.Visitor!.Id.ToString("N")[..32];
+    var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
+    foreach (var deviceId in devices)
+        _ = syncService.DeleteFingerprintFromDeviceAsync(employeeNo, fp.FingerIndex, deviceId, cancellationToken);
+    dbContext.Fingerprints.Remove(fp);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/fingerprints/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
+{
+    var results = new List<object>();
+    foreach (var deviceId in request.DeviceIds ?? [])
+    {
+        var result = await syncService.SyncFingerprintAsync(id, deviceId, cancellationToken);
+        results.Add(new { deviceId, success = result.Success, message = result.Message });
+    }
+    return Results.Ok(results);
 }).RequireAuthorization();
 
 app.MapGet("/api/system/status", async (
@@ -831,7 +1595,7 @@ if (File.Exists(indexHtmlPath))
 
 app.Run();
 
-static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? lastSeenUtc)
+static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? lastSeenUtc, string? statusMessage = null)
 {
     return new DeviceResponse(
         device.Id,
@@ -843,12 +1607,47 @@ static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? 
         device.DeviceType.ToString(),
         status,
         lastSeenUtc,
-        device.Username);
+        device.Username,
+        statusMessage);
 }
 
 static string MapConnectivityStatus(DeviceConnectivityStatus status)
 {
     return status == DeviceConnectivityStatus.Connected ? "Online" : "Offline";
+}
+
+static EmployeeResponse MapEmployeeResponse(Employee e)
+{
+    var accessNames = e.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
+    return new EmployeeResponse(
+        e.Id, e.FirstName, e.LastName, e.PersonnelNumber, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive,
+        accessNames, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0);
+}
+
+static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
+{
+    var accessLevels = (e.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
+    var cards = (e.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
+    var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
+    var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
+    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.PersonnelNumber, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, accessLevels, cards, faces, fingerprints);
+}
+
+static VisitorResponse MapVisitorResponse(Visitor v)
+{
+    var accessNames = v.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
+    return new VisitorResponse(
+        v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive,
+        accessNames, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
+}
+
+static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
+{
+    var accessLevels = (v.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
+    var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
+    var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
+    var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
+    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
 }
 
 static bool IsLoopbackRequest(HttpContext httpContext)
@@ -919,17 +1718,36 @@ public sealed record DeviceResponse(
     string DeviceType,
     string Status,
     DateTime? LastSeenUtc,
-    string? Username);
+    string? Username,
+    string? StatusMessage);
 
 public sealed record DeviceStatusResponse(
     Guid DeviceId,
     string DeviceIdentifier,
     string Status,
-    DateTime? LastSeenUtc);
+    DateTime? LastSeenUtc,
+    string? StatusMessage);
 
 public sealed record CreateAccessLevelRequest(string Name, string? Description);
 public sealed record UpdateAccessLevelRequest(string Name, string? Description);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
+public sealed record DoorControlRequest(string Action);
+public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds);
+public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds);
+public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, Guid[]? AccessLevelIds);
+public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, bool? IsActive, Guid[]? AccessLevelIds);
+public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
+public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime VisitDateUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime VisitDateUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record AccessLevelRef(Guid Id, string Name);
+public sealed record CardRef(Guid Id, string CardNo, string? CardNumber);
+public sealed record FaceRef(Guid Id, int FDID);
+public sealed record FingerprintRef(Guid Id, int FingerIndex);
+public sealed record CreateCardRequest(string CardNo, string? CardNumber, Guid? EmployeeId, Guid? VisitorId, Guid[]? DeviceIds);
+public sealed record UpdateCardRequest(string? CardNumber);
+public sealed record CreateFingerprintRequest(string TemplateData, int FingerIndex, Guid? EmployeeId, Guid? VisitorId, Guid[]? DeviceIds);
 public sealed record AccessLevelDoorDto(Guid DeviceId, string DeviceName, int DoorIndex);
 public sealed record AccessLevelResponse(Guid Id, string Name, string? Description, DateTime CreatedUtc, DateTime? UpdatedUtc, IReadOnlyList<AccessLevelDoorDto> Doors);
 
@@ -960,9 +1778,9 @@ public sealed record ManagedServiceResponse(
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub) : IDeviceStatusBroadcaster
 {
-    public async Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, CancellationToken cancellationToken = default)
+    public async Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, string? statusMessage = null, CancellationToken cancellationToken = default)
     {
-        await hub.Clients.All.SendAsync("DeviceStatusChanged", new DeviceStatusResponse(deviceId, deviceIdentifier, status, lastSeenUtc), cancellationToken);
+        await hub.Clients.All.SendAsync("DeviceStatusChanged", new DeviceStatusResponse(deviceId, deviceIdentifier, status, lastSeenUtc, statusMessage), cancellationToken);
     }
 }
 

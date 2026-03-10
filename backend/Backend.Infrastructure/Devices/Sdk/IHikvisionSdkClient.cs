@@ -30,4 +30,6 @@ public interface IHikvisionSdkClient
     Task<PullEventsResult> PullEventsAsync(IReadOnlyCollection<string> deviceIdentifiers, CancellationToken cancellationToken = default);
     /// <summary>Activate inactive device via HCNetSDK NET_DVR_ActivateDevice (direct TCP). Returns (Success, Message).</summary>
     Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default);
+    /// <summary>Получить количество дверей через SDK (NET_DVR_GetDeviceAbility ACS_ABILITY). При ошибке или недоступности SDK — null.</summary>
+    Task<int?> TryGetDoorCountViaSdkAsync(string deviceIdentifier, string ipAddress, int port, string username, string password, CancellationToken cancellationToken = default);
 }

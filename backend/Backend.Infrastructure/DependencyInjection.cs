@@ -9,6 +9,7 @@ using Backend.Infrastructure.Security;
 using Backend.Infrastructure.System;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -44,7 +45,9 @@ public static class DependencyInjection
         services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
         services.Configure<SadpOptions>(configuration.GetSection(SadpOptions.SectionName));
 
-        services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionBuilder.ConnectionString));
+        services.AddDbContext<AppDbContext>(options => options
+            .UseNpgsql(connectionBuilder.ConnectionString)
+            .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)));
 
         services
             .AddIdentityCore<ApplicationUser>()
@@ -66,6 +69,9 @@ public static class DependencyInjection
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
         services.AddScoped<ISystemStatusService, SystemStatusService>();
+        services.AddScoped<IDeviceDoorService, DeviceDoorService>();
+        services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();
+        services.AddScoped<IDevicePersonSyncService, DevicePersonSyncService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();

@@ -26,6 +26,14 @@ interface Device {
   deviceIdentifier: string
 }
 
+interface DeviceDoor {
+  deviceId: string
+  deviceName: string
+  doorIndex: number
+  doorName?: string | null
+  status?: string | null
+}
+
 interface AccessLevelFormData {
   name: string
   description: string
@@ -58,6 +66,9 @@ export function AccessLevelsPage() {
   const [addDoorIndex, setAddDoorIndex] = useState(0)
   const [formData, setFormData] = useState<AccessLevelFormData>(emptyForm)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [doorsList, setDoorsList] = useState<DeviceDoor[]>([])
+  const [doorsLoading, setDoorsLoading] = useState(false)
+  const [doorsError, setDoorsError] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     if (!token) return
@@ -76,6 +87,27 @@ export function AccessLevelsPage() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  const loadDoors = useCallback(async () => {
+    if (!token) return
+    setDoorsError(null)
+    setDoorsLoading(true)
+    try {
+      const list = await apiRequest<DeviceDoor[]>('/api/devices/doors', { token })
+      setDoorsList(list)
+    } catch (e) {
+      setDoorsError(e instanceof Error ? e.message : 'Failed to load doors')
+      setDoorsList([])
+    } finally {
+      setDoorsLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (tabFilter === 'doors' && token) {
+      loadDoors()
+    }
+  }, [tabFilter, token, loadDoors])
 
   const filteredLevels = useMemo(() => {
     if (!searchQuery.trim()) return accessLevels
@@ -115,10 +147,15 @@ export function AccessLevelsPage() {
     setModalMode('doors')
     if (token) {
       try {
-        const list = await apiRequest<Device[]>('/api/devices', { token })
-        setDevices(list)
+        const [devList, doorsListRes] = await Promise.all([
+          apiRequest<Device[]>('/api/devices', { token }),
+          apiRequest<DeviceDoor[]>('/api/devices/doors', { token }),
+        ])
+        setDevices(devList)
+        setDoorsList(doorsListRes)
       } catch {
         setDevices([])
+        setDoorsList([])
       }
     }
   }
@@ -420,10 +457,98 @@ export function AccessLevelsPage() {
         )}
 
         {tabFilter === 'doors' && (
-          <Card className="p-12 text-center">
-            <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">door_front</span>
-            <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Doors</p>
-            <p className="text-text-muted text-sm">Manage doors and their assignments.</p>
+          <Card noPadding className="overflow-hidden">
+            {doorsLoading ? (
+              <div className="p-12 flex flex-col items-center justify-center gap-4">
+                <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">Loading doors...</p>
+              </div>
+            ) : doorsError ? (
+              <div className="p-8">
+                <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold border border-error-text/10">
+                  {doorsError}
+                </div>
+                <Button variant="outline" size="sm" className="mt-4" onClick={loadDoors}>
+                  Retry
+                </Button>
+              </div>
+            ) : doorsList.length === 0 ? (
+              <div className="p-12 text-center">
+                <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">door_front</span>
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">No doors found</p>
+                <p className="text-text-muted text-sm">Add devices first, then doors will appear here.</p>
+              </div>
+            ) : (
+              <>
+                <div className="hidden md:grid grid-cols-8 px-8 py-4 bg-slate-75 border-b border-border-base text-xs font-black text-text-muted tracking-widest uppercase">
+                  <div className="col-span-3">Device</div>
+                  <div className="col-span-2">Door</div>
+                  <div className="col-span-3">Access Levels</div>
+                </div>
+                <div className="divide-y divide-border-light">
+                  {Object.entries(
+                    doorsList.reduce<Record<string, DeviceDoor[]>>((acc, d) => {
+                      const key = d.deviceId
+                      if (!acc[key]) acc[key] = []
+                      acc[key].push(d)
+                      return acc
+                    }, {})
+                  ).map(([, doors]) => {
+                    const deviceName = doors[0]?.deviceName ?? ''
+                    return doors.map((door) => {
+                      const assignedLevels = accessLevels.filter(
+                        (al) => (al.doors ?? []).some((ad) => ad.deviceId === door.deviceId && ad.doorIndex === door.doorIndex)
+                      )
+                      return (
+                        <div
+                          key={`${door.deviceId}-${door.doorIndex}`}
+                          className="flex flex-col md:grid grid-cols-8 items-center px-6 py-4 md:px-8 hover:bg-slate-75/50 transition-colors gap-2"
+                        >
+                          <div className="col-span-3 flex items-center gap-3">
+                            <span className="material-symbols-outlined text-2xl text-text-muted">door_front</span>
+                            <div>
+                              <p className="text-sm font-bold text-text-dark">{deviceName}</p>
+                              <p className="text-[10px] text-text-light">{door.deviceId}</p>
+                            </div>
+                          </div>
+                          <div className="col-span-2">
+                            <Badge variant="neutral" className="text-xs">
+                              {door.doorName ?? `Door #${door.doorIndex}`}
+                            </Badge>
+                            {door.status && (
+                              <span
+                                className={`ml-2 text-[10px] ${door.status.toLowerCase().startsWith('offline') ? 'text-error-text font-bold' : 'text-text-muted'}`}
+                              >
+                                {door.status}
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-3 flex flex-wrap gap-1 w-full md:justify-start">
+                            {assignedLevels.length === 0 ? (
+                              <span className="text-text-light italic text-xs">—</span>
+                            ) : (
+                              assignedLevels.map((al) => (
+                                <Badge key={al.id} variant="primary" className="text-[10px]">
+                                  {al.name}
+                                </Badge>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  })}
+                </div>
+                <div className="px-8 py-4 border-t border-border-base bg-slate-75 flex items-center justify-between">
+                  <p className="text-xs font-black text-text-muted uppercase tracking-widest">
+                    {doorsList.length} door(s) from {new Set(doorsList.map((d) => d.deviceId)).size} device(s)
+                  </p>
+                  <Button variant="ghost" size="sm" icon="refresh" onClick={loadDoors}>
+                    Refresh
+                  </Button>
+                </div>
+              </>
+            )}
           </Card>
         )}
 
@@ -530,28 +655,35 @@ export function AccessLevelsPage() {
             <div className="border-t border-border-base pt-4 space-y-3">
               <label className="block text-xs font-bold text-text-muted">Add door</label>
               <div className="flex flex-wrap gap-2 items-end">
-                <div className="flex-1 min-w-[160px]">
+                <div className="flex-1 min-w-[200px]">
                   <select
-                    value={addDoorDeviceId}
-                    onChange={(e) => setAddDoorDeviceId(e.target.value)}
+                    value={addDoorDeviceId ? `${addDoorDeviceId}:${addDoorIndex}` : ''}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v) {
+                        const [did, idx] = v.split(':')
+                        setAddDoorDeviceId(did)
+                        setAddDoorIndex(parseInt(idx, 10))
+                      } else {
+                        setAddDoorDeviceId('')
+                        setAddDoorIndex(0)
+                      }
+                    }}
                     className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs text-text-base focus:ring-2 focus:ring-primary/20 focus:border-primary/30 outline-none"
                   >
-                    <option value="">Select device</option>
-                    {devices.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
+                    <option value="">Select door</option>
+                    {doorsList
+                      .filter(
+                        (d) =>
+                          !(d.status?.toLowerCase().startsWith('offline')) &&
+                          !(doorsItem?.doors ?? []).some((ad) => ad.deviceId === d.deviceId && ad.doorIndex === d.doorIndex)
+                      )
+                      .map((d) => (
+                        <option key={`${d.deviceId}-${d.doorIndex}`} value={`${d.deviceId}:${d.doorIndex}`}>
+                          {d.deviceName} — {d.doorName ?? `Door #${d.doorIndex}`}
+                        </option>
+                      ))}
                   </select>
-                </div>
-                <div className="w-24">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={addDoorIndex}
-                    onChange={(e) => setAddDoorIndex(parseInt(e.target.value, 10) || 0)}
-                    placeholder="#"
-                  />
                 </div>
                 <Button
                   onClick={handleAddDoor}
@@ -562,7 +694,9 @@ export function AccessLevelsPage() {
                   Add
                 </Button>
               </div>
-              <p className="text-[10px] text-text-light">Door index is 0-based (0 = first door, 1 = second, etc.)</p>
+              <p className="text-[10px] text-text-light">
+                {doorsList.length === 0 ? 'Load doors first.' : 'Select a door from the list to assign to this access level.'}
+              </p>
             </div>
             <div className="flex justify-end pt-2">
               <Button variant="outline" onClick={closeModals}>

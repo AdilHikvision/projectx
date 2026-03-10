@@ -28,6 +28,15 @@
     <Compile Remove="Backend.Domain\**\*.cs" />
     <Compile Remove="Backend.Application\**\*.cs" />
     <Compile Remove="Backend.Infrastructure\**\*.cs" />
+    <Compile Remove="winSDK\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Remove="winSDK\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="winSDK\lib\*.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('winSDK\lib')" />
+    <None Include="winSDK\lib\HCNetSDKCom\*.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('winSDK\lib\HCNetSDKCom')" />
   </ItemGroup>
 
 </Project>

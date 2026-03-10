@@ -69,9 +69,20 @@ public sealed class Employee : BaseEntity
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string? PersonnelNumber { get; set; }
+    /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Если пусто — генерируется из PersonnelNumber или Id.</summary>
+    public string? EmployeeNo { get; set; }
+    /// <summary>Пол: male, female, unknown.</summary>
+    public string? Gender { get; set; }
+    /// <summary>Начало периода действия (для ISAPI Valid).</summary>
+    public DateTime? ValidFromUtc { get; set; }
+    /// <summary>Конец периода действия (для ISAPI Valid).</summary>
+    public DateTime? ValidToUtc { get; set; }
     public bool IsActive { get; set; } = true;
 
     public ICollection<EmployeeAccessLevel> AccessLevels { get; set; } = new List<EmployeeAccessLevel>();
+    public ICollection<Card> Cards { get; set; } = new List<Card>();
+    public ICollection<Face> Faces { get; set; } = new List<Face>();
+    public ICollection<Fingerprint> Fingerprints { get; set; } = new List<Fingerprint>();
 }
 
 public sealed class Visitor : BaseEntity
@@ -83,6 +94,54 @@ public sealed class Visitor : BaseEntity
     public bool IsActive { get; set; } = true;
 
     public ICollection<VisitorAccessLevel> AccessLevels { get; set; } = new List<VisitorAccessLevel>();
+    public ICollection<Card> Cards { get; set; } = new List<Card>();
+    public ICollection<Face> Faces { get; set; } = new List<Face>();
+    public ICollection<Fingerprint> Fingerprints { get; set; } = new List<Fingerprint>();
+}
+
+/// <summary>Карта доступа, привязанная к сотруднику или посетителю.</summary>
+public sealed class Card : BaseEntity
+{
+    public Guid? EmployeeId { get; set; }
+    public Employee? Employee { get; set; }
+
+    public Guid? VisitorId { get; set; }
+    public Visitor? Visitor { get; set; }
+
+    /// <summary>Номер карты (уникальный в системе).</summary>
+    public string CardNo { get; set; } = string.Empty;
+    /// <summary>Сырой номер карты (Wiegand и т.п.), опционально.</summary>
+    public string? CardNumber { get; set; }
+}
+
+/// <summary>Лицо для распознавания, привязанное к сотруднику или посетителю.</summary>
+public sealed class Face : BaseEntity
+{
+    public Guid? EmployeeId { get; set; }
+    public Employee? Employee { get; set; }
+
+    public Guid? VisitorId { get; set; }
+    public Visitor? Visitor { get; set; }
+
+    /// <summary>Относительный путь к файлу изображения.</summary>
+    public string FilePath { get; set; } = string.Empty;
+    /// <summary>FDID: 1 — видимый свет, 2 — инфракрасный.</summary>
+    public int FDID { get; set; } = 1;
+}
+
+/// <summary>Отпечаток пальца, привязанный к сотруднику или посетителю.</summary>
+public sealed class Fingerprint : BaseEntity
+{
+    public Guid? EmployeeId { get; set; }
+    public Employee? Employee { get; set; }
+
+    public Guid? VisitorId { get; set; }
+    public Visitor? Visitor { get; set; }
+
+    /// <summary>Шаблон отпечатка (бинарные данные).</summary>
+    public byte[] TemplateData { get; set; } = Array.Empty<byte>();
+    /// <summary>Индекс пальца (1–10).</summary>
+    public int FingerIndex { get; set; } = 1;
 }
 
 public sealed class EmployeeAccessLevel
