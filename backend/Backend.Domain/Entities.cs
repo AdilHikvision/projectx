@@ -90,7 +90,9 @@ public sealed class Visitor : BaseEntity
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string? DocumentNumber { get; set; }
-    public DateTime VisitDateUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? VisitDateUtc { get; set; }
+    public DateTime? ValidFromUtc { get; set; }
+    public DateTime? ValidToUtc { get; set; }
     public bool IsActive { get; set; } = true;
 
     public ICollection<VisitorAccessLevel> AccessLevels { get; set; } = new List<VisitorAccessLevel>();

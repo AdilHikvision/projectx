@@ -40,7 +40,8 @@ interface VisitorResponse {
   firstName: string
   lastName: string
   documentNumber?: string | null
-  visitDateUtc: string
+  validFromUtc?: string | null
+  validToUtc?: string | null
   isActive: boolean
   accessLevelNames: string[]
   cardsCount: number
@@ -198,10 +199,10 @@ export function PeopleManagementPage() {
           personnelNumber: '',
           employeeNo: '',
           gender: '',
-          validFrom: new Date().toISOString().slice(0, 10),
-          validTo: '2037-12-31',
+          validFrom: detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          validTo: detail.validToUtc ? detail.validToUtc.slice(0, 10) : new Date(Date.now() + 86400000).toISOString().slice(0, 10),
           documentNumber: detail.documentNumber ?? '',
-          visitDateUtc: detail.visitDateUtc ? detail.visitDateUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          visitDateUtc: '',
           accessLevelIds: detail.accessLevels?.map((a) => a.id) ?? [],
         })
       }
@@ -240,9 +241,9 @@ export function PeopleManagementPage() {
           employeeNo: '',
           gender: '',
           validFrom: new Date().toISOString().slice(0, 10),
-          validTo: '2037-12-31',
+          validTo: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
           documentNumber: res.nextDocumentNumber,
-          visitDateUtc: new Date().toISOString().slice(0, 10),
+          visitDateUtc: '',
           accessLevelIds: [],
         })
       }
@@ -301,7 +302,8 @@ export function PeopleManagementPage() {
               firstName: formData.firstName.trim(),
               lastName: formData.lastName.trim(),
               documentNumber: formData.documentNumber.trim() || null,
-              visitDateUtc: formData.visitDateUtc + 'T00:00:00Z',
+              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
               accessLevelIds: formData.accessLevelIds,
             }),
           })
@@ -334,7 +336,8 @@ export function PeopleManagementPage() {
               firstName: formData.firstName.trim(),
               lastName: formData.lastName.trim(),
               documentNumber: formData.documentNumber.trim() || null,
-              visitDateUtc: formData.visitDateUtc + 'T00:00:00Z',
+              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
               accessLevelIds: formData.accessLevelIds,
             }),
           })
@@ -506,7 +509,7 @@ export function PeopleManagementPage() {
                 const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '')
                 const subtitle = item.type === 'employee'
                   ? `ID: ${item.employeeNo || 'N/A'} • ${item.cardsCount} Cards • ${item.facesCount} Faces`
-                  : `Visit: ${item.visitDateUtc.slice(0, 10)} • ${item.cardsCount} Cards`
+                  : `Valid: ${item.validFromUtc?.slice(0, 10) || 'N/A'} - ${item.validToUtc?.slice(0, 10) || 'N/A'} • ${item.cardsCount} Cards`
 
                 return (
                   <div
@@ -661,20 +664,32 @@ export function PeopleManagementPage() {
             </>
           ) : (
             <>
-              <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Document Number</label>
-                <Input
-                  value={formData.documentNumber}
-                  onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Visit Date</label>
-                <Input
-                  type="date"
-                  value={formData.visitDateUtc}
-                  onChange={(e) => setFormData((p) => ({ ...p, visitDateUtc: e.target.value }))}
-                />
+              {modalMode === 'edit' && (
+                <div>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Document Number</label>
+                  <Input
+                    value={formData.documentNumber}
+                    onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid From</label>
+                  <Input
+                    type="date"
+                    value={formData.validFrom}
+                    onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid To</label>
+                  <Input
+                    type="date"
+                    value={formData.validTo}
+                    onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
+                  />
+                </div>
               </div>
             </>
           )}

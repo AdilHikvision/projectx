@@ -78,7 +78,11 @@ public sealed class DevicePersonSyncService(
         var name = $"{visitor.FirstName} {visitor.LastName}".Trim();
         var doorRight = GetDoorRightForDevice(visitor.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, deviceId);
 
-        return await SyncUserInfoAsync(device, employeeNo, name, visitor.IsActive ? 1 : 2, doorRight, userCategory: "visitor", cancellationToken: cancellationToken);
+        return await SyncUserInfoAsync(device, employeeNo, name, visitor.IsActive ? 1 : 2, doorRight,
+            validFromUtc: visitor.ValidFromUtc,
+            validToUtc: visitor.ValidToUtc,
+            userCategory: "visitor",
+            cancellationToken: cancellationToken);
     }
 
     public async Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default)

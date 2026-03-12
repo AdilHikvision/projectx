@@ -1191,13 +1191,20 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
             return Results.Conflict(new { message = "Такой номер документа уже занят другим сотрудником или посетителем." });
     }
 
+    // По умолчанию: с текущего момента на 24 часа
+    var now = DateTime.UtcNow;
+    var validFrom = request.ValidFromUtc ?? now;
+    var validTo = request.ValidToUtc ?? validFrom.AddHours(24);
+
     var entity = new Visitor
     {
         Id = Guid.NewGuid(),
         FirstName = firstName,
         LastName = lastName,
         DocumentNumber = documentNumber,
-        VisitDateUtc = request.VisitDateUtc ?? DateTime.UtcNow,
+        VisitDateUtc = validFrom, // Оставляем для совместимости, если где-то используется
+        ValidFromUtc = validFrom,
+        ValidToUtc = validTo,
         IsActive = true,
         CreatedUtc = DateTime.UtcNow
     };
@@ -1237,7 +1244,7 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == entity.Id, cancellationToken);
     var createdResp = MapVisitorDetailResponse(created);
-    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.VisitDateUtc, createdResp.IsActive, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1256,7 +1263,8 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
     entity.FirstName = firstName;
     entity.LastName = lastName;
     entity.DocumentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim();
-    if (request.VisitDateUtc.HasValue) entity.VisitDateUtc = request.VisitDateUtc.Value;
+    if (request.ValidFromUtc.HasValue) entity.ValidFromUtc = request.ValidFromUtc.Value;
+    if (request.ValidToUtc.HasValue) entity.ValidToUtc = request.ValidToUtc.Value;
     if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
     entity.UpdatedUtc = DateTime.UtcNow;
 
@@ -1296,7 +1304,7 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapVisitorDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.VisitDateUtc, updatedResp.IsActive, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1817,7 +1825,7 @@ static VisitorResponse MapVisitorResponse(Visitor v)
 {
     var accessNames = v.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
     return new VisitorResponse(
-        v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive,
+        v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive,
         accessNames, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
 }
 
@@ -1827,7 +1835,7 @@ static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
     var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
     var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
-    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
+    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
 }
 
 static async Task<string> GetNextPersonIdAsync(AppDbContext dbContext, CancellationToken cancellationToken)
@@ -1949,15 +1957,15 @@ public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string Action);
 public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds);
 public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds);
-public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, Guid[]? AccessLevelIds);
-public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? VisitDateUtc, bool? IsActive, Guid[]? AccessLevelIds);
+public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds);
+public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
 
 public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds);
 public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
 public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
-public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime VisitDateUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
-public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime VisitDateUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
 public sealed record AccessLevelRef(Guid Id, string Name);
 public sealed record CardRef(Guid Id, string CardNo, string? CardNumber);
 public sealed record FaceRef(Guid Id, int FDID);
