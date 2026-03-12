@@ -5,9 +5,11 @@ using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure.Devices;
 using Backend.Infrastructure.Persistence;
+using Backend.Infrastructure.System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Backend.Infrastructure.Devices.Services;
 
@@ -15,6 +17,7 @@ namespace Backend.Infrastructure.Devices.Services;
 public sealed class DevicePersonSyncService(
     AppDbContext dbContext,
     IConfiguration configuration,
+    IOptions<SystemOptions> systemOptions,
     ILogger<DevicePersonSyncService> logger) : IDevicePersonSyncService
 {
     private static string GetEmployeeNo(Employee e) =>
@@ -235,10 +238,10 @@ public sealed class DevicePersonSyncService(
 
         var body = JsonSerializer.Serialize(new { CardInfo = new { cardNo } });
         var client = CreateClient(device);
-        var (success, _, error) = await client.PutJsonAsync(
-            "ISAPI/AccessControl/CardInfo/Delete?format=json",
-            body,
-            cancellationToken);
+        var path = "ISAPI/AccessControl/CardInfo/Delete?format=json";
+        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
+        if (success) return new DeviceSyncResult(true, null);
+        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
         return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
     }
 
@@ -262,10 +265,10 @@ public sealed class DevicePersonSyncService(
         var faceLibType = 1;
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PutJsonAsync(
-            $"ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID={fdId}&faceLibType={faceLibType}&employeeNo={Uri.EscapeDataString(employeeNo)}",
-            "{}",
-            cancellationToken);
+        var path = $"ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID={fdId}&faceLibType={faceLibType}&employeeNo={Uri.EscapeDataString(employeeNo)}";
+        var (success, _, error) = await client.PostJsonAsync(path, "{}", cancellationToken);
+        if (success) return new DeviceSyncResult(true, null);
+        (success, _, error) = await client.PutJsonAsync(path, "{}", cancellationToken);
         return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
     }
 
@@ -280,11 +283,92 @@ public sealed class DevicePersonSyncService(
             FingerPrint = new { employeeNo, fingerPrintIndex = fingerIndex }
         });
         var client = CreateClient(device);
-        var (success, _, error) = await client.PutJsonAsync(
-            "ISAPI/AccessControl/FingerPrint/Delete?format=json",
-            body,
-            cancellationToken);
+        var path = "ISAPI/AccessControl/FingerPrint/Delete?format=json";
+        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
+        if (success) return new DeviceSyncResult(true, null);
+        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
         return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+    }
+
+    public async Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
+        if (device is null)
+            return new DeviceSyncResult(false, "Устройство не найдено.");
+
+        var client = CreateClient(device);
+        var escapedNo = Uri.EscapeDataString(employeeNo);
+
+        // DS-K1T670 может возвращать methodNotAllowed для PUT. Пробуем POST первым, затем PUT.
+        var pathJson = "ISAPI/AccessControl/UserInfoDetail/Delete?format=json";
+        var pathXml = "ISAPI/AccessControl/UserInfoDetail/Delete?format=xml";
+        var jsonBodies = new[]
+        {
+            JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = new[] { employeeNo } } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+            JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = employeeNo } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+            JsonSerializer.Serialize(new { UserInfoDetail = new { employeeNo } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+        };
+
+        string? lastError = null;
+
+        // 1. POST + JSON (некоторые устройства ожидают POST)
+        foreach (var body in jsonBodies)
+        {
+            var (success, _, error) = await client.PostAsync(pathJson, body, "application/json", cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+
+        // 2. PUT + JSON
+        foreach (var body in jsonBodies)
+        {
+            var (success, _, error) = await client.PutAsync(pathJson, body, "application/json", cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+
+        // 3. Query string
+        var (qsSuccess, _, qsError) = await client.PostAsync(
+            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
+            "{}",
+            "application/json",
+            cancellationToken);
+        if (qsSuccess) return new DeviceSyncResult(true, null);
+        lastError ??= qsError;
+
+        (qsSuccess, _, qsError) = await client.PutAsync(
+            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
+            "{}",
+            "application/json",
+            cancellationToken);
+        if (qsSuccess) return new DeviceSyncResult(true, null);
+        lastError ??= qsError;
+
+        // 4. XML — POST, PUT, DELETE
+        var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
+        var xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?>
+<UserInfoDetail xmlns=""http://www.hikvision.com/ver20/XMLSchema"">
+  <EmployeeNoList>
+    <EmployeeNo>{escaped}</EmployeeNo>
+  </EmployeeNoList>
+</UserInfoDetail>";
+
+        var (xmlSuccess, _, xmlError) = await client.PostAsync(pathXml, xmlBody, "application/xml", cancellationToken);
+        if (xmlSuccess) return new DeviceSyncResult(true, null);
+        lastError ??= xmlError;
+
+        (xmlSuccess, _, xmlError) = await client.PutAsync(pathXml, xmlBody, "application/xml", cancellationToken);
+        if (xmlSuccess) return new DeviceSyncResult(true, null);
+        lastError ??= xmlError;
+
+        var (delSuccess, _, _) = await client.DeleteAsync(
+            "ISAPI/AccessControl/UserInfoDetail/Delete",
+            xmlBody,
+            "application/xml",
+            cancellationToken);
+        if (delSuccess) return new DeviceSyncResult(true, null);
+
+        return new DeviceSyncResult(false, lastError);
     }
 
     private static int[] GetDoorRightForDevice(IEnumerable<AccessLevel?> accessLevels, Guid deviceId)
@@ -313,57 +397,57 @@ public sealed class DevicePersonSyncService(
         var givenName = parts.Length > 0 ? parts[0] : name;
         var familyName = parts.Length > 1 ? parts[1] : (parts.Length == 1 ? parts[0] : "");
 
-        var doorNo = doorRight.Length > 0
-            ? doorRight.Select(i => i + 1).ToArray()
-            : Array.Empty<int>();
+        // doorNo: 1-based для ISAPI. Если дверей нет — используем дверь 1 (обязательно для многих устройств).
+        var doorNoList = doorRight.Length > 0
+            ? doorRight.Select(i => i + 1).ToList()
+            : [1];
 
         var genderValue = string.IsNullOrWhiteSpace(gender) ? "unknown" : gender.Trim().ToLowerInvariant();
         if (genderValue is not ("male" or "female"))
             genderValue = "unknown";
 
-        var beginTime = validFromUtc?.ToString("yyyy-MM-ddTHH:mm:ssZ") ?? "1970-01-01T00:00:00Z";
-        var endTime = validToUtc?.ToString("yyyy-MM-ddTHH:mm:ssZ") ?? "2099-12-31T23:59:59Z";
+        // Формат без Z — устройства Hikvision (Value/Pro/Controllers) ожидают "yyyy-MM-ddTHH:mm:ss" в локальном времени (из глобальных настроек)
+        // По умолчанию: с сегодняшней даты до 31 дек 2037
+        var tz = GetTimeZone();
+        var todayUtc = DateTime.UtcNow.Date;
+        var defaultEndUtc = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+        var fromUtc = validFromUtc ?? todayUtc;
+        var toUtc = validToUtc ?? defaultEndUtc;
+        var beginTime = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
+        var endTime = TimeZoneInfo.ConvertTimeFromUtc(toUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
 
-        object userInfo;
-        if (doorNo.Length > 0)
-        {
-            userInfo = new
-            {
-                employeeNo,
-                name,
-                type = userType,
-                givenName,
-                familyName,
-                gender = genderValue,
-                personType = "normal",
-                personRole = "basic",
-                Valid = new { enable = true, beginTime, endTime, timeType = "local" },
-                doorRight = new { doorNo }
-            };
-        }
-        else
-        {
-            userInfo = new
-            {
-                employeeNo,
-                name,
-                type = userType,
-                givenName,
-                familyName,
-                gender = genderValue,
-                personType = "normal",
-                personRole = "basic",
-                Valid = new { enable = true, beginTime, endTime, timeType = "local" }
-            };
-        }
+        // doorRight — строка "1" или "1,2,3" (формат, ожидаемый Face Recognition Terminals и Controllers)
+        var doorRightStr = string.Join(",", doorNoList);
 
-        var body = JsonSerializer.Serialize(new { UserInfo = userInfo });
+        // RightPlan — обязателен (MessageParametersLack без него). planTemplateNo: "1" или 1 в зависимости от прошивки.
+        var rightPlan = doorNoList.Select(d => new { doorNo = d, planTemplateNo = "1" }).ToArray();
+
+        var userInfo = new
+        {
+            employeeNo,
+            no = employeeNo,
+            name,
+            type = userType,
+            userType = "normal",
+            givenName,
+            familyName,
+            gender = genderValue,
+            doorRight = doorRightStr,
+            RightPlan = rightPlan,
+            localUIRight = false,
+            maxOpenDoorTime = 0,
+            userVerifyMode = "",
+            password = "",
+            telNo = "",
+            email = "",
+            Valid = new { enable = true, beginTime, endTime, timeType = "local" }
+        };
+
+        // Пробуем camelCase (rightPlan) — некоторые прошивки ожидают его
+        var body = JsonSerializer.Serialize(new { UserInfo = userInfo }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/UserInfo/Record?format=json",
-            body,
-            cancellationToken);
+        var (success, error) = await TrySyncUserInfoWithRetryAsync(client, employeeNo, body, cancellationToken);
 
         if (!success)
         {
@@ -371,6 +455,68 @@ public sealed class DevicePersonSyncService(
             return new DeviceSyncResult(false, error ?? "Ошибка синхронизации пользователя.");
         }
         return new DeviceSyncResult(true, null);
+    }
+
+    private async Task<(bool Success, string? Error)> TrySyncUserInfoWithRetryAsync(IsapiClient client, string employeeNo, string body, CancellationToken cancellationToken)
+    {
+        // Record (POST) + Modify (PUT) — стандартная схема. SetUp даёт MessageParametersLack (другая структура).
+        var (success, _, error) = await client.PostJsonAsync(
+            "ISAPI/AccessControl/UserInfo/Record?format=json",
+            body,
+            cancellationToken);
+
+        if (success) return (true, null);
+
+        if (error != null && (error.Contains("employeeNoAlreadyExist", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase)))
+        {
+            logger.LogDebug("UserInfo Record: employeeNoAlreadyExist for {EmployeeNo}, retrying with Modify", employeeNo);
+            (success, _, error) = await client.PutJsonAsync(
+                "ISAPI/AccessControl/UserInfo/Modify?format=json",
+                body,
+                cancellationToken);
+            if (success) return (true, null);
+        }
+
+        if (IsConnectionError(error) && !cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(1500, cancellationToken);
+            (success, _, error) = await client.PostJsonAsync(
+                "ISAPI/AccessControl/UserInfo/Record?format=json",
+                body,
+                cancellationToken);
+            if (success) return (true, null);
+            if (error != null && (error.Contains("employeeNoAlreadyExist", StringComparison.OrdinalIgnoreCase) || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase)))
+            {
+                (success, _, error) = await client.PutJsonAsync(
+                    "ISAPI/AccessControl/UserInfo/Modify?format=json",
+                    body,
+                    cancellationToken);
+            }
+        }
+
+        return (success, error);
+    }
+
+    private static bool IsConnectionError(string? error) =>
+        error != null && (error.Contains("forcibly closed", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("connection reset", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("Ошибка сети", StringComparison.OrdinalIgnoreCase));
+
+    private TimeZoneInfo GetTimeZone()
+    {
+        var id = systemOptions.Value?.TimezoneId?.Trim();
+        if (string.IsNullOrEmpty(id) || string.Equals(id, "UTC", StringComparison.OrdinalIgnoreCase))
+            return TimeZoneInfo.Utc;
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(id);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            logger.LogWarning("TimezoneId '{TimezoneId}' not found, using UTC", id);
+            return TimeZoneInfo.Utc;
+        }
     }
 
     private IsapiClient CreateClient(Device device)
@@ -386,6 +532,6 @@ public sealed class DevicePersonSyncService(
             device.Port,
             cred.UserName ?? "admin",
             cred.Password ?? "",
-            TimeSpan.FromSeconds(15));
+            TimeSpan.FromSeconds(30));
     }
 }

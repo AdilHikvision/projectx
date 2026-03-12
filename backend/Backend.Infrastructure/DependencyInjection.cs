@@ -43,6 +43,7 @@ public static class DependencyInjection
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
         services.Configure<SeedAdminOptions>(configuration.GetSection("SeedAdmin"));
         services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
+        services.Configure<SystemOptions>(configuration.GetSection(SystemOptions.SectionName));
         services.Configure<SadpOptions>(configuration.GetSection(SadpOptions.SectionName));
 
         services.AddDbContext<AppDbContext>(options => options
@@ -72,6 +73,7 @@ public static class DependencyInjection
         services.AddScoped<IDeviceDoorService, DeviceDoorService>();
         services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();
         services.AddScoped<IDevicePersonSyncService, DevicePersonSyncService>();
+        services.AddScoped<IDevicePersonImportService, DevicePersonImportService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();

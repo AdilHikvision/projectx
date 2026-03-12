@@ -6,9 +6,10 @@ namespace Backend.Infrastructure.Devices;
 /// </summary>
 public static class IsapiPortHelper
 {
-    /// <summary>Порты для попытки ISAPI. Face Recognition Terminals могут использовать 80, 443 или 8000.</summary>
+    /// <summary>Порты для ISAPI. Документация Pro/Value/Controllers: ISAPI по HTTP на 80/443. Порт 8000 — SDK (бинарный), не HTTP.</summary>
     public static int[] GetPortsToTry(int devicePort)
     {
-        return devicePort == 8000 ? [80, 8000, 443] : [devicePort];
+        // DS-K1T670 и др.: ISAPI может быть на 8000, 80 или 443. Пробуем все.
+        return devicePort == 8000 ? [8000, 80, 443] : [devicePort];
     }
 }

@@ -25,10 +25,12 @@
 ### Формат
 - **Request/Response**: JSON (`?format=json`)
 - **Person ID**: `employeeNo` — уникальный идентификатор (до 32 байт)
-- **UserInfo/Record** (POST) — для Face Recognition Terminals (прошивка 2023+):
+- **UserInfo/Record** (POST) — для Face Recognition Terminals и Controllers:
   - `employeeNo`, `name`, `type` (1=активен, 2=неактивен)
-  - `givenName`, `familyName` — имя и фамилия (обязательны для новой прошивки)
-  - `doorRight.doorNo` — массив номеров дверей (1-based)
+  - `userType`, `givenName`, `familyName` — имя и фамилия (обязательны для новой прошивки)
+  - `doorRight` — строка: `"1"` или `"1,2,3"` (номера дверей 1-based)
+  - **RightPlan** — обязателен (иначе MessageParametersLack): массив `[{ doorNo, planTemplateNo: "1" }]`
+  - `localUIRight`, `maxOpenDoorTime`, `userVerifyMode` — для совместимости с Controllers
 
 ---
 
@@ -180,3 +182,11 @@ Content-Length: <length>
 3. **Базовый URL**: `http(s)://<device_ip>:<port>`
 4. **Проверка возможностей**: перед вызовом API проверять `GET /ISAPI/AccessControl/capabilities` и соответствующие `/capabilities` endpoints
 5. **Person ID (employeeNo)** — связующее поле для карт, отпечатков, лиц и радужки
+
+## 8. Порты (Pro/Value/Controllers)
+
+- **Порт 80**: HTTP — веб-интерфейс и ISAPI (основной для Face Recognition Terminals)
+- **Порт 443**: HTTPS — веб и ISAPI
+- **Порт 8000**: SDK (бинарный протокол), **не** HTTP. ISAPI по HTTP использует 80/443.
+
+При настройке устройства: порт 8000 в SADP — для SDK; ISAPI доступен на 80 (HTTP) или 443 (HTTPS). Убедитесь, что HTTP включён в настройках устройства (Configuration → Network → Advanced Settings → Other).

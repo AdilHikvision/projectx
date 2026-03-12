@@ -339,10 +339,12 @@ public sealed class DeviceDoorService(
         try
         {
             var doc = XDocument.Parse(content);
+            var root = doc.Root;
+            // Собираем только элементы дверей, исключая корневой контейнер GateStatus (иначе дубликат)
             var gateElements = doc.Descendants()
-                .Where(x => string.Equals(x.Name.LocalName, "gateStatus", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(x.Name.LocalName, "gate", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(x.Name.LocalName, "GateStatus", StringComparison.OrdinalIgnoreCase))
+                .Where(x => (string.Equals(x.Name.LocalName, "gateStatus", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.Name.LocalName, "gate", StringComparison.OrdinalIgnoreCase))
+                    && x != root)
                 .ToList();
 
             foreach (var gate in gateElements)
@@ -399,21 +401,17 @@ public sealed class DeviceDoorService(
                 }
             }
 
-            if (result.Count == 0)
+            if (result.Count == 0 && root != null)
             {
-                var root = doc.Root;
-                if (root != null)
+                var statusEl = root.Descendants().FirstOrDefault(x => string.Equals(x.Name.LocalName, "status", StringComparison.OrdinalIgnoreCase));
+                var noEl = root.Descendants().FirstOrDefault(x =>
+                    string.Equals(x.Name.LocalName, "gateNo", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.Name.LocalName, "gateIndex", StringComparison.OrdinalIgnoreCase));
+                if (statusEl != null || noEl != null)
                 {
-                    var statusEl = root.Descendants().FirstOrDefault(x => string.Equals(x.Name.LocalName, "status", StringComparison.OrdinalIgnoreCase));
-                    var noEl = root.Descendants().FirstOrDefault(x =>
-                        string.Equals(x.Name.LocalName, "gateNo", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(x.Name.LocalName, "gateIndex", StringComparison.OrdinalIgnoreCase));
-                    if (statusEl != null || noEl != null)
-                    {
-                        var doorNo = noEl != null && int.TryParse(noEl.Value?.Trim(), out var n) ? n : 1;
-                        var doorIndex = doorNo > 0 ? doorNo - 1 : 0;
-                        result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, null, statusEl?.Value?.Trim()));
-                    }
+                    var doorNo = noEl != null && int.TryParse(noEl.Value?.Trim(), out var n) ? n : 1;
+                    var doorIndex = doorNo > 0 ? doorNo - 1 : 0;
+                    result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, null, statusEl?.Value?.Trim()));
                 }
             }
         }
