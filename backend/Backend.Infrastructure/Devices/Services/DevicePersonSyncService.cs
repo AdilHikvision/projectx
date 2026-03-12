@@ -25,7 +25,9 @@ public sealed class DevicePersonSyncService(
         : !string.IsNullOrWhiteSpace(e.PersonnelNumber) ? e.PersonnelNumber.Trim()
         : e.Id.ToString("N")[..Math.Min(32, 32)];
 
-    private static string GetEmployeeNo(Visitor v) => v.Id.ToString("N")[..Math.Min(32, 32)];
+    private static string GetEmployeeNo(Visitor v) =>
+        !string.IsNullOrWhiteSpace(v.DocumentNumber) ? v.DocumentNumber.Trim()
+        : v.Id.ToString("N")[..Math.Min(32, 32)];
 
     private static string TruncateEmployeeNo(string s)
     {
@@ -76,7 +78,7 @@ public sealed class DevicePersonSyncService(
         var name = $"{visitor.FirstName} {visitor.LastName}".Trim();
         var doorRight = GetDoorRightForDevice(visitor.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, deviceId);
 
-        return await SyncUserInfoAsync(device, employeeNo, name, visitor.IsActive ? 1 : 2, doorRight, cancellationToken: cancellationToken);
+        return await SyncUserInfoAsync(device, employeeNo, name, visitor.IsActive ? 1 : 2, doorRight, userCategory: "visitor", cancellationToken: cancellationToken);
     }
 
     public async Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default)
@@ -299,76 +301,90 @@ public sealed class DevicePersonSyncService(
         var client = CreateClient(device);
         var escapedNo = Uri.EscapeDataString(employeeNo);
 
-        // DS-K1T670 может возвращать methodNotAllowed для PUT. Пробуем POST первым, затем PUT.
-        var pathJson = "ISAPI/AccessControl/UserInfoDetail/Delete?format=json";
-        var pathXml = "ISAPI/AccessControl/UserInfoDetail/Delete?format=xml";
-        var jsonBodies = new[]
+        // DS-K1T670, DS-K1T341 и др. ожидают "mode": "byEmployeeNo" и массив объектов в "EmployeeNoList"
+        // Большинство терминалов используют PUT для UserInfoDetail/Delete.
+        var pathUserInfoDetail = "ISAPI/AccessControl/UserInfoDetail/Delete?format=json";
+        
+        var jsonBodies = new List<string>
         {
+            // 1. Стандартный современный формат (Pro/Value series)
+            JsonSerializer.Serialize(new
+            {
+                UserInfoDetail = new
+                {
+                    mode = "byEmployeeNo",
+                    EmployeeNoList = new[] { new { employeeNo } }
+                }
+            }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+
+            // 2. Вариант с PascalCase для employeeNo
+            JsonSerializer.Serialize(new
+            {
+                UserInfoDetail = new
+                {
+                    mode = "byEmployeeNo",
+                    EmployeeNoList = new[] { new { EmployeeNo = employeeNo } }
+                }
+            }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+
+            // 3. Формат без mode (как был ранее, для старых прошивок)
             JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = new[] { employeeNo } } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
-            JsonSerializer.Serialize(new { UserInfoDetail = new { EmployeeNoList = new { EmployeeNo = employeeNo } } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
-            JsonSerializer.Serialize(new { UserInfoDetail = new { employeeNo } }, new JsonSerializerOptions { PropertyNamingPolicy = null }),
+            
+            // 4. Упрощенный формат
+            JsonSerializer.Serialize(new { UserInfoDetail = new { employeeNo } }, new JsonSerializerOptions { PropertyNamingPolicy = null })
         };
 
         string? lastError = null;
 
-        // 1. POST + JSON (некоторые устройства ожидают POST)
+        // Попытка 1: UserInfoDetail/Delete (PUT — основной метод для терминалов)
         foreach (var body in jsonBodies)
         {
-            var (success, _, error) = await client.PostAsync(pathJson, body, "application/json", cancellationToken);
+            var (success, _, error) = await client.PutAsync(pathUserInfoDetail, body, "application/json", cancellationToken);
             if (success) return new DeviceSyncResult(true, null);
             lastError = error;
         }
 
-        // 2. PUT + JSON
+        // Попытка 2: UserInfoDetail/Delete (POST — для некоторых контроллеров)
         foreach (var body in jsonBodies)
         {
-            var (success, _, error) = await client.PutAsync(pathJson, body, "application/json", cancellationToken);
+            var (success, _, error) = await client.PostAsync(pathUserInfoDetail, body, "application/json", cancellationToken);
             if (success) return new DeviceSyncResult(true, null);
             lastError = error;
         }
 
-        // 3. Query string
-        var (qsSuccess, _, qsError) = await client.PostAsync(
-            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
+        // Попытка 3: UserInfo/Delete ( fallback для старых устройств)
+        var pathUserInfoSimple = "ISAPI/AccessControl/UserInfo/Delete?format=json";
+        var simpleBody = JsonSerializer.Serialize(new { UserInfo = new { employeeNo } }, new JsonSerializerOptions { PropertyNamingPolicy = null });
+        var (s3, _, e3) = await client.PutAsync(pathUserInfoSimple, simpleBody, "application/json", cancellationToken);
+        if (s3) return new DeviceSyncResult(true, null);
+        (s3, _, e3) = await client.PostAsync(pathUserInfoSimple, simpleBody, "application/json", cancellationToken);
+        if (s3) return new DeviceSyncResult(true, null);
+
+        // Попытка 4: Query string (если тело вообще не принимается)
+        var (qsSuccess, _, qsError) = await client.PutAsync(
+            $"{pathUserInfoDetail}&employeeNo={escapedNo}",
             "{}",
             "application/json",
             cancellationToken);
         if (qsSuccess) return new DeviceSyncResult(true, null);
-        lastError ??= qsError;
 
-        (qsSuccess, _, qsError) = await client.PutAsync(
-            $"ISAPI/AccessControl/UserInfoDetail/Delete?format=json&employeeNo={escapedNo}",
-            "{}",
-            "application/json",
-            cancellationToken);
-        if (qsSuccess) return new DeviceSyncResult(true, null);
-        lastError ??= qsError;
-
-        // 4. XML — POST, PUT, DELETE
+        // Попытка 5: XML (последний шанс)
         var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
         var xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?>
 <UserInfoDetail xmlns=""http://www.hikvision.com/ver20/XMLSchema"">
+  <mode>byEmployeeNo</mode>
   <EmployeeNoList>
     <EmployeeNo>{escaped}</EmployeeNo>
   </EmployeeNoList>
 </UserInfoDetail>";
 
-        var (xmlSuccess, _, xmlError) = await client.PostAsync(pathXml, xmlBody, "application/xml", cancellationToken);
+        var (xmlSuccess, _, xmlError) = await client.PutAsync("ISAPI/AccessControl/UserInfoDetail/Delete?format=xml", xmlBody, "application/xml", cancellationToken);
         if (xmlSuccess) return new DeviceSyncResult(true, null);
-        lastError ??= xmlError;
-
-        (xmlSuccess, _, xmlError) = await client.PutAsync(pathXml, xmlBody, "application/xml", cancellationToken);
+        
+        (xmlSuccess, _, xmlError) = await client.PostAsync("ISAPI/AccessControl/UserInfoDetail/Delete?format=xml", xmlBody, "application/xml", cancellationToken);
         if (xmlSuccess) return new DeviceSyncResult(true, null);
-        lastError ??= xmlError;
 
-        var (delSuccess, _, _) = await client.DeleteAsync(
-            "ISAPI/AccessControl/UserInfoDetail/Delete",
-            xmlBody,
-            "application/xml",
-            cancellationToken);
-        if (delSuccess) return new DeviceSyncResult(true, null);
-
-        return new DeviceSyncResult(false, lastError);
+        return new DeviceSyncResult(false, lastError ?? xmlError);
     }
 
     private static int[] GetDoorRightForDevice(IEnumerable<AccessLevel?> accessLevels, Guid deviceId)
@@ -391,6 +407,7 @@ public sealed class DevicePersonSyncService(
         string? gender = null,
         DateTime? validFromUtc = null,
         DateTime? validToUtc = null,
+        string userCategory = "normal",
         CancellationToken cancellationToken = default)
     {
         var parts = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
@@ -428,7 +445,7 @@ public sealed class DevicePersonSyncService(
             no = employeeNo,
             name,
             type = userType,
-            userType = "normal",
+            userType = userCategory,
             givenName,
             familyName,
             gender = genderValue,

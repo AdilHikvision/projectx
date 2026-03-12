@@ -407,7 +407,7 @@ export function PeopleManagementPage() {
         body: JSON.stringify({ deviceIds: importSelectedDeviceIds }),
       })
       setImportResult(res)
-      await loadEmployees()
+      await Promise.all([loadEmployees(), loadVisitors()])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed')
     } finally {

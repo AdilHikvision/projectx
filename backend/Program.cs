@@ -850,17 +850,7 @@ app.MapGet("/api/employees", async (
 
 app.MapGet("/api/employees/next-personnel-number", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var numbers = await dbContext.Employees
-        .Where(x => x.PersonnelNumber != null && x.PersonnelNumber != "")
-        .Select(x => x.PersonnelNumber!)
-        .ToListAsync(cancellationToken);
-    var max = 0;
-    foreach (var n in numbers)
-    {
-        if (int.TryParse(n.Trim(), out var val) && val > max)
-            max = val;
-    }
-    return Results.Ok(new { nextPersonnelNumber = (max + 1).ToString() });
+    return Results.Ok(new { nextPersonnelNumber = await GetNextPersonIdAsync(dbContext, cancellationToken) });
 }).RequireAuthorization();
 
 app.MapGet("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -888,31 +878,23 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
     if (personnelNumber == null)
     {
-        var numbers = await dbContext.Employees
-            .Where(x => x.PersonnelNumber != null && x.PersonnelNumber != "")
-            .Select(x => x.PersonnelNumber!)
-            .ToListAsync(cancellationToken);
-        var max = 0;
-        foreach (var n in numbers)
-        {
-            if (int.TryParse(n.Trim(), out var val) && val > max)
-                max = val;
-        }
-        personnelNumber = (max + 1).ToString();
+        personnelNumber = await GetNextPersonIdAsync(dbContext, cancellationToken);
     }
     else
     {
-        var exists = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == personnelNumber, cancellationToken);
-        if (exists)
-            return Results.Conflict(new { message = "Сотрудник с таким табельным номером уже существует." });
+        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == personnelNumber, cancellationToken);
+        var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == personnelNumber, cancellationToken);
+        if (existsInEmployees || existsInVisitors)
+            return Results.Conflict(new { message = "Такой номер уже занят другим сотрудником или посетителем." });
     }
 
     var employeeNo = string.IsNullOrWhiteSpace(request.EmployeeNo) ? personnelNumber : request.EmployeeNo.Trim();
     if (employeeNo != null)
     {
-        var exists = await dbContext.Employees.AnyAsync(x => x.EmployeeNo == employeeNo, cancellationToken);
-        if (exists)
-            return Results.Conflict(new { message = "Сотрудник с таким Employee ID уже существует." });
+        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.EmployeeNo == employeeNo, cancellationToken);
+        var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == employeeNo, cancellationToken);
+        if (existsInEmployees || existsInVisitors)
+            return Results.Conflict(new { message = "Такой Employee ID уже занят другим сотрудником или посетителем." });
     }
 
     // По умолчанию: с сегодняшней даты до 31 дек 2037
@@ -1174,17 +1156,7 @@ app.MapGet("/api/visitors", async (
 
 app.MapGet("/api/visitors/next-document-number", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var numbers = await dbContext.Visitors
-        .Where(x => x.DocumentNumber != null && x.DocumentNumber != "")
-        .Select(x => x.DocumentNumber!)
-        .ToListAsync(cancellationToken);
-    var max = 0;
-    foreach (var n in numbers)
-    {
-        if (int.TryParse(n.Trim(), out var val) && val > max)
-            max = val;
-    }
-    return Results.Ok(new { nextDocumentNumber = (max + 1).ToString() });
+    return Results.Ok(new { nextDocumentNumber = await GetNextPersonIdAsync(dbContext, cancellationToken) });
 }).RequireAuthorization();
 
 app.MapGet("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -1209,17 +1181,14 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
     var documentNumber = string.IsNullOrWhiteSpace(request.DocumentNumber) ? null : request.DocumentNumber.Trim();
     if (documentNumber == null)
     {
-        var numbers = await dbContext.Visitors
-            .Where(x => x.DocumentNumber != null && x.DocumentNumber != "")
-            .Select(x => x.DocumentNumber!)
-            .ToListAsync(cancellationToken);
-        var max = 0;
-        foreach (var n in numbers)
-        {
-            if (int.TryParse(n.Trim(), out var val) && val > max)
-                max = val;
-        }
-        documentNumber = (max + 1).ToString();
+        documentNumber = await GetNextPersonIdAsync(dbContext, cancellationToken);
+    }
+    else
+    {
+        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == documentNumber || x.EmployeeNo == documentNumber, cancellationToken);
+        var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == documentNumber, cancellationToken);
+        if (existsInEmployees || existsInVisitors)
+            return Results.Conflict(new { message = "Такой номер документа уже занят другим сотрудником или посетителем." });
     }
 
     var entity = new Visitor
@@ -1341,7 +1310,9 @@ app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext,
     if (entity is null)
         return Results.NotFound();
 
-    var employeeNo = entity.Id.ToString("N")[..Math.Min(32, 32)];
+    var employeeNo = !string.IsNullOrWhiteSpace(entity.DocumentNumber)
+        ? entity.DocumentNumber.Trim()
+        : entity.Id.ToString("N")[..Math.Min(32, 32)];
 
     var deviceIds = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
     var syncWarnings = new List<string>();
@@ -1657,7 +1628,7 @@ app.MapDelete("/api/fingerprints/{id:guid}", async (Guid id, AppDbContext dbCont
     if (fp is null) return Results.NotFound();
     var employeeNo = fp.Employee != null
         ? (string.IsNullOrWhiteSpace(fp.Employee.EmployeeNo) ? fp.Employee.PersonnelNumber : fp.Employee.EmployeeNo) ?? fp.Employee.Id.ToString("N")[..32]
-        : fp.Visitor!.Id.ToString("N")[..32];
+        : (!string.IsNullOrWhiteSpace(fp.Visitor!.DocumentNumber) ? fp.Visitor.DocumentNumber.Trim() : fp.Visitor.Id.ToString("N")[..32]);
     var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
     foreach (var deviceId in devices)
         _ = syncService.DeleteFingerprintFromDeviceAsync(employeeNo, fp.FingerIndex, deviceId, cancellationToken);
@@ -1857,6 +1828,35 @@ static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
     var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
     return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.VisitDateUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
+}
+
+static async Task<string> GetNextPersonIdAsync(AppDbContext dbContext, CancellationToken cancellationToken)
+{
+    var empNums = await dbContext.Employees
+        .Select(x => new { x.PersonnelNumber, x.EmployeeNo })
+        .ToListAsync(cancellationToken);
+    
+    var visNums = await dbContext.Visitors
+        .Select(x => x.DocumentNumber)
+        .ToListAsync(cancellationToken);
+
+    var max = 0;
+    void TryUpdateMax(string? s)
+    {
+        if (int.TryParse(s?.Trim(), out var val) && val > max) max = val;
+    }
+
+    foreach (var e in empNums)
+    {
+        TryUpdateMax(e.PersonnelNumber);
+        TryUpdateMax(e.EmployeeNo);
+    }
+    foreach (var v in visNums)
+    {
+        TryUpdateMax(v);
+    }
+
+    return (max + 1).ToString();
 }
 
 static string TruncateEmployeeNo(string s)
