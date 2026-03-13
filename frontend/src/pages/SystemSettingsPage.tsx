@@ -3,19 +3,22 @@ import { useLocation } from 'react-router-dom'
 import { AppLayout } from '../components/templates'
 import { Button } from '../components/atoms'
 import { PageHeader } from '../components/organisms'
+import { CompanyTab } from './CompanyTab'
 import { DevicesTab } from './DevicesTab'
 
 export function SystemSettingsPage() {
     const location = useLocation()
     const queryParams = new URLSearchParams(location.search)
-    const initialTab = queryParams.get('tab') === 'devices' ? 'devices' : 'global'
+    const tabParam = queryParams.get('tab')
+    const initialTab = tabParam === 'devices' ? 'devices' : tabParam === 'company' ? 'company' : 'global'
 
-    const [activeTab, setActiveTab] = useState<'global' | 'devices'>(initialTab)
+    const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company'>(initialTab)
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
 
     useEffect(() => {
         const tab = new URLSearchParams(location.search).get('tab')
         if (tab === 'devices') setActiveTab('devices')
+        else if (tab === 'company') setActiveTab('company')
         else if (tab === 'global') setActiveTab('global')
     }, [location.search])
 
@@ -43,6 +46,13 @@ export function SystemSettingsPage() {
                                 }`}
                         >
                             Global Settings
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('company')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'company' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            Company
                         </button>
                         <button
                             onClick={() => setActiveTab('devices')}
@@ -132,6 +142,10 @@ export function SystemSettingsPage() {
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    ) : activeTab === 'company' ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <CompanyTab />
                         </div>
                     ) : (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">

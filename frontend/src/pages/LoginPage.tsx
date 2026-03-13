@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input } from '../components/atoms'
@@ -124,7 +124,7 @@ export function LoginPage() {
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center px-1">
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Password</label>
-                  <a href="#" className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest transition-colors">Forgot?</a>
+                  <Link to="/forgot-password" className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest transition-colors">Forgot?</Link>
                 </div>
                 <div className="relative">
                   <Input

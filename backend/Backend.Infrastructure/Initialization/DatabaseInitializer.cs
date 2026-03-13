@@ -39,6 +39,14 @@ public sealed class DatabaseInitializer(
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_devices_DeviceIdentifier" ON devices ("DeviceIdentifier")
             """, cancellationToken);
 
+        // Remove PersonnelNumber (deprecated)
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            DROP INDEX IF EXISTS "IX_employees_PersonnelNumber"
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE employees DROP COLUMN IF EXISTS "PersonnelNumber"
+            """, cancellationToken);
+
         // AddCardsFacesFingerprints: EmployeeNo и таблицы cards/faces/fingerprints
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS "EmployeeNo" character varying(32)
@@ -54,6 +62,18 @@ public sealed class DatabaseInitializer(
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE employees ADD COLUMN IF NOT EXISTS "ValidToUtc" timestamp with time zone
             """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE employees ADD COLUMN IF NOT EXISTS "OnlyVerify" boolean DEFAULT false
+            """, cancellationToken);
+
+        // Visitor ValidFromUtc, ValidToUtc (model has them, migration missed visitors table)
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE visitors ADD COLUMN IF NOT EXISTS "ValidFromUtc" timestamp with time zone
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE visitors ADD COLUMN IF NOT EXISTS "ValidToUtc" timestamp with time zone
+            """, cancellationToken);
+
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_employees_EmployeeNo" ON employees ("EmployeeNo") WHERE "EmployeeNo" IS NOT NULL
             """, cancellationToken);

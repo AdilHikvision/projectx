@@ -301,6 +301,54 @@ app.MapPost("/api/auth/setup-admin-password", async (
     return Results.Ok(new { message = "Password set successfully." });
 }).AllowAnonymous();
 
+app.MapPost("/api/auth/forgot-password", async (
+    ForgotPasswordRequest request,
+    UserManager<ApplicationUser> userManager,
+    IHostEnvironment env,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email))
+        return Results.BadRequest(new { message = "Email is required." });
+
+    var user = await userManager.FindByEmailAsync(request.Email.Trim());
+    if (user is null)
+        return Results.Ok(new { message = "If an account exists with this email, a reset link has been sent." });
+
+    var token = await userManager.GeneratePasswordResetTokenAsync(user);
+    if (env.IsDevelopment())
+        return Results.Ok(new { message = "Password reset token generated.", token });
+    return Results.Ok(new { message = "If an account exists with this email, a reset link has been sent." });
+}).AllowAnonymous();
+
+app.MapPost("/api/auth/reset-password", async (
+    ResetPasswordRequest request,
+    UserManager<ApplicationUser> userManager,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Email))
+        return Results.BadRequest(new { message = "Email is required." });
+    if (string.IsNullOrWhiteSpace(request.Token))
+        return Results.BadRequest(new { message = "Reset token is required." });
+    if (string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { message = "Password is required." });
+    if (request.Password != request.ConfirmPassword)
+        return Results.BadRequest(new { message = "Passwords do not match." });
+    if (request.Password.Length < 8)
+        return Results.BadRequest(new { message = "Password must be at least 8 characters." });
+
+    var user = await userManager.FindByEmailAsync(request.Email.Trim());
+    if (user is null)
+        return Results.BadRequest(new { message = "Invalid email or token." });
+
+    var result = await userManager.ResetPasswordAsync(user, request.Token, request.Password);
+    if (!result.Succeeded)
+    {
+        var err = string.Join("; ", result.Errors.Select(e => e.Description));
+        return Results.BadRequest(new { message = err });
+    }
+    return Results.Ok(new { message = "Password has been reset. You can now sign in." });
+}).AllowAnonymous();
+
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) =>
 {
     var id = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
@@ -667,6 +715,106 @@ app.MapGet("/api/devices/{id:guid}/isapi-test", async (
     return Results.Ok(new { success, error, deviceAddress = $"{device.IpAddress}:{device.Port}", contentLength = content?.Length ?? 0 });
 }).RequireAuthorization();
 
+app.MapGet("/api/devices/{id:guid}/users-raw", async (
+    Guid id,
+    string? format,
+    AppDbContext dbContext,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.FindAsync([id], cancellationToken);
+    if (device is null) return Results.NotFound();
+
+    var username = configuration["Hikvision:Username"] ?? "admin";
+    var password = (configuration["Hikvision:Password"] ?? "").Trim();
+    if (string.IsNullOrEmpty(password)) password = "12345";
+    var cred = new NetworkCredential(
+        string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
+        string.IsNullOrWhiteSpace(device.Password) ? password : device.Password);
+
+    var client = new IsapiClient(device.IpAddress, device.Port, cred.UserName ?? "admin", cred.Password ?? "", TimeSpan.FromSeconds(15));
+    var fmt = string.Equals(format, "xml", StringComparison.OrdinalIgnoreCase) ? "xml" : "json";
+
+    var searchBody = fmt == "xml"
+        ? """<?xml version="1.0" encoding="UTF-8"?><UserInfoSearchCond xmlns="http://www.isapi.org/ver20/XMLSchema"><searchID>""" + Guid.NewGuid().ToString("N")[..20] + """</searchID><searchResultPosition>0</searchResultPosition><maxResults>100</maxResults></UserInfoSearchCond>"""
+        : System.Text.Json.JsonSerializer.Serialize(new { UserInfoSearchCond = new { searchID = Guid.NewGuid().ToString("N")[..20], searchResultPosition = 0, maxResults = 100 } });
+    var contentType = fmt == "xml" ? "application/xml" : "application/json";
+
+    var (success, content, error) = await client.PostAsync(
+        $"ISAPI/AccessControl/UserInfo/Search?format={fmt}",
+        searchBody,
+        contentType,
+        cancellationToken);
+
+    if (!success)
+        return Results.BadRequest(new { error, deviceAddress = $"{device.IpAddress}:{device.Port}" });
+
+    return Results.Content(content ?? "", fmt == "xml" ? "application/xml" : "application/json");
+}).RequireAuthorization();
+
+// Прямой запрос к устройству (без БД) — для просмотра реальной структуры ответа. Только Development.
+app.MapGet("/api/devices/users-raw-direct", async (
+    string ip,
+    int? port,
+    string? username,
+    string? password,
+    string? format,
+    IHostEnvironment env,
+    CancellationToken cancellationToken) =>
+{
+    if (!env.IsDevelopment())
+        return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(ip) || !IPAddress.TryParse(ip.Trim(), out _))
+        return Results.BadRequest(new { error = "ip required (e.g. 192.168.1.64)" });
+
+    var p = port ?? 80;
+    var user = string.IsNullOrWhiteSpace(username) ? "admin" : username.Trim();
+    var pass = string.IsNullOrWhiteSpace(password) ? "12345" : password;
+    var fmt = string.Equals(format, "xml", StringComparison.OrdinalIgnoreCase) ? "xml" : "json";
+
+    var client = new IsapiClient(ip.Trim(), p, user, pass, TimeSpan.FromSeconds(15));
+    var searchBody = fmt == "xml"
+        ? """<?xml version="1.0" encoding="UTF-8"?><UserInfoSearchCond xmlns="http://www.isapi.org/ver20/XMLSchema"><searchID>""" + Guid.NewGuid().ToString("N")[..20] + """</searchID><searchResultPosition>0</searchResultPosition><maxResults>100</maxResults></UserInfoSearchCond>"""
+        : System.Text.Json.JsonSerializer.Serialize(new { UserInfoSearchCond = new { searchID = Guid.NewGuid().ToString("N")[..20], searchResultPosition = 0, maxResults = 100 } });
+    var contentType = fmt == "xml" ? "application/xml" : "application/json";
+
+    var (success, content, error) = await client.PostAsync(
+        $"ISAPI/AccessControl/UserInfo/Search?format={fmt}",
+        searchBody,
+        contentType,
+        cancellationToken);
+
+    if (!success)
+        return Results.BadRequest(new { error, device = $"{ip}:{p}" });
+
+    return Results.Content(content ?? "", fmt == "xml" ? "application/xml" : "application/json");
+}).AllowAnonymous();
+
+app.MapPost("/api/devices/{id:guid}/faces/capture", async (
+    Guid id,
+    CaptureFaceRequest request,
+    IDeviceFaceCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.PersonId) || !Guid.TryParse(request.PersonId, out var personId))
+        return Results.BadRequest(new { message = "PersonId обязателен." });
+    if (string.IsNullOrWhiteSpace(request.PersonType) || (request.PersonType != "employee" && request.PersonType != "visitor"))
+        return Results.BadRequest(new { message = "PersonType должен быть 'employee' или 'visitor'." });
+    var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, cancellationToken);
+    if (!result.Success)
+        return Results.BadRequest(new { message = result.Message });
+    return Results.Ok();
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/faces/capture/progress", async (
+    Guid id,
+    IDeviceFaceCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    var progress = await captureService.GetProgressAsync(id, cancellationToken);
+    return Results.Ok(new { progress.Status, progress.Progress, progress.Message, progress.FaceId });
+}).RequireAuthorization();
+
 app.MapGet("/api/devices/statuses", async (
     AppDbContext dbContext,
     IDeviceArpStatusService arpStatusService,
@@ -820,6 +968,121 @@ app.MapDelete("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbCon
     return Results.NoContent();
 }).RequireAuthorization();
 
+// Departments (древовидная структура отделов)
+app.MapGet("/api/departments", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var list = await dbContext.Departments
+        .AsNoTracking()
+        .OrderBy(x => x.SortOrder)
+        .ThenBy(x => x.Name)
+        .ToListAsync(cancellationToken);
+    var childCounts = await dbContext.Departments.Where(d => d.ParentId != null).GroupBy(d => d.ParentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(d => new DepartmentResponse(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId,
+        childCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0,
+        empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0,
+        visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)));
+}).RequireAuthorization();
+
+app.MapGet("/api/departments/tree", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var list = await dbContext.Departments.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync(cancellationToken);
+    var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+app.MapGet("/api/departments/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Departments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+}).RequireAuthorization();
+
+app.MapPost("/api/departments", async (CreateDepartmentRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    if (request.ParentId.HasValue)
+    {
+        var parentExists = await dbContext.Departments.AnyAsync(x => x.Id == request.ParentId.Value, cancellationToken);
+        if (!parentExists)
+            return Results.BadRequest(new { message = "Parent department not found." });
+    }
+
+    var maxOrder = await dbContext.Departments
+        .Where(d => d.ParentId == request.ParentId)
+        .Select(d => (int?)d.SortOrder)
+        .MaxAsync(cancellationToken) ?? -1;
+
+    var entity = new Department
+    {
+        Id = Guid.NewGuid(),
+        Name = name,
+        Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+        SortOrder = maxOrder + 1,
+        ParentId = request.ParentId,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Departments.Add(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Created($"/api/departments/{entity.Id}", new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+}).RequireAuthorization();
+
+app.MapPut("/api/departments/{id:guid}", async (Guid id, UpdateDepartmentRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Departments.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    var hasConflict = await dbContext.Departments.AnyAsync(x => x.Id != id && x.Name == name && x.ParentId == entity.ParentId, cancellationToken);
+    if (hasConflict)
+        return Results.Conflict(new { message = "Department with this name already exists in the same level." });
+
+    if (request.ParentId.HasValue && request.ParentId.Value == id)
+        return Results.BadRequest(new { message = "Department cannot be its own parent." });
+
+    if (request.ParentId.HasValue)
+    {
+        var parentExists = await dbContext.Departments.AnyAsync(x => x.Id == request.ParentId.Value, cancellationToken);
+        if (!parentExists)
+            return Results.BadRequest(new { message = "Parent department not found." });
+    }
+
+    entity.Name = name;
+    entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+    entity.SortOrder = request.SortOrder ?? entity.SortOrder;
+    entity.ParentId = request.ParentId;
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+}).RequireAuthorization();
+
+app.MapDelete("/api/departments/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Departments
+        .Include(x => x.Children)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    if (entity.Children.Count > 0)
+        return Results.BadRequest(new { message = "Cannot delete department with sub-departments. Move or delete them first." });
+
+    dbContext.Departments.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
 // Employees
 app.MapGet("/api/employees", async (
     string? search,
@@ -830,6 +1093,7 @@ app.MapGet("/api/employees", async (
     var query = dbContext.Employees.AsNoTracking()
         .Include(e => e.AccessLevels)
         .ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Department)
         .Include(e => e.Cards)
         .Include(e => e.Faces)
         .Include(e => e.Fingerprints)
@@ -842,7 +1106,7 @@ app.MapGet("/api/employees", async (
         query = query.Where(e =>
             (e.FirstName != null && e.FirstName.ToLower().Contains(s)) ||
             (e.LastName != null && e.LastName.ToLower().Contains(s)) ||
-            (e.PersonnelNumber != null && e.PersonnelNumber.ToLower().Contains(s)));
+            (e.EmployeeNo != null && e.EmployeeNo.ToLower().Contains(s)));
     }
     var list = await query.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToListAsync(cancellationToken);
     return Results.Ok(list.Select(MapEmployeeResponse));
@@ -859,6 +1123,7 @@ app.MapGet("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, C
         .AsNoTracking()
         .Include(x => x.AccessLevels)
         .ThenInclude(a => a.AccessLevel)
+        .Include(x => x.Department)
         .Include(x => x.Cards)
         .Include(x => x.Faces)
         .Include(x => x.Fingerprints)
@@ -875,42 +1140,24 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
         return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
 
-    var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
-    if (personnelNumber == null)
-    {
-        personnelNumber = await GetNextPersonIdAsync(dbContext, cancellationToken);
-    }
-    else
-    {
-        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == personnelNumber, cancellationToken);
-        var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == personnelNumber, cancellationToken);
-        if (existsInEmployees || existsInVisitors)
-            return Results.Conflict(new { message = "Такой номер уже занят другим сотрудником или посетителем." });
-    }
-
-    var employeeNo = string.IsNullOrWhiteSpace(request.EmployeeNo) ? personnelNumber : request.EmployeeNo.Trim();
-    if (employeeNo != null)
-    {
-        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.EmployeeNo == employeeNo, cancellationToken);
-        var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == employeeNo, cancellationToken);
-        if (existsInEmployees || existsInVisitors)
-            return Results.Conflict(new { message = "Такой Employee ID уже занят другим сотрудником или посетителем." });
-    }
+    var entityId = Guid.NewGuid();
+    var employeeNo = entityId.ToString("N")[..32];
 
     // По умолчанию: с сегодняшней даты до 31 дек 2037
     var defaultValidFrom = DateTime.UtcNow.Date;
     var defaultValidTo = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
     var entity = new Employee
     {
-        Id = Guid.NewGuid(),
+        Id = entityId,
         FirstName = firstName,
         LastName = lastName,
-        PersonnelNumber = personnelNumber,
-        EmployeeNo = employeeNo ?? personnelNumber,
+        EmployeeNo = employeeNo,
         Gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim().ToLowerInvariant(),
         ValidFromUtc = request.ValidFromUtc ?? defaultValidFrom,
         ValidToUtc = request.ValidToUtc ?? defaultValidTo,
         IsActive = true,
+        OnlyVerify = request.OnlyVerify ?? false,
+        DepartmentId = request.DepartmentId,
         CreatedUtc = DateTime.UtcNow
     };
     dbContext.Employees.Add(entity);
@@ -946,10 +1193,11 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
 
     var created = await dbContext.Employees
         .Include(e => e.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Department)
         .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
         .FirstAsync(x => x.Id == entity.Id, cancellationToken);
     var createdResp = MapEmployeeDetailResponse(created);
-    return Results.Created($"/api/employees/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.PersonnelNumber, createdResp.EmployeeNo, createdResp.Gender, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Created($"/api/employees/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.EmployeeNo, createdResp.Gender, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.OnlyVerify, createdResp.Department, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -965,30 +1213,15 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
     if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
         return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
 
-    var personnelNumber = string.IsNullOrWhiteSpace(request.PersonnelNumber) ? null : request.PersonnelNumber.Trim();
-    if (personnelNumber != null)
-    {
-        var exists = await dbContext.Employees.AnyAsync(x => x.Id != id && x.PersonnelNumber == personnelNumber, cancellationToken);
-        if (exists)
-            return Results.Conflict(new { message = "Сотрудник с таким табельным номером уже существует." });
-    }
-
-    var employeeNo = request.EmployeeNo != null ? (string.IsNullOrWhiteSpace(request.EmployeeNo) ? null : request.EmployeeNo.Trim()) : entity.EmployeeNo;
-    if (employeeNo != null)
-    {
-        var exists = await dbContext.Employees.AnyAsync(x => x.Id != id && x.EmployeeNo == employeeNo, cancellationToken);
-        if (exists)
-            return Results.Conflict(new { message = "Сотрудник с таким Employee ID уже существует." });
-    }
-
     entity.FirstName = firstName;
     entity.LastName = lastName;
-    entity.PersonnelNumber = personnelNumber;
-    if (request.EmployeeNo != null) entity.EmployeeNo = employeeNo ?? personnelNumber;
     if (request.Gender != null) entity.Gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim().ToLowerInvariant();
     entity.ValidFromUtc = request.ValidFromUtc;
     entity.ValidToUtc = request.ValidToUtc;
     if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
+    if (request.OnlyVerify.HasValue) entity.OnlyVerify = request.OnlyVerify.Value;
+    if (request.DepartmentId.HasValue) entity.DepartmentId = request.DepartmentId.Value;
+    else if (request.DepartmentId == null) entity.DepartmentId = null;
     entity.UpdatedUtc = DateTime.UtcNow;
 
     var accessLevelIds = (request.AccessLevelIds ?? entity.AccessLevels.Select(a => a.AccessLevelId).ToArray()).ToList();
@@ -1024,10 +1257,11 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
 
     var updated = await dbContext.Employees
         .Include(e => e.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(e => e.Department)
         .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapEmployeeDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.PersonnelNumber, updatedResp.EmployeeNo, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.EmployeeNo, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.OnlyVerify, updatedResp.Department, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1041,9 +1275,7 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
     if (entity is null)
         return Results.NotFound();
 
-    var employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(entity.EmployeeNo) ? entity.EmployeeNo!.Trim()
-        : !string.IsNullOrWhiteSpace(entity.PersonnelNumber) ? entity.PersonnelNumber!.Trim()
-        : entity.Id.ToString("N")[..Math.Min(32, 32)]);
+    var employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(entity.EmployeeNo) ? entity.EmployeeNo!.Trim() : entity.Id.ToString("N")[..32]);
 
     var deviceIds = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
     var syncWarnings = new List<string>();
@@ -1134,6 +1366,7 @@ app.MapGet("/api/visitors", async (
 {
     var query = dbContext.Visitors.AsNoTracking()
         .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Department)
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .AsQueryable();
     if (isActive.HasValue)
@@ -1164,6 +1397,7 @@ app.MapGet("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, Ca
     var v = await dbContext.Visitors
         .AsNoTracking()
         .Include(x => x.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(x => x.Department)
         .Include(x => x.Cards).Include(x => x.Faces).Include(x => x.Fingerprints)
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (v is null)
@@ -1185,7 +1419,7 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
     }
     else
     {
-        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.PersonnelNumber == documentNumber || x.EmployeeNo == documentNumber, cancellationToken);
+        var existsInEmployees = await dbContext.Employees.AnyAsync(x => x.EmployeeNo == documentNumber, cancellationToken);
         var existsInVisitors = await dbContext.Visitors.AnyAsync(x => x.DocumentNumber == documentNumber, cancellationToken);
         if (existsInEmployees || existsInVisitors)
             return Results.Conflict(new { message = "Такой номер документа уже занят другим сотрудником или посетителем." });
@@ -1202,8 +1436,9 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
         FirstName = firstName,
         LastName = lastName,
         DocumentNumber = documentNumber,
-        VisitDateUtc = validFrom, // Оставляем для совместимости, если где-то используется
+        VisitDateUtc = validFrom,
         ValidFromUtc = validFrom,
+        DepartmentId = request.DepartmentId,
         ValidToUtc = validTo,
         IsActive = true,
         CreatedUtc = DateTime.UtcNow
@@ -1241,10 +1476,11 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
 
     var created = await dbContext.Visitors
         .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Department)
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == entity.Id, cancellationToken);
     var createdResp = MapVisitorDetailResponse(created);
-    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.Department, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1266,6 +1502,8 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
     if (request.ValidFromUtc.HasValue) entity.ValidFromUtc = request.ValidFromUtc.Value;
     if (request.ValidToUtc.HasValue) entity.ValidToUtc = request.ValidToUtc.Value;
     if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
+    if (request.DepartmentId.HasValue) entity.DepartmentId = request.DepartmentId.Value;
+    else if (request.DepartmentId == null) entity.DepartmentId = null;
     entity.UpdatedUtc = DateTime.UtcNow;
 
     var accessLevelIds = (request.AccessLevelIds ?? entity.AccessLevels.Select(a => a.AccessLevelId).ToArray()).ToList();
@@ -1301,10 +1539,11 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
 
     var updated = await dbContext.Visitors
         .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
+        .Include(v => v.Department)
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapVisitorDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.Department, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1635,7 +1874,7 @@ app.MapDelete("/api/fingerprints/{id:guid}", async (Guid id, AppDbContext dbCont
     var fp = await dbContext.Fingerprints.Include(f => f.Employee).Include(f => f.Visitor).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (fp is null) return Results.NotFound();
     var employeeNo = fp.Employee != null
-        ? (string.IsNullOrWhiteSpace(fp.Employee.EmployeeNo) ? fp.Employee.PersonnelNumber : fp.Employee.EmployeeNo) ?? fp.Employee.Id.ToString("N")[..32]
+        ? (!string.IsNullOrWhiteSpace(fp.Employee.EmployeeNo) ? fp.Employee.EmployeeNo : fp.Employee.Id.ToString("N")[..32])
         : (!string.IsNullOrWhiteSpace(fp.Visitor!.DocumentNumber) ? fp.Visitor.DocumentNumber.Trim() : fp.Visitor.Id.ToString("N")[..32]);
     var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
     foreach (var deviceId in devices)
@@ -1807,41 +2046,45 @@ static string MapConnectivityStatus(DeviceConnectivityStatus status)
 static EmployeeResponse MapEmployeeResponse(Employee e)
 {
     var accessNames = e.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
+    var dept = e.Department != null ? new DepartmentRef(e.Department.Id, e.Department.Name) : null;
     return new EmployeeResponse(
-        e.Id, e.FirstName, e.LastName, e.PersonnelNumber, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive,
-        accessNames, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0);
+        e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify,
+        accessNames, dept, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0);
 }
 
 static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
 {
+    var dept = e.Department != null ? new DepartmentRef(e.Department.Id, e.Department.Name) : null;
     var accessLevels = (e.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
     var cards = (e.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
     var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
-    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.PersonnelNumber, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, accessLevels, cards, faces, fingerprints);
+    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, accessLevels, cards, faces, fingerprints);
 }
 
 static VisitorResponse MapVisitorResponse(Visitor v)
 {
     var accessNames = v.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
+    var dept = v.Department != null ? new DepartmentRef(v.Department.Id, v.Department.Name) : null;
     return new VisitorResponse(
         v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive,
-        accessNames, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
+        accessNames, dept, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
 }
 
 static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
 {
+    var dept = v.Department != null ? new DepartmentRef(v.Department.Id, v.Department.Name) : null;
     var accessLevels = (v.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
     var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
     var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
-    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive, accessLevels, cards, faces, fingerprints);
+    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive, dept, accessLevels, cards, faces, fingerprints);
 }
 
 static async Task<string> GetNextPersonIdAsync(AppDbContext dbContext, CancellationToken cancellationToken)
 {
     var empNums = await dbContext.Employees
-        .Select(x => new { x.PersonnelNumber, x.EmployeeNo })
+        .Select(x => x.EmployeeNo)
         .ToListAsync(cancellationToken);
     
     var visNums = await dbContext.Visitors
@@ -1856,8 +2099,7 @@ static async Task<string> GetNextPersonIdAsync(AppDbContext dbContext, Cancellat
 
     foreach (var e in empNums)
     {
-        TryUpdateMax(e.PersonnelNumber);
-        TryUpdateMax(e.EmployeeNo);
+        TryUpdateMax(e);
     }
     foreach (var v in visNums)
     {
@@ -1909,6 +2151,10 @@ public sealed record LoginRequest(string Email, string Password);
 
 public sealed record SetupAdminPasswordRequest(string Email, string Password, string ConfirmPassword);
 
+public sealed record ForgotPasswordRequest(string Email);
+
+public sealed record ResetPasswordRequest(string Email, string Token, string Password, string ConfirmPassword);
+
 public sealed record ActivateDeviceRequest(string IpAddress, int Port, string MacAddress, string Password);
 
 public sealed record CreateDeviceRequest(
@@ -1953,19 +2199,26 @@ public sealed record DeviceStatusResponse(
 
 public sealed record CreateAccessLevelRequest(string Name, string? Description);
 public sealed record UpdateAccessLevelRequest(string Name, string? Description);
+public sealed record CreateDepartmentRequest(string Name, string? Description, Guid? ParentId);
+public sealed record UpdateDepartmentRequest(string Name, string? Description, int? SortOrder, Guid? ParentId);
+public sealed record DepartmentResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, int ChildrenCount, int EmployeesCount, int VisitorsCount);
+public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, int EmployeesCount, int VisitorsCount);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string Action);
-public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds);
-public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds);
-public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds);
-public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds);
+public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId);
+public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId);
+public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId);
+public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
 
+public sealed record CaptureFaceRequest(string? PersonId, string? PersonType);
+
 public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds);
-public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
-public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? PersonnelNumber, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
-public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, int CardsCount, int FacesCount, int FingerprintsCount);
-public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record DepartmentRef(Guid Id, string Name);
+public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
 public sealed record AccessLevelRef(Guid Id, string Name);
 public sealed record CardRef(Guid Id, string CardNo, string? CardNumber);
 public sealed record FaceRef(Guid Id, int FDID);

@@ -41,6 +41,21 @@ public sealed class Device : BaseEntity
     public ICollection<AccessLevelDoor> AccessLevelDoors { get; set; } = new List<AccessLevelDoor>();
 }
 
+/// <summary>Отдел компании (древовидная структура).</summary>
+public sealed class Department : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int SortOrder { get; set; }
+
+    public Guid? ParentId { get; set; }
+    public Department? Parent { get; set; }
+    public ICollection<Department> Children { get; set; } = new List<Department>();
+
+    public ICollection<Employee> Employees { get; set; } = new List<Employee>();
+    public ICollection<Visitor> Visitors { get; set; } = new List<Visitor>();
+}
+
 public sealed class AccessLevel : BaseEntity
 {
     public string Name { get; set; } = string.Empty;
@@ -68,8 +83,7 @@ public sealed class Employee : BaseEntity
 {
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
-    public string? PersonnelNumber { get; set; }
-    /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Если пусто — генерируется из PersonnelNumber или Id.</summary>
+    /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Генерируется системой автоматически из Id.</summary>
     public string? EmployeeNo { get; set; }
     /// <summary>Пол: male, female, unknown.</summary>
     public string? Gender { get; set; }
@@ -78,6 +92,11 @@ public sealed class Employee : BaseEntity
     /// <summary>Конец периода действия (для ISAPI Valid).</summary>
     public DateTime? ValidToUtc { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Только учёт рабочего времени: true — время учитывается, дверь не открывается (ISAPI onlyVerify).</summary>
+    public bool OnlyVerify { get; set; }
+
+    public Guid? DepartmentId { get; set; }
+    public Department? Department { get; set; }
 
     public ICollection<EmployeeAccessLevel> AccessLevels { get; set; } = new List<EmployeeAccessLevel>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();
@@ -94,6 +113,9 @@ public sealed class Visitor : BaseEntity
     public DateTime? ValidFromUtc { get; set; }
     public DateTime? ValidToUtc { get; set; }
     public bool IsActive { get; set; } = true;
+
+    public Guid? DepartmentId { get; set; }
+    public Department? Department { get; set; }
 
     public ICollection<VisitorAccessLevel> AccessLevels { get; set; } = new List<VisitorAccessLevel>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();

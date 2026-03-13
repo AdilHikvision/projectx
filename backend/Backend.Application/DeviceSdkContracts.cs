@@ -127,6 +127,18 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Результат захвата лица с устройства.</summary>
+public sealed record FaceCaptureProgressResult(string Status, int? Progress, string? Message, Guid? FaceId);
+
+/// <summary>Захват лица с устройства Hikvision (CaptureFaceData).</summary>
+public interface IDeviceFaceCaptureService
+{
+    /// <summary>Запускает захват лица на устройстве.</summary>
+    Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, CancellationToken cancellationToken = default);
+    /// <summary>Получает прогресс захвата и при успехе сохраняет лицо в БД.</summary>
+    Task<FaceCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Пользователь, полученный с устройства Hikvision (UserInfo Search).</summary>
 public sealed record ImportedUser(
     string EmployeeNo,
@@ -138,6 +150,7 @@ public sealed record ImportedUser(
     string? Gender,
     string? ValidBeginTime,
     string? ValidEndTime,
+    bool OnlyVerify,
     Guid SourceDeviceId,
     string SourceDeviceName);
 

@@ -7,6 +7,8 @@ import { AccessLevelsPage } from './pages/AccessLevelsPage'
 import { MonitoringPage } from './pages/MonitoringPage'
 import { LoginPage } from './pages/LoginPage'
 import { SetupPasswordPage } from './pages/SetupPasswordPage'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { PayrollCalculationPage } from './pages/PayrollCalculationPage'
 import { PeopleManagementPage } from './pages/PeopleManagementPage'
 import { PersonDetailPage } from './pages/PersonDetailPage'
@@ -32,6 +34,8 @@ function App() {
       <Routes>
         <Route path="/setup-password" element={<SetupPasswordPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

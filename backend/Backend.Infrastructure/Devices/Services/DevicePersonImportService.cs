@@ -119,7 +119,9 @@ public sealed class DevicePersonImportService(
                 if (lastName.Length > 150) lastName = lastName[..150];
                 var gender = user.Gender?.Length > 16 ? user.Gender[..16] : user.Gender;
 
-                var isVisitor = string.Equals(user.UserType, "visitor", StringComparison.OrdinalIgnoreCase);
+                // userType: "normal", "visitor", "blackList" (строка)
+                var isVisitor = string.Equals(user.UserType, "visitor", StringComparison.OrdinalIgnoreCase)
+                    || user.Type == 2;
 
                 try
                 {
@@ -128,7 +130,7 @@ public sealed class DevicePersonImportService(
                         var existsVisitor = await dbContext.Visitors.AnyAsync(v =>
                             v.DocumentNumber == empNo, cancellationToken);
                         var existsEmployee = await dbContext.Employees.AnyAsync(e =>
-                            e.EmployeeNo == empNo || e.PersonnelNumber == empNo, cancellationToken);
+                            e.EmployeeNo == empNo, cancellationToken);
                         if (existsVisitor || existsEmployee)
                         {
                             items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, false, "Посетитель уже существует в БД"));
@@ -143,7 +145,7 @@ public sealed class DevicePersonImportService(
                             LastName = lastName.Trim(),
                             DocumentNumber = empNo,
                             VisitDateUtc = DateTime.UtcNow,
-                            IsActive = user.Type == 1,
+                            IsActive = user.Type != 3 && !string.Equals(user.UserType, "blackList", StringComparison.OrdinalIgnoreCase),
                             CreatedUtc = DateTime.UtcNow
                         };
 
@@ -161,7 +163,7 @@ public sealed class DevicePersonImportService(
                     else
                     {
                         var existsEmployee = await dbContext.Employees.AnyAsync(e =>
-                            e.EmployeeNo == empNo || e.PersonnelNumber == empNo, cancellationToken);
+                            e.EmployeeNo == empNo, cancellationToken);
                         var existsVisitor = await dbContext.Visitors.AnyAsync(v =>
                             v.DocumentNumber == empNo, cancellationToken);
                         if (existsEmployee || existsVisitor)
@@ -177,9 +179,9 @@ public sealed class DevicePersonImportService(
                             FirstName = firstName.Trim(),
                             LastName = lastName.Trim(),
                             EmployeeNo = empNo,
-                            PersonnelNumber = empNo,
                             Gender = gender,
-                            IsActive = user.Type == 1,
+                            IsActive = user.Type != 3 && !string.Equals(user.UserType, "blackList", StringComparison.OrdinalIgnoreCase),
+                            OnlyVerify = user.OnlyVerify,
                             CreatedUtc = DateTime.UtcNow
                         };
 
@@ -298,7 +300,8 @@ public sealed class DevicePersonImportService(
         if (string.IsNullOrWhiteSpace(name))
             name = employeeNo;
 
-        return new ImportedUser(employeeNo, name, givenName, familyName, type, userType, gender, validBegin, validEnd, deviceId, deviceName);
+        var onlyVerify = el.TryGetProperty("onlyVerify", out var ovEl) && ovEl.ValueKind == JsonValueKind.True;
+        return new ImportedUser(employeeNo, name, givenName, familyName, type, userType, gender, validBegin, validEnd, onlyVerify, deviceId, deviceName);
     }
 
     private IsapiClient CreateClient(Device device)

@@ -48,6 +48,8 @@
 | `POST /api/devices/{id}/connect` | Устройство с актуальным status |
 | `POST /api/devices/{id}/disconnect` | Устройство с актуальным status |
 | `GET /api/devices/{id}/status` | `{ deviceId, deviceIdentifier, status, lastSeenUtc }` |
+| `GET /api/devices/{id}/users-raw?format=xml` | Raw XML ответ UserInfo/Search с устройства |
+| `GET /api/devices/{id}/users-raw?format=json` | Raw JSON ответ UserInfo/Search с устройства |
 | `GET /api/devices/statuses` | `[{ deviceId, deviceIdentifier, status, lastSeenUtc }]` |
 | `GET /api/devices/events?take=100` | `[{ deviceIdentifier, eventType, occurredUtc, payload }]` |
 
@@ -159,6 +161,62 @@
 
 - **Возможные ошибки:**
   - `401` — неверный email или пароль
+
+### 3.1) Восстановление пароля (запрос токена)
+
+- **Method:** `POST`
+- **Path:** `/api/auth/forgot-password`
+- **Auth:** не требуется
+- **Request body:**
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+- **Response 200 (Production):**
+
+```json
+{
+  "message": "If an account exists with this email, a reset link has been sent."
+}
+```
+
+- **Response 200 (Development):** дополнительно возвращается `token` для использования в reset-password:
+
+```json
+{
+  "message": "Password reset token generated.",
+  "token": "<base64-token>"
+}
+```
+
+### 3.2) Восстановление пароля (сброс по токену)
+
+- **Method:** `POST`
+- **Path:** `/api/auth/reset-password`
+- **Auth:** не требуется
+- **Request body:**
+
+```json
+{
+  "email": "user@example.com",
+  "token": "<token-from-forgot-password>",
+  "password": "NewPassword123!",
+  "confirmPassword": "NewPassword123!"
+}
+```
+
+- **Response 200:**
+
+```json
+{
+  "message": "Password has been reset. You can now sign in."
+}
+```
+
+- **Возможные ошибки:** `400` — неверный email, истёкший или неверный токен, пароли не совпадают, пароль короче 8 символов.
 
 ### 4) Текущий пользователь
 

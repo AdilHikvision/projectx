@@ -22,8 +22,7 @@ public sealed class DevicePersonSyncService(
 {
     private static string GetEmployeeNo(Employee e) =>
         !string.IsNullOrWhiteSpace(e.EmployeeNo) ? e.EmployeeNo.Trim()
-        : !string.IsNullOrWhiteSpace(e.PersonnelNumber) ? e.PersonnelNumber.Trim()
-        : e.Id.ToString("N")[..Math.Min(32, 32)];
+        : e.Id.ToString("N")[..32];
 
     private static string GetEmployeeNo(Visitor v) =>
         !string.IsNullOrWhiteSpace(v.DocumentNumber) ? v.DocumentNumber.Trim()
@@ -53,10 +52,14 @@ public sealed class DevicePersonSyncService(
         var name = $"{employee.FirstName} {employee.LastName}".Trim();
         var doorRight = GetDoorRightForDevice(employee.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, deviceId);
 
-        return await SyncUserInfoAsync(device, employeeNo, name, employee.IsActive ? 1 : 2, doorRight,
+        // userType: "normal", "visitor", "blackList" (строка, не число)
+        var (type, userCategory) = employee.IsActive ? (1, "normal") : (3, "blackList");
+        return await SyncUserInfoAsync(device, employeeNo, name, type, doorRight,
             gender: employee.Gender,
             validFromUtc: employee.ValidFromUtc,
             validToUtc: employee.ValidToUtc,
+            userCategory,
+            onlyVerify: employee.OnlyVerify,
             cancellationToken: cancellationToken);
     }
 
@@ -78,10 +81,12 @@ public sealed class DevicePersonSyncService(
         var name = $"{visitor.FirstName} {visitor.LastName}".Trim();
         var doorRight = GetDoorRightForDevice(visitor.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, deviceId);
 
-        return await SyncUserInfoAsync(device, employeeNo, name, visitor.IsActive ? 1 : 2, doorRight,
+        // userType: "normal", "visitor", "blackList" (строка, не число)
+        var (type, userCategory) = visitor.IsActive ? (2, "visitor") : (3, "blackList");
+        return await SyncUserInfoAsync(device, employeeNo, name, type, doorRight,
             validFromUtc: visitor.ValidFromUtc,
             validToUtc: visitor.ValidToUtc,
-            userCategory: "visitor",
+            userCategory: userCategory,
             cancellationToken: cancellationToken);
     }
 
@@ -412,6 +417,7 @@ public sealed class DevicePersonSyncService(
         DateTime? validFromUtc = null,
         DateTime? validToUtc = null,
         string userCategory = "normal",
+        bool onlyVerify = false,
         CancellationToken cancellationToken = default)
     {
         var parts = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
@@ -455,6 +461,7 @@ public sealed class DevicePersonSyncService(
             gender = genderValue,
             doorRight = doorRightStr,
             RightPlan = rightPlan,
+            onlyVerify,
             localUIRight = false,
             maxOpenDoorTime = 0,
             userVerifyMode = "",

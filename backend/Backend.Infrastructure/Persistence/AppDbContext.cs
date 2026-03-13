@@ -18,6 +18,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
 {
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<DeviceStatus> DeviceStatuses => Set<DeviceStatus>();
+    public DbSet<Department> Departments => Set<Department>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
     public DbSet<AccessLevel> AccessLevels => Set<AccessLevel>();
@@ -48,6 +49,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.DeviceStatus).WithMany(x => x.Devices).HasForeignKey(x => x.DeviceStatusId);
         });
 
+        builder.Entity<Department>(entity =>
+        {
+            entity.ToTable("departments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+            entity.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<DeviceStatus>(entity =>
         {
             entity.ToTable("device_statuses");
@@ -68,11 +78,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.FirstName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
-            entity.Property(x => x.PersonnelNumber).HasMaxLength(80);
             entity.Property(x => x.EmployeeNo).HasMaxLength(32);
             entity.Property(x => x.Gender).HasMaxLength(16);
-            entity.HasIndex(x => x.PersonnelNumber).IsUnique().HasFilter("PersonnelNumber IS NOT NULL");
             entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
+            entity.HasOne(x => x.Department).WithMany(x => x.Employees).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<Visitor>(entity =>
@@ -83,6 +92,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.DocumentNumber).HasMaxLength(120);
             entity.HasIndex(x => x.DocumentNumber);
+            entity.HasOne(x => x.Department).WithMany(x => x.Visitors).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<AccessLevel>(entity =>

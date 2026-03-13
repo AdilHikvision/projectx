@@ -1,74 +1,69 @@
-[2026-03-12 22:05:02.355][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/libcrypto-1_1-x64.dll], hHandleRet[809828352]
-[2026-03-12 22:05:02.355][DBG] Load [libcrypto-1_1-x64.dll] SUCC, Real Path[C:\Users\yagup\Desktop\projectx\backend\winSDK\lib\libcrypto-1_1-x64.dll]
-[2026-03-12 22:05:02.355][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/libssl-1_1-x64.dll], hHandleRet[1452474368]
-[2026-03-12 22:05:02.355][DBG] Load [libssl-1_1-x64.dll] SUCC, Real Path[C:\Users\yagup\Desktop\projectx\backend\winSDK\lib\libssl-1_1-x64.dll]
-[2026-03-12 22:05:02.357][ERR] CSSLTrans::SSLTrans_CTX_Load_CA, invalid path[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/cert/\]
-[2026-03-12 22:05:04.502][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCVoiceTalk.dll] SUCC
-[2026-03-12 22:05:04.511][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCGeneralCfgMgr.dll] SUCC
-[2026-03-12 22:05:04.512][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCPlayBack.dll] SUCC
-[2026-03-12 22:05:04.512][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCIndustry.dll] SUCC
-[2026-03-12 22:05:04.513][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCDisplay.dll] SUCC
-[2026-03-12 22:05:04.513][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCPreview.dll] SUCC
-[2026-03-12 22:05:04.515][DBG] CComBase::Load, Load szDllPath[C:/Users/yagup/Desktop/projectx/backend/winSDK/lib/HCNetSDKCom/HCAlarm.dll] SUCC
-[2026-03-12 22:05:04.515][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:04.563][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:06.572][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:06.619][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:06.619][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:08.622][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:08.670][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:10.675][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:10.738][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:12.742][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:12.805][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:14.820][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:14.881][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:14.881][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:16.887][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:16.934][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:18.949][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:19.042][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:19.042][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:21.054][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:21.101][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:23.106][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:23.169][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:25.171][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:25.219][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:25.219][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:27.228][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:27.290][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:29.293][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:29.339][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:29.339][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:31.344][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:31.389][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:33.396][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:33.442][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:35.454][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:35.531][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:37.546][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:37.608][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:39.610][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:39.657][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:41.672][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:41.735][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:43.749][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:43.810][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:45.816][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:45.877][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:47.892][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:47.953][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:49.957][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:50.020][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:52.029][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:52.107][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:54.122][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:54.292][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:05:56.300][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:56.362][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
-[2026-03-12 22:05:56.362][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
-[2026-03-12 22:05:58.365][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:05:58.412][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
-[2026-03-12 22:06:00.417][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-12 22:06:00.464][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-13 18:57:32.046][ERR] Private connect 192.168.88.161:8000 sock=2952 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 18:57:32.057][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 18:57:32.057][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 18:58:03.174][ERR] Private connect 192.168.88.161:8000 sock=1432 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 18:58:03.174][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 18:58:03.174][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 18:58:34.306][ERR] Private connect 192.168.88.161:8000 sock=3044 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 18:58:34.307][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 18:58:34.307][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 18:59:05.408][ERR] Private connect 192.168.88.161:8000 sock=3068 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 18:59:05.408][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 18:59:05.408][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:05:14.418][ERR] Private connect 192.168.88.161:8000 sock=3080 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:05:14.428][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:05:14.428][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:05:45.636][ERR] Private connect 192.168.88.161:8000 sock=3076 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:05:45.636][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:05:45.636][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:06:16.755][ERR] Private connect 192.168.88.161:8000 sock=3096 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:06:16.755][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:06:16.755][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:06:47.848][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:06:47.848][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:06:47.848][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:07:18.971][ERR] Private connect 192.168.88.161:8000 sock=784 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:07:18.971][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:07:18.971][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:07:50.088][ERR] Private connect 192.168.88.161:8000 sock=3184 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:07:50.088][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:07:50.088][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:08:21.203][ERR] Private connect 192.168.88.161:8000 sock=1724 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:08:21.204][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:08:21.204][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:08:52.353][ERR] Private connect 192.168.88.161:8000 sock=3232 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:08:52.353][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:08:52.353][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:09:23.464][ERR] Private connect 192.168.88.161:8000 sock=3304 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:09:23.465][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:09:23.465][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:09:54.556][ERR] Private connect 192.168.88.161:8000 sock=3144 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:09:54.556][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:09:54.556][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:10:25.698][ERR] Private connect 192.168.88.161:8000 sock=2336 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:10:25.698][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:10:25.698][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:10:56.819][ERR] Private connect 192.168.88.161:8000 sock=2132 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:10:56.819][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:10:56.819][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:11:27.920][ERR] Private connect 192.168.88.161:8000 sock=2128 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:11:27.920][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:11:27.920][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:11:59.024][ERR] Private connect 192.168.88.161:8000 sock=3412 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:11:59.024][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:11:59.024][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:12:30.095][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:12:30.096][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:12:30.096][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:13:01.192][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:13:01.192][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:13:01.192][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:13:32.399][ERR] Private connect 192.168.88.161:8000 sock=2924 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:13:32.399][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:13:32.399][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-13 19:14:03.486][ERR] Private connect 192.168.88.161:8000 sock=3460 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:14:03.486][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:14:03.486][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
+[2026-03-13 19:14:34.603][ERR] Private connect 192.168.88.161:8000 sock=3464 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
+[2026-03-13 19:14:34.603][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
+[2026-03-13 19:14:34.603][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]

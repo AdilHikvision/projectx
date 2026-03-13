@@ -7,32 +7,20 @@ import { PageHeader, Modal } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 
-interface AccessLevelRef {
-  id: string
-  name: string
-}
-
 interface EmployeeResponse {
   id: string
   firstName: string
   lastName: string
-  personnelNumber?: string | null
   employeeNo?: string | null
   gender?: string | null
   validFromUtc?: string | null
   validToUtc?: string | null
   isActive: boolean
+  onlyVerify?: boolean
   accessLevelNames: string[]
   cardsCount: number
   facesCount: number
   fingerprintsCount: number
-}
-
-interface EmployeeDetailResponse extends EmployeeResponse {
-  accessLevels: AccessLevelRef[]
-  cards: { id: string; cardNo: string; cardNumber?: string | null }[]
-  faces: { id: string; fdid: number }[]
-  fingerprints: { id: string; fingerIndex: number }[]
 }
 
 interface VisitorResponse {
@@ -49,17 +37,16 @@ interface VisitorResponse {
   fingerprintsCount: number
 }
 
-interface VisitorDetailResponse extends VisitorResponse {
-  accessLevels: AccessLevelRef[]
-  cards: { id: string; cardNo: string; cardNumber?: string | null }[]
-  faces: { id: string; fdid: number }[]
-  fingerprints: { id: string; fingerIndex: number }[]
-}
-
 interface AccessLevel {
   id: string
   name: string
   description?: string | null
+}
+
+interface DepartmentTreeItem {
+  id: string
+  name: string
+  parentId?: string | null
 }
 
 type TabType = 'employees' | 'visitors'
@@ -70,25 +57,26 @@ export function PeopleManagementPage() {
   const { token } = useAuth()
   const { startLoading, stopLoading } = useLoading()
   const [tab, setTab] = useState<TabType>('employees')
+  const [statusFilterEmployees, setStatusFilterEmployees] = useState({ active: true, dismissed: false })
+  const [statusFilterVisitors, setStatusFilterVisitors] = useState({ active: true, blocked: false })
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
   const [visitors, setVisitors] = useState<VisitorResponse[]>([])
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
+  const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [modalMode, setModalMode] = useState<'create' | 'edit' | null>(null)
-  const [editingEmployee, setEditingEmployee] = useState<EmployeeDetailResponse | null>(null)
-  const [editingVisitor, setEditingVisitor] = useState<VisitorDetailResponse | null>(null)
+  const [modalMode, setModalMode] = useState<'create' | null>(null)
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
-    personnelNumber: '',
-    employeeNo: '',
     gender: '',
     validFrom: new Date().toISOString().slice(0, 10),
     validTo: '2037-12-31',
     documentNumber: '',
     visitDateUtc: new Date().toISOString().slice(0, 10),
+    onlyVerify: false,
     accessLevelIds: [] as string[],
+    departmentId: null as string | null,
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
@@ -138,9 +126,20 @@ export function PeopleManagementPage() {
     }
   }, [token])
 
+  const loadDepartments = useCallback(async () => {
+    if (!token) return
+    try {
+      const list = await apiRequest<DepartmentTreeItem[]>(`/api/departments/tree`, { token })
+      setDepartments(list)
+    } catch {
+      setDepartments([])
+    }
+  }, [token])
+
   useEffect(() => {
     loadAccessLevels()
-  }, [loadAccessLevels])
+    loadDepartments()
+  }, [loadAccessLevels, loadDepartments])
 
   useEffect(() => {
     if (!token) return
@@ -153,112 +152,60 @@ export function PeopleManagementPage() {
   }, [token, loadEmployees, loadVisitors, startLoading, stopLoading])
 
   useEffect(() => {
-    const state = location.state as { syncError?: string; openEdit?: boolean; editId?: string; editType?: 'employee' | 'visitor' }
+    const state = location.state as { syncError?: string }
     if (state?.syncError) {
       setError(state.syncError)
       navigate(location.pathname, { replace: true, state: {} })
-    } else if (state?.openEdit && state?.editId && state?.editType) {
-      openEditModal({ id: state.editId, type: state.editType })
-      navigate(location.pathname, { replace: true, state: {} })
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, location.pathname, navigate])
 
   const activeCount = useMemo(() => {
     return employees.filter((e) => e.isActive).length + visitors.filter((v) => v.isActive).length
   }, [employees, visitors])
 
-  async function openEditModal(item: { id: string; type: 'employee' | 'visitor' }) {
-    if (!token) return
-    setError(null)
-    setModalMode('edit')
-    try {
-      if (item.type === 'employee') {
-        const detail = await apiRequest<EmployeeDetailResponse>(`/api/employees/${item.id}`, { token })
-        setEditingEmployee(detail)
-        setEditingVisitor(null)
-        setFormData({
-          firstName: detail.firstName,
-          lastName: detail.lastName,
-          personnelNumber: detail.personnelNumber ?? '',
-          employeeNo: detail.employeeNo ?? '',
-          gender: detail.gender ?? '',
-          validFrom: detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
-          validTo: detail.validToUtc ? detail.validToUtc.slice(0, 10) : '2037-12-31',
-          documentNumber: '',
-          visitDateUtc: new Date().toISOString().slice(0, 10),
-          accessLevelIds: detail.accessLevels?.map((a) => a.id) ?? [],
-        })
-      } else {
-        const detail = await apiRequest<VisitorDetailResponse>(`/api/visitors/${item.id}`, { token })
-        setEditingEmployee(null)
-        setEditingVisitor(detail)
-        setFormData({
-          firstName: detail.firstName,
-          lastName: detail.lastName,
-          personnelNumber: '',
-          employeeNo: '',
-          gender: '',
-          validFrom: detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : new Date().toISOString().slice(0, 10),
-          validTo: detail.validToUtc ? detail.validToUtc.slice(0, 10) : new Date(Date.now() + 86400000).toISOString().slice(0, 10),
-          documentNumber: detail.documentNumber ?? '',
-          visitDateUtc: '',
-          accessLevelIds: detail.accessLevels?.map((a) => a.id) ?? [],
-        })
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load details')
-      setModalMode(null)
-    }
-  }
-
   async function openCreateModal() {
-    setEditingEmployee(null)
-    setEditingVisitor(null)
     setModalMode('create')
     setError(null)
     try {
       if (tab === 'employees') {
-        const res = await apiRequest<{ nextPersonnelNumber: string }>('/api/employees/next-personnel-number', { token: token ?? undefined })
         setFormData({
           firstName: '',
           lastName: '',
-          personnelNumber: res.nextPersonnelNumber,
-          employeeNo: res.nextPersonnelNumber,
           gender: '',
           validFrom: new Date().toISOString().slice(0, 10),
           validTo: '2037-12-31',
           documentNumber: '',
           visitDateUtc: new Date().toISOString().slice(0, 10),
+          onlyVerify: false,
           accessLevelIds: [],
+          departmentId: null,
         })
       } else {
-        const res = await apiRequest<{ nextDocumentNumber: string }>('/api/visitors/next-document-number', { token: token ?? undefined })
         setFormData({
           firstName: '',
           lastName: '',
-          personnelNumber: '',
-          employeeNo: '',
           gender: '',
           validFrom: new Date().toISOString().slice(0, 10),
           validTo: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
-          documentNumber: res.nextDocumentNumber,
+          documentNumber: '',
           visitDateUtc: '',
+          onlyVerify: false,
           accessLevelIds: [],
+          departmentId: null,
         })
       }
     } catch (e) {
       setFormData({
         firstName: '',
         lastName: '',
-        personnelNumber: '',
-        employeeNo: '',
         gender: '',
         validFrom: new Date().toISOString().slice(0, 10),
         validTo: '2037-12-31',
         documentNumber: '',
         visitDateUtc: new Date().toISOString().slice(0, 10),
+        onlyVerify: false,
         accessLevelIds: [],
+        departmentId: null,
       })
       setError(e instanceof Error ? e.message : 'Failed to load next ID')
     }
@@ -276,74 +223,39 @@ export function PeopleManagementPage() {
     setIsSubmitting(true)
     setError(null)
     try {
-      if (modalMode === 'create') {
-        if (tab === 'employees') {
-          const res = await apiRequest<{ syncWarnings?: string[] }>('/api/employees', {
-            method: 'POST',
-            token,
-            body: JSON.stringify({
-              firstName: formData.firstName.trim(),
-              lastName: formData.lastName.trim(),
-              personnelNumber: formData.personnelNumber.trim() || null,
-              employeeNo: formData.employeeNo.trim() || null,
-              gender: formData.gender.trim() || null,
-              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-              accessLevelIds: formData.accessLevelIds,
-            }),
-          })
-          showSyncWarnings(res)
-          await loadEmployees()
-        } else {
-          const res = await apiRequest<{ syncWarnings?: string[] }>('/api/visitors', {
-            method: 'POST',
-            token,
-            body: JSON.stringify({
-              firstName: formData.firstName.trim(),
-              lastName: formData.lastName.trim(),
-              documentNumber: formData.documentNumber.trim() || null,
-              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-              accessLevelIds: formData.accessLevelIds,
-            }),
-          })
-          showSyncWarnings(res)
-          await loadVisitors()
-        }
+      if (tab === 'employees') {
+        const res = await apiRequest<{ syncWarnings?: string[] }>('/api/employees', {
+          method: 'POST',
+          token,
+          body: JSON.stringify({
+            firstName: formData.firstName.trim(),
+            lastName: formData.lastName.trim(),
+            gender: formData.gender.trim() || null,
+            validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+            validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
+            onlyVerify: formData.onlyVerify,
+            accessLevelIds: formData.accessLevelIds,
+            departmentId: formData.departmentId || null,
+          }),
+        })
+        showSyncWarnings(res)
+        await loadEmployees()
       } else {
-        if (editingEmployee) {
-          const res = await apiRequest<{ syncWarnings?: string[] }>(`/api/employees/${editingEmployee.id}`, {
-            method: 'PUT',
-            token,
-            body: JSON.stringify({
-              firstName: formData.firstName.trim(),
-              lastName: formData.lastName.trim(),
-              personnelNumber: formData.personnelNumber.trim() || null,
-              employeeNo: formData.employeeNo.trim() || null,
-              gender: formData.gender.trim() || null,
-              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-              accessLevelIds: formData.accessLevelIds,
-            }),
-          })
-          showSyncWarnings(res)
-          await loadEmployees()
-        } else if (editingVisitor) {
-          const res = await apiRequest<{ syncWarnings?: string[] }>(`/api/visitors/${editingVisitor.id}`, {
-            method: 'PUT',
-            token,
-            body: JSON.stringify({
-              firstName: formData.firstName.trim(),
-              lastName: formData.lastName.trim(),
-              documentNumber: formData.documentNumber.trim() || null,
-              validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-              validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-              accessLevelIds: formData.accessLevelIds,
-            }),
-          })
-          showSyncWarnings(res)
-          await loadVisitors()
-        }
+        const res = await apiRequest<{ syncWarnings?: string[] }>('/api/visitors', {
+          method: 'POST',
+          token,
+          body: JSON.stringify({
+            firstName: formData.firstName.trim(),
+            lastName: formData.lastName.trim(),
+            documentNumber: null,
+            validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
+            validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
+            accessLevelIds: formData.accessLevelIds,
+            departmentId: formData.departmentId || null,
+          }),
+        })
+        showSyncWarnings(res)
+        await loadVisitors()
       }
       setModalMode(null)
     } catch (e) {
@@ -418,9 +330,23 @@ export function PeopleManagementPage() {
     }
   }
 
-  const list = tab === 'employees'
-    ? employees.map(e => ({ ...e, type: 'employee' as const }))
-    : visitors.map(v => ({ ...v, type: 'visitor' as const }))
+  const list = useMemo(() => {
+    const raw = tab === 'employees'
+      ? employees.map(e => ({ ...e, type: 'employee' as const }))
+      : visitors.map(v => ({ ...v, type: 'visitor' as const }))
+    if (tab === 'employees') {
+      return raw.filter((item) => {
+        if (item.isActive && statusFilterEmployees.active) return true
+        if (!item.isActive && statusFilterEmployees.dismissed) return true
+        return false
+      })
+    }
+    return raw.filter((item) => {
+      if (item.isActive && statusFilterVisitors.active) return true
+      if (!item.isActive && statusFilterVisitors.blocked) return true
+      return false
+    })
+  }, [tab, employees, visitors, statusFilterEmployees, statusFilterVisitors])
 
   return (
     <AppLayout onAction={openCreateModal}>
@@ -479,6 +405,54 @@ export function PeopleManagementPage() {
             </div>
           </div>
 
+          {/* Status filter */}
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Статус:</span>
+            {tab === 'employees' ? (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={statusFilterEmployees.active}
+                    onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, active: e.target.checked }))}
+                    className="rounded border-border-light text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm font-bold text-text-dark">Активен</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={statusFilterEmployees.dismissed}
+                    onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, dismissed: e.target.checked }))}
+                    className="rounded border-border-light text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm font-bold text-text-dark">Уволен</span>
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={statusFilterVisitors.active}
+                    onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, active: e.target.checked }))}
+                    className="rounded border-border-light text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm font-bold text-text-dark">Активный</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={statusFilterVisitors.blocked}
+                    onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, blocked: e.target.checked }))}
+                    className="rounded border-border-light text-primary focus:ring-primary"
+                  />
+                  <span className="text-sm font-bold text-text-dark">Заблокированный</span>
+                </label>
+              </>
+            )}
+          </div>
+
           {/* Tabs */}
           <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-border-light">
             <button
@@ -508,7 +482,7 @@ export function PeopleManagementPage() {
               list.map((item) => {
                 const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '')
                 const subtitle = item.type === 'employee'
-                  ? `ID: ${item.employeeNo || 'N/A'} • ${item.cardsCount} Cards • ${item.facesCount} Faces`
+                  ? `${item.cardsCount} Cards • ${item.facesCount} Faces`
                   : `Valid: ${item.validFromUtc?.slice(0, 10) || 'N/A'} - ${item.validToUtc?.slice(0, 10) || 'N/A'} • ${item.cardsCount} Cards`
 
                 return (
@@ -529,15 +503,9 @@ export function PeopleManagementPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        icon="edit"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => { e.stopPropagation(); openEditModal(item) }}
-                        title="Edit"
-                      />
-                      <Badge variant={item.isActive ? 'success' : 'neutral'}>{item.isActive ? 'Active' : 'Inactive'}</Badge>
+                      <Badge variant={item.isActive ? 'success' : 'neutral'}>
+                        {item.type === 'employee' ? (item.isActive ? 'Активен' : 'Уволен') : (item.isActive ? 'Активен' : 'Заблокирован')}
+                      </Badge>
                       <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
                     </div>
                   </div>
@@ -606,7 +574,7 @@ export function PeopleManagementPage() {
 
       <Modal
         isOpen={!!modalMode}
-        title={modalMode === 'create' ? `Add ${tab === 'employees' ? 'Employee' : 'Visitor'}` : 'Edit Details'}
+        title={tab === 'employees' ? 'Добавить сотрудника' : 'Добавить посетителя'}
         onClose={() => setModalMode(null)}
       >
         <div className="space-y-4">
@@ -661,18 +629,21 @@ export function PeopleManagementPage() {
                   />
                 </div>
               </div>
+              <label className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={formData.onlyVerify}
+                  onChange={(e) => setFormData((p) => ({ ...p, onlyVerify: e.target.checked }))}
+                  className="w-5 h-5 mt-0.5 rounded border-border-light text-primary focus:ring-primary"
+                />
+                <div>
+                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Только учёт рабочего времени</span>
+                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">При включении у работника будет учитываться рабочее время, но дверь открываться не будет.</p>
+                </div>
+              </label>
             </>
           ) : (
             <>
-              {modalMode === 'edit' && (
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Document Number</label>
-                  <Input
-                    value={formData.documentNumber}
-                    onChange={(e) => setFormData((p) => ({ ...p, documentNumber: e.target.value }))}
-                  />
-                </div>
-              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid From</label>
@@ -692,6 +663,22 @@ export function PeopleManagementPage() {
                 </div>
               </div>
             </>
+          )}
+
+          {departments.length > 0 && (
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Отдел</label>
+              <select
+                value={formData.departmentId ?? ''}
+                onChange={(e) => setFormData((p) => ({ ...p, departmentId: e.target.value || null }))}
+                className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
+              >
+                <option value="">— Не назначен —</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
           )}
 
           {accessLevels.length > 0 && (

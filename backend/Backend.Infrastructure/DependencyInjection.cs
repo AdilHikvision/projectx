@@ -74,6 +74,7 @@ public static class DependencyInjection
         services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();
         services.AddScoped<IDevicePersonSyncService, DevicePersonSyncService>();
         services.AddScoped<IDevicePersonImportService, DevicePersonImportService>();
+        services.AddScoped<IDeviceFaceCaptureService, DeviceFaceCaptureService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();
