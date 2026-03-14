@@ -47,6 +47,13 @@ interface DepartmentTreeItem {
   id: string
   name: string
   parentId?: string | null
+  companyId?: string | null
+}
+
+interface Company {
+  id: string
+  name: string
+  description?: string | null
 }
 
 type TabType = 'employees' | 'visitors'
@@ -77,7 +84,10 @@ export function PeopleManagementPage() {
     onlyVerify: false,
     accessLevelIds: [] as string[],
     departmentId: null as string | null,
+    companyId: null as string | null,
   })
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [devices, setDevices] = useState<{ id: string; name: string; ipAddress: string }[]>([])
@@ -126,20 +136,58 @@ export function PeopleManagementPage() {
     }
   }, [token])
 
-  const loadDepartments = useCallback(async () => {
+  const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
+
+    // В режиме группы компаний, если компания не выбрана - не показываем отделы
+    if (companyMode === 'Multiple' && !cId) {
+      setDepartments([])
+      return
+    }
+
     try {
-      const list = await apiRequest<DepartmentTreeItem[]>(`/api/departments/tree`, { token })
+      const params = new URLSearchParams()
+      if (cId) params.set('companyId', cId)
+      const list = await apiRequest<DepartmentTreeItem[]>(`/api/departments/tree?${params}`, { token })
       setDepartments(list)
     } catch {
       setDepartments([])
+    }
+  }, [token, companyMode])
+
+  const loadCompanies = useCallback(async (): Promise<Company[]> => {
+    if (!token) return []
+    try {
+      const list = await apiRequest<Company[]>(`/api/companies`, { token })
+      setCompanies(list)
+      return list
+    } catch {
+      setCompanies([])
+      return []
+    }
+  }, [token])
+
+  const loadCompanyMode = useCallback(async (): Promise<string> => {
+    if (!token) return 'None'
+    try {
+      const setting = await apiRequest<{ key: string; value: string }>(`/api/system-settings/CompanyMode`, { token })
+      setCompanyMode(setting.value as any)
+      return setting.value
+    } catch {
+      setCompanyMode('None')
+      return 'None'
     }
   }, [token])
 
   useEffect(() => {
     loadAccessLevels()
-    loadDepartments()
-  }, [loadAccessLevels, loadDepartments])
+    loadCompanies()
+    loadCompanyMode()
+  }, [loadAccessLevels, loadCompanies, loadCompanyMode])
+
+  useEffect(() => {
+    loadDepartments(formData.companyId)
+  }, [loadDepartments, formData.companyId])
 
   useEffect(() => {
     if (!token) return
@@ -166,6 +214,19 @@ export function PeopleManagementPage() {
   async function openCreateModal() {
     setModalMode('create')
     setError(null)
+
+    // Load companies and mode if not loaded
+    let currentCompanies = companies;
+    if (currentCompanies.length === 0) {
+      currentCompanies = await loadCompanies();
+    }
+    let currentMode = companyMode;
+    if (currentMode === 'None') {
+      currentMode = await loadCompanyMode() as any;
+    }
+
+    const defaultCompanyId = currentMode === 'Single' ? currentCompanies[0]?.id || null : null
+
     try {
       if (tab === 'employees') {
         setFormData({
@@ -179,6 +240,7 @@ export function PeopleManagementPage() {
           onlyVerify: false,
           accessLevelIds: [],
           departmentId: null,
+          companyId: defaultCompanyId,
         })
       } else {
         setFormData({
@@ -192,6 +254,7 @@ export function PeopleManagementPage() {
           onlyVerify: false,
           accessLevelIds: [],
           departmentId: null,
+          companyId: defaultCompanyId,
         })
       }
     } catch (e) {
@@ -206,6 +269,7 @@ export function PeopleManagementPage() {
         onlyVerify: false,
         accessLevelIds: [],
         departmentId: null,
+        companyId: defaultCompanyId,
       })
       setError(e instanceof Error ? e.message : 'Failed to load next ID')
     }
@@ -236,6 +300,7 @@ export function PeopleManagementPage() {
             onlyVerify: formData.onlyVerify,
             accessLevelIds: formData.accessLevelIds,
             departmentId: formData.departmentId || null,
+            companyId: formData.companyId || null,
           }),
         })
         showSyncWarnings(res)
@@ -252,6 +317,7 @@ export function PeopleManagementPage() {
             validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
             accessLevelIds: formData.accessLevelIds,
             departmentId: formData.departmentId || null,
+            companyId: formData.companyId || null,
           }),
         })
         showSyncWarnings(res)
@@ -663,6 +729,28 @@ export function PeopleManagementPage() {
                 </div>
               </div>
             </>
+          )}
+
+          {companyMode !== 'None' && (
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Компания</label>
+              {companyMode === 'Multiple' ? (
+                <select
+                  value={formData.companyId ?? ''}
+                  onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
+                  className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
+                >
+                  <option value="">— Не выбрана —</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
+                  {companies.find(c => c.id === formData.companyId)?.name || 'Основная компания'}
+                </div>
+              )}
+            </div>
           )}
 
           {departments.length > 0 && (

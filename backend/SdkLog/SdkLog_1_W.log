@@ -1,8 +1,5 @@
-[2026-03-14 13:35:14.377][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libcrypto-1_1-x64.dll], hHandleRet[1485176832]
-[2026-03-14 13:35:14.377][DBG] Load [libcrypto-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libcrypto-1_1-x64.dll]
-[2026-03-14 13:35:14.378][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libssl-1_1-x64.dll], hHandleRet[2069626880]
-[2026-03-14 13:35:14.378][DBG] Load [libssl-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libssl-1_1-x64.dll]
-[2026-03-14 13:35:14.380][ERR] CSSLTrans::SSLTrans_CTX_Load_CA, invalid path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/cert/\]
-[2026-03-14 13:35:14.580][DBG] CUserMgr::UnRegisterHeartProxy[0]
-[2026-03-14 13:35:14.773][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
-[2026-03-14 13:35:14.819][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-14 16:58:42.497][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libcrypto-1_1-x64.dll], hHandleRet[1695350784]
+[2026-03-14 16:58:42.497][DBG] Load [libcrypto-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libcrypto-1_1-x64.dll]
+[2026-03-14 16:58:42.499][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libssl-1_1-x64.dll], hHandleRet[1720451072]
+[2026-03-14 16:58:42.499][DBG] Load [libssl-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libssl-1_1-x64.dll]
+[2026-03-14 16:58:42.505][ERR] CSSLTrans::SSLTrans_CTX_Load_CA, invalid path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/cert/\]

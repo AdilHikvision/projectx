@@ -101,6 +101,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Gender).HasMaxLength(16);
             entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
             entity.HasOne(x => x.Department).WithMany(x => x.Employees).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.Company).WithMany(x => x.Employees).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<Visitor>(entity =>
@@ -112,6 +113,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.DocumentNumber).HasMaxLength(120);
             entity.HasIndex(x => x.DocumentNumber);
             entity.HasOne(x => x.Department).WithMany(x => x.Visitors).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.Company).WithMany(x => x.Visitors).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<AccessLevel>(entity =>

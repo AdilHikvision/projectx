@@ -1059,10 +1059,12 @@ app.MapPost("/api/system-settings", async (SystemSettingRequest request, AppDbCo
 }).RequireAuthorization();
 
 // Departments (древовидная структура отделов)
-app.MapGet("/api/departments", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/departments", async (Guid? companyId, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var list = await dbContext.Departments
-        .AsNoTracking()
+    var query = dbContext.Departments.AsNoTracking().AsQueryable();
+    if (companyId.HasValue) query = query.Where(x => x.CompanyId == companyId);
+
+    var list = await query
         .OrderBy(x => x.SortOrder)
         .ThenBy(x => x.Name)
         .ToListAsync(cancellationToken);
@@ -1075,9 +1077,12 @@ app.MapGet("/api/departments", async (AppDbContext dbContext, CancellationToken 
         visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)));
 }).RequireAuthorization();
 
-app.MapGet("/api/departments/tree", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/departments/tree", async (Guid? companyId, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var list = await dbContext.Departments.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync(cancellationToken);
+    var query = dbContext.Departments.AsNoTracking().AsQueryable();
+    if (companyId.HasValue) query = query.Where(x => x.CompanyId == companyId);
+
+    var list = await query.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync(cancellationToken);
     var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
@@ -1238,6 +1243,16 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     // По умолчанию: с сегодняшней даты до 31 дек 2037
     var defaultValidFrom = DateTime.UtcNow.Date;
     var defaultValidTo = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+    var companyId = request.CompanyId;
+    if (companyId == null)
+    {
+        var mode = await dbContext.SystemSettings.FirstOrDefaultAsync(s => s.Key == "CompanyMode", cancellationToken);
+        if (mode?.Value == "Single")
+        {
+            companyId = (await dbContext.Companies.OrderBy(c => c.CreatedUtc).FirstOrDefaultAsync(cancellationToken))?.Id;
+        }
+    }
+
     var entity = new Employee
     {
         Id = entityId,
@@ -1250,6 +1265,7 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
         IsActive = true,
         OnlyVerify = request.OnlyVerify ?? false,
         DepartmentId = request.DepartmentId,
+        CompanyId = companyId,
         CreatedUtc = DateTime.UtcNow
     };
     dbContext.Employees.Add(entity);
@@ -1289,7 +1305,7 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
         .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
         .FirstAsync(x => x.Id == entity.Id, cancellationToken);
     var createdResp = MapEmployeeDetailResponse(created);
-    return Results.Created($"/api/employees/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.EmployeeNo, createdResp.Gender, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.OnlyVerify, createdResp.Department, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Created($"/api/employees/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.EmployeeNo, createdResp.Gender, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.OnlyVerify, createdResp.Department, createdResp.CompanyId, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1314,6 +1330,8 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
     if (request.OnlyVerify.HasValue) entity.OnlyVerify = request.OnlyVerify.Value;
     if (request.DepartmentId.HasValue) entity.DepartmentId = request.DepartmentId.Value;
     else if (request.DepartmentId == null) entity.DepartmentId = null;
+    if (request.CompanyId.HasValue) entity.CompanyId = request.CompanyId.Value;
+    else if (request.CompanyId == null) entity.CompanyId = null;
     entity.UpdatedUtc = DateTime.UtcNow;
 
     var accessLevelIds = (request.AccessLevelIds ?? entity.AccessLevels.Select(a => a.AccessLevelId).ToArray()).ToList();
@@ -1353,7 +1371,7 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
         .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapEmployeeDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.EmployeeNo, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.OnlyVerify, updatedResp.Department, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.EmployeeNo, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.OnlyVerify, updatedResp.Department, updatedResp.CompanyId, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1522,6 +1540,16 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
     var validFrom = request.ValidFromUtc ?? now;
     var validTo = request.ValidToUtc ?? validFrom.AddHours(24);
 
+    var companyId = request.CompanyId;
+    if (companyId == null)
+    {
+        var mode = await dbContext.SystemSettings.FirstOrDefaultAsync(s => s.Key == "CompanyMode", cancellationToken);
+        if (mode?.Value == "Single")
+        {
+            companyId = (await dbContext.Companies.OrderBy(c => c.CreatedUtc).FirstOrDefaultAsync(cancellationToken))?.Id;
+        }
+    }
+
     var entity = new Visitor
     {
         Id = Guid.NewGuid(),
@@ -1531,6 +1559,7 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
         VisitDateUtc = validFrom,
         ValidFromUtc = validFrom,
         DepartmentId = request.DepartmentId,
+        CompanyId = companyId,
         ValidToUtc = validTo,
         IsActive = true,
         CreatedUtc = DateTime.UtcNow
@@ -1572,7 +1601,7 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == entity.Id, cancellationToken);
     var createdResp = MapVisitorDetailResponse(created);
-    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.Department, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.Department, createdResp.CompanyId, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -1596,6 +1625,8 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
     if (request.IsActive.HasValue) entity.IsActive = request.IsActive.Value;
     if (request.DepartmentId.HasValue) entity.DepartmentId = request.DepartmentId.Value;
     else if (request.DepartmentId == null) entity.DepartmentId = null;
+    if (request.CompanyId.HasValue) entity.CompanyId = request.CompanyId.Value;
+    else if (request.CompanyId == null) entity.CompanyId = null;
     entity.UpdatedUtc = DateTime.UtcNow;
 
     var accessLevelIds = (request.AccessLevelIds ?? entity.AccessLevels.Select(a => a.AccessLevelId).ToArray()).ToList();
@@ -1635,7 +1666,7 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
         .Include(v => v.Cards).Include(v => v.Faces).Include(v => v.Fingerprints)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapVisitorDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.Department, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.DocumentNumber, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.Department, updatedResp.CompanyId, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
 app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -2141,7 +2172,7 @@ static EmployeeResponse MapEmployeeResponse(Employee e)
     var dept = e.Department != null ? new DepartmentRef(e.Department.Id, e.Department.Name) : null;
     return new EmployeeResponse(
         e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify,
-        accessNames, dept, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0);
+        accessNames, dept, e.CompanyId, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0);
 }
 
 static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
@@ -2151,7 +2182,7 @@ static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
     var cards = (e.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
     var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
-    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, accessLevels, cards, faces, fingerprints);
+    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, e.CompanyId, accessLevels, cards, faces, fingerprints);
 }
 
 static VisitorResponse MapVisitorResponse(Visitor v)
@@ -2160,7 +2191,7 @@ static VisitorResponse MapVisitorResponse(Visitor v)
     var dept = v.Department != null ? new DepartmentRef(v.Department.Id, v.Department.Name) : null;
     return new VisitorResponse(
         v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive,
-        accessNames, dept, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
+        accessNames, dept, v.CompanyId, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0);
 }
 
 static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
@@ -2170,7 +2201,7 @@ static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
     var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
     var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
-    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive, dept, accessLevels, cards, faces, fingerprints);
+    return new VisitorDetailResponse(v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive, dept, v.CompanyId, accessLevels, cards, faces, fingerprints);
 }
 
 static async Task<string> GetNextPersonIdAsync(AppDbContext dbContext, CancellationToken cancellationToken)
@@ -2304,20 +2335,20 @@ public sealed record DepartmentResponse(Guid Id, string Name, string? Descriptio
 public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int EmployeesCount, int VisitorsCount);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string Action);
-public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId);
-public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId);
-public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId);
-public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId);
+public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
+public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
+public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
+public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
 
 public sealed record CaptureFaceRequest(string? PersonId, string? PersonType);
 
 public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds);
 public sealed record DepartmentRef(Guid Id, string Name);
-public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, int CardsCount, int FacesCount, int FingerprintsCount);
-public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
-public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, int CardsCount, int FacesCount, int FingerprintsCount);
-public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
+public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, int CardsCount, int FacesCount, int FingerprintsCount);
+public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);
 public sealed record AccessLevelRef(Guid Id, string Name);
 public sealed record CardRef(Guid Id, string CardNo, string? CardNumber);
 public sealed record FaceRef(Guid Id, int FDID);

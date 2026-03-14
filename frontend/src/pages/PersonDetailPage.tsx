@@ -54,6 +54,7 @@ interface PersonDetail {
   isActive: boolean
   onlyVerify?: boolean
   department?: DepartmentRef | null
+  companyId?: string | null
   accessLevels: { id: string; name: string }[]
   cards: { id: string; cardNo: string; cardNumber?: string | null }[]
   faces: { id: string; fdid: number }[]
@@ -68,12 +69,19 @@ interface DepartmentTreeItem {
   parentId?: string | null
   employeesCount: number
   visitorsCount: number
+  companyId?: string | null
 }
 
 interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+}
+
+interface Company {
+  id: string
+  name: string
+  description?: string | null
 }
 
 interface AccessLevel {
@@ -83,10 +91,6 @@ interface AccessLevel {
   doors?: AccessLevelDoor[]
 }
 
-interface Device {
-  id: string
-  name: string
-}
 
 type CredentialTab = 'cards' | 'faces' | 'fingerprints'
 
@@ -114,7 +118,10 @@ export function PersonDetailPage() {
     onlyVerify: false,
     accessLevelIds: [] as string[],
     departmentId: null as string | null,
+    companyId: null as string | null,
   })
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [saveLoading, setSaveLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -149,6 +156,30 @@ export function PersonDetailPage() {
     }
   }, [token, id, apiPath, startLoading, stopLoading])
 
+  const loadCompanies = useCallback(async (): Promise<Company[]> => {
+    if (!token) return []
+    try {
+      const list = await apiRequest<Company[]>(`/api/companies`, { token })
+      setCompanies(list)
+      return list
+    } catch {
+      setCompanies([])
+      return []
+    }
+  }, [token])
+
+  const loadCompanyMode = useCallback(async (): Promise<string> => {
+    if (!token) return 'None'
+    try {
+      const setting = await apiRequest<{ key: string; value: string }>(`/api/system-settings/CompanyMode`, { token })
+      setCompanyMode(setting.value as any)
+      return setting.value
+    } catch {
+      setCompanyMode('None')
+      return 'None'
+    }
+  }, [token])
+
   const loadAccessLevels = useCallback(async () => {
     if (!token) return
     try {
@@ -159,15 +190,24 @@ export function PersonDetailPage() {
     }
   }, [token])
 
-  const loadDepartments = useCallback(async () => {
+  const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
+    
+    // В режиме группы компаний, если компания не выбрана - не показываем отделы
+    if (companyMode === 'Multiple' && !cId) {
+      setDepartments([])
+      return
+    }
+
     try {
-      const list = await apiRequest<DepartmentTreeItem[]>(`/api/departments/tree`, { token })
+      const params = new URLSearchParams()
+      if (cId) params.set('companyId', cId)
+      const list = await apiRequest<DepartmentTreeItem[]>(`/api/departments/tree?${params}`, { token })
       setDepartments(list)
     } catch {
       setDepartments([])
     }
-  }, [token])
+  }, [token, companyMode])
 
   const devicesFromAccessLevels = useMemo(() => {
     const levelIds = formData.accessLevelIds
@@ -184,8 +224,13 @@ export function PersonDetailPage() {
   useEffect(() => {
     loadDetail()
     loadAccessLevels()
-    loadDepartments()
-  }, [loadDetail, loadAccessLevels, loadDepartments])
+    loadCompanies()
+    loadCompanyMode()
+  }, [loadDetail, loadAccessLevels, loadCompanies, loadCompanyMode])
+
+  useEffect(() => {
+    loadDepartments(formData.companyId)
+  }, [loadDepartments, formData.companyId])
 
   useEffect(() => {
     if (addModal !== 'face' || faceSourceMode !== 'webcam') return
@@ -208,6 +253,12 @@ export function PersonDetailPage() {
     if (!detail) return
     const validFrom = detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : new Date().toISOString().slice(0, 10)
     const validTo = detail.validToUtc ? detail.validToUtc.slice(0, 10) : '2037-12-31'
+    
+    let cId = detail.companyId ?? null;
+    if (!cId && companyMode === 'Single' && companies.length > 0) {
+      cId = companies[0].id;
+    }
+
     setFormData({
       firstName: detail.firstName,
       lastName: detail.lastName,
@@ -218,8 +269,9 @@ export function PersonDetailPage() {
       onlyVerify: (detail as PersonDetail & { onlyVerify?: boolean }).onlyVerify ?? false,
       accessLevelIds: detail.accessLevels?.map((a) => a.id) ?? [],
       departmentId: detail.department?.id ?? null,
+      companyId: cId,
     })
-  }, [detail])
+  }, [detail, companies, companyMode])
 
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
@@ -456,6 +508,7 @@ export function PersonDetailPage() {
             onlyVerify: formData.onlyVerify,
             accessLevelIds: formData.accessLevelIds,
             departmentId: formData.departmentId || null,
+            companyId: formData.companyId || null,
           }),
         })
         showSyncWarnings(res)
@@ -473,6 +526,7 @@ export function PersonDetailPage() {
             isActive: formData.isActive,
             accessLevelIds: formData.accessLevelIds,
             departmentId: formData.departmentId || null,
+            companyId: formData.companyId || null,
           }),
         })
         showSyncWarnings(res)
@@ -616,7 +670,31 @@ export function PersonDetailPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
-              {/* Отдел */}
+                  <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary">corporate_fare</span>
+                      <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Компания</h3>
+                    </div>
+                    {companyMode === 'Multiple' ? (
+                      <select
+                        value={formData.companyId ?? ''}
+                        onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
+                        className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
+                      >
+                        <option value="">— Не выбрана —</option>
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    ) : companyMode === 'Single' ? (
+                      <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
+                        {companies.find(c => c.id === formData.companyId)?.name || 'Основная компания'}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-text-muted">Компании не используются</p>
+                    )}
+                  </div>
+                  {/* Отдел */}
               <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary">business</span>

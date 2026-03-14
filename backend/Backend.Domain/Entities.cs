@@ -47,6 +47,8 @@ public sealed class Company : BaseEntity
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public ICollection<Department> Departments { get; set; } = new List<Department>();
+    public ICollection<Employee> Employees { get; set; } = new List<Employee>();
+    public ICollection<Visitor> Visitors { get; set; } = new List<Visitor>();
 }
 
 /// <summary>Системные настройки (режим работы, и т.д.).</summary>
@@ -116,6 +118,9 @@ public sealed class Employee : BaseEntity
     public Guid? DepartmentId { get; set; }
     public Department? Department { get; set; }
 
+    public Guid? CompanyId { get; set; }
+    public Company? Company { get; set; }
+
     public ICollection<EmployeeAccessLevel> AccessLevels { get; set; } = new List<EmployeeAccessLevel>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();
     public ICollection<Face> Faces { get; set; } = new List<Face>();
@@ -134,6 +139,9 @@ public sealed class Visitor : BaseEntity
 
     public Guid? DepartmentId { get; set; }
     public Department? Department { get; set; }
+
+    public Guid? CompanyId { get; set; }
+    public Company? Company { get; set; }
 
     public ICollection<VisitorAccessLevel> AccessLevels { get; set; } = new List<VisitorAccessLevel>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();
