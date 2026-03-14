@@ -968,6 +968,96 @@ app.MapDelete("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbCon
     return Results.NoContent();
 }).RequireAuthorization();
 
+// Companies
+app.MapGet("/api/companies", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var list = await dbContext.Companies
+        .AsNoTracking()
+        .OrderBy(x => x.Name)
+        .ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(x => new CompanyResponse(x.Id, x.Name, x.Description, x.CreatedUtc, x.UpdatedUtc)));
+}).RequireAuthorization();
+
+app.MapPost("/api/companies", async (CreateCompanyRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    var entity = new Company
+    {
+        Id = Guid.NewGuid(),
+        Name = name,
+        Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Companies.Add(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Created($"/api/companies/{entity.Id}", new CompanyResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc));
+}).RequireAuthorization();
+
+app.MapPut("/api/companies/{id:guid}", async (Guid id, UpdateCompanyRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Companies.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null) return Results.NotFound();
+
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    entity.Name = name;
+    entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new CompanyResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc));
+}).RequireAuthorization();
+
+app.MapDelete("/api/companies/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Companies.Include(x => x.Departments).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null) return Results.NotFound();
+    if (entity.Departments.Count > 0)
+        return Results.BadRequest(new { message = "Cannot delete company with departments. Delete or move them first." });
+
+    dbContext.Companies.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// System Settings
+app.MapGet("/api/system-settings", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var list = await dbContext.SystemSettings.AsNoTracking().ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(x => new SystemSettingResponse(x.Key, x.Value)));
+}).RequireAuthorization();
+
+app.MapGet("/api/system-settings/{key}", async (string key, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var setting = await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(x => x.Key == key, cancellationToken);
+    if (setting is null) return Results.NotFound();
+    return Results.Ok(new SystemSettingResponse(setting.Key, setting.Value));
+}).RequireAuthorization();
+
+app.MapPost("/api/system-settings", async (SystemSettingRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var key = (request.Key ?? "").Trim();
+    if (string.IsNullOrEmpty(key)) return Results.BadRequest(new { message = "Key is required." });
+
+    var setting = await dbContext.SystemSettings.FirstOrDefaultAsync(x => x.Key == key, cancellationToken);
+    if (setting == null)
+    {
+        setting = new SystemSetting { Id = Guid.NewGuid(), Key = key, Value = request.Value, CreatedUtc = DateTime.UtcNow };
+        dbContext.SystemSettings.Add(setting);
+    }
+    else
+    {
+        setting.Value = request.Value;
+        setting.UpdatedUtc = DateTime.UtcNow;
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new SystemSettingResponse(setting.Key, setting.Value));
+}).RequireAuthorization();
+
 // Departments (древовидная структура отделов)
 app.MapGet("/api/departments", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -979,7 +1069,7 @@ app.MapGet("/api/departments", async (AppDbContext dbContext, CancellationToken 
     var childCounts = await dbContext.Departments.Where(d => d.ParentId != null).GroupBy(d => d.ParentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
-    return Results.Ok(list.Select(d => new DepartmentResponse(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId,
+    return Results.Ok(list.Select(d => new DepartmentResponse(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId,
         childCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0,
         empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0,
         visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)));
@@ -990,7 +1080,7 @@ app.MapGet("/api/departments/tree", async (AppDbContext dbContext, CancellationT
     var list = await dbContext.Departments.AsNoTracking().OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync(cancellationToken);
     var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
-    var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
+    var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
     return Results.Ok(items);
 }).RequireAuthorization();
 
@@ -999,7 +1089,7 @@ app.MapGet("/api/departments/{id:guid}", async (Guid id, AppDbContext dbContext,
     var entity = await dbContext.Departments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
-    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, entity.CompanyId, 0, 0, 0));
 }).RequireAuthorization();
 
 app.MapPost("/api/departments", async (CreateDepartmentRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -1027,11 +1117,12 @@ app.MapPost("/api/departments", async (CreateDepartmentRequest request, AppDbCon
         Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
         SortOrder = maxOrder + 1,
         ParentId = request.ParentId,
+        CompanyId = request.CompanyId,
         CreatedUtc = DateTime.UtcNow
     };
     dbContext.Departments.Add(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/departments/{entity.Id}", new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+    return Results.Created($"/api/departments/{entity.Id}", new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, entity.CompanyId, 0, 0, 0));
 }).RequireAuthorization();
 
 app.MapPut("/api/departments/{id:guid}", async (Guid id, UpdateDepartmentRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -1062,9 +1153,10 @@ app.MapPut("/api/departments/{id:guid}", async (Guid id, UpdateDepartmentRequest
     entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
     entity.SortOrder = request.SortOrder ?? entity.SortOrder;
     entity.ParentId = request.ParentId;
+    entity.CompanyId = request.CompanyId;
     entity.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0, 0, 0));
+    return Results.Ok(new DepartmentResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, entity.CompanyId, 0, 0, 0));
 }).RequireAuthorization();
 
 app.MapDelete("/api/departments/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2199,10 +2291,17 @@ public sealed record DeviceStatusResponse(
 
 public sealed record CreateAccessLevelRequest(string Name, string? Description);
 public sealed record UpdateAccessLevelRequest(string Name, string? Description);
-public sealed record CreateDepartmentRequest(string Name, string? Description, Guid? ParentId);
-public sealed record UpdateDepartmentRequest(string Name, string? Description, int? SortOrder, Guid? ParentId);
-public sealed record DepartmentResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, int ChildrenCount, int EmployeesCount, int VisitorsCount);
-public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, int EmployeesCount, int VisitorsCount);
+
+public sealed record CreateCompanyRequest(string Name, string? Description);
+public sealed record UpdateCompanyRequest(string Name, string? Description);
+public sealed record CompanyResponse(Guid Id, string Name, string? Description, DateTime CreatedUtc, DateTime? UpdatedUtc);
+public sealed record SystemSettingRequest(string Key, string? Value);
+public sealed record SystemSettingResponse(string Key, string? Value);
+
+public sealed record CreateDepartmentRequest(string Name, string? Description, Guid? ParentId, Guid? CompanyId);
+public sealed record UpdateDepartmentRequest(string Name, string? Description, int? SortOrder, Guid? ParentId, Guid? CompanyId);
+public sealed record DepartmentResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int ChildrenCount, int EmployeesCount, int VisitorsCount);
+public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int EmployeesCount, int VisitorsCount);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string Action);
 public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId);

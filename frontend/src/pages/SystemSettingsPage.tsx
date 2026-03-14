@@ -5,6 +5,9 @@ import { Button } from '../components/atoms'
 import { PageHeader } from '../components/organisms'
 import { CompanyTab } from './CompanyTab'
 import { DevicesTab } from './DevicesTab'
+import { useAuth } from '../auth/AuthContext'
+import { apiRequest } from '../lib/api'
+import { useLoading } from '../context/LoadingContext'
 
 export function SystemSettingsPage() {
     const location = useLocation()
@@ -14,6 +17,10 @@ export function SystemSettingsPage() {
 
     const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company'>(initialTab)
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
+    const { token } = useAuth()
+    const { startLoading, stopLoading } = useLoading()
+    const [companyMode, setCompanyMode] = useState<'Single' | 'Multiple' | 'None'>('None')
+    const [isSavingMode, setIsSavingMode] = useState(false)
 
     useEffect(() => {
         const tab = new URLSearchParams(location.search).get('tab')
@@ -21,6 +28,41 @@ export function SystemSettingsPage() {
         else if (tab === 'company') setActiveTab('company')
         else if (tab === 'global') setActiveTab('global')
     }, [location.search])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'global') return
+        
+        const loadSettings = async () => {
+            startLoading()
+            try {
+                const settings = await apiRequest<any[]>('/api/system-settings', { token })
+                const mode = settings.find(s => s.key === 'CompanyMode')?.value || 'None'
+                setCompanyMode(mode)
+            } catch (e) {
+                console.error('Failed to load settings', e)
+            } finally {
+                stopLoading()
+            }
+        }
+        loadSettings()
+    }, [token, activeTab, startLoading, stopLoading])
+
+    const handleUpdateMode = async (newMode: 'Single' | 'Multiple') => {
+        if (!token) return
+        setIsSavingMode(true)
+        try {
+            await apiRequest('/api/system-settings', {
+                method: 'POST',
+                token,
+                body: JSON.stringify({ key: 'CompanyMode', value: newMode })
+            })
+            setCompanyMode(newMode)
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Failed to update mode')
+        } finally {
+            setIsSavingMode(false)
+        }
+    }
 
     const handleAction = () => {
         if (activeTab === 'devices' && devicesRef.current) {
@@ -139,6 +181,60 @@ export function SystemSettingsPage() {
                                     <div className="pt-4 flex gap-3">
                                         <Button fullWidth variant="outline" icon="cyclone" size="sm" className="shadow-sm hover:shadow-md transition-shadow">Deep Reindex</Button>
                                         <Button fullWidth variant="outline" icon="history" size="sm" className="shadow-sm hover:shadow-md transition-shadow">Purge Logs</Button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Organizational Structure */}
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 px-2">
+                                    <div className="w-8 h-8 rounded-xl bg-sky-500/10 flex items-center justify-center text-sky-600">
+                                        <span className="material-symbols-outlined text-lg">corporate_fare</span>
+                                    </div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Organizational Structure</h3>
+                                </div>
+
+                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none text-text-light">
+                                    <div className="space-y-4">
+                                        <div>
+                                            <p className="text-xs font-black text-text-dark">Company Management Mode</p>
+                                            <p className="text-[9px] font-bold text-text-light uppercase tracking-widest">Defines how companies and departments are handled</p>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <button
+                                                onClick={() => handleUpdateMode('Single')}
+                                                disabled={isSavingMode}
+                                                className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${
+                                                    companyMode === 'Single' 
+                                                    ? 'border-sky-500 bg-sky-50 text-sky-700' 
+                                                    : 'border-divider-light hover:border-sky-200 text-text-light'
+                                                }`}
+                                            >
+                                                <span className="material-symbols-outlined">business</span>
+                                                <span className="text-[10px] font-black uppercase tracking-widest">Single Company</span>
+                                            </button>
+                                            
+                                            <button
+                                                onClick={() => handleUpdateMode('Multiple')}
+                                                disabled={isSavingMode}
+                                                className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${
+                                                    companyMode === 'Multiple' 
+                                                    ? 'border-sky-500 bg-sky-50 text-sky-700' 
+                                                    : 'border-divider-light hover:border-sky-200 text-text-light'
+                                                }`}
+                                            >
+                                                <span className="material-symbols-outlined">hub</span>
+                                                <span className="text-[10px] font-black uppercase tracking-widest">Group of Companies</span>
+                                            </button>
+                                        </div>
+
+                                        {companyMode === 'None' && (
+                                            <p className="text-[9px] text-amber-600 font-bold uppercase tracking-widest flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-xs">warning</span>
+                                                Mode not selected. Initial setup required.
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             </div>

@@ -41,12 +41,30 @@ public sealed class Device : BaseEntity
     public ICollection<AccessLevelDoor> AccessLevelDoors { get; set; } = new List<AccessLevelDoor>();
 }
 
+/// <summary>Компания или холдинг.</summary>
+public sealed class Company : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public ICollection<Department> Departments { get; set; } = new List<Department>();
+}
+
+/// <summary>Системные настройки (режим работы, и т.д.).</summary>
+public sealed class SystemSetting : BaseEntity
+{
+    public string Key { get; set; } = string.Empty;
+    public string? Value { get; set; }
+}
+
 /// <summary>Отдел компании (древовидная структура).</summary>
 public sealed class Department : BaseEntity
 {
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public int SortOrder { get; set; }
+
+    public Guid? CompanyId { get; set; }
+    public Company? Company { get; set; }
 
     public Guid? ParentId { get; set; }
     public Department? Parent { get; set; }

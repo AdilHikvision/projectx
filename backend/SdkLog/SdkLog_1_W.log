@@ -1,69 +1,8 @@
-[2026-03-13 18:57:32.046][ERR] Private connect 192.168.88.161:8000 sock=2952 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 18:57:32.057][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 18:57:32.057][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 18:58:03.174][ERR] Private connect 192.168.88.161:8000 sock=1432 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 18:58:03.174][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 18:58:03.174][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 18:58:34.306][ERR] Private connect 192.168.88.161:8000 sock=3044 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 18:58:34.307][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 18:58:34.307][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 18:59:05.408][ERR] Private connect 192.168.88.161:8000 sock=3068 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 18:59:05.408][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 18:59:05.408][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:05:14.418][ERR] Private connect 192.168.88.161:8000 sock=3080 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:05:14.428][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:05:14.428][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:05:45.636][ERR] Private connect 192.168.88.161:8000 sock=3076 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:05:45.636][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:05:45.636][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:06:16.755][ERR] Private connect 192.168.88.161:8000 sock=3096 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:06:16.755][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:06:16.755][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:06:47.848][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:06:47.848][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:06:47.848][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:07:18.971][ERR] Private connect 192.168.88.161:8000 sock=784 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:07:18.971][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:07:18.971][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:07:50.088][ERR] Private connect 192.168.88.161:8000 sock=3184 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:07:50.088][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:07:50.088][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:08:21.203][ERR] Private connect 192.168.88.161:8000 sock=1724 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:08:21.204][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:08:21.204][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:08:52.353][ERR] Private connect 192.168.88.161:8000 sock=3232 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:08:52.353][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:08:52.353][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:09:23.464][ERR] Private connect 192.168.88.161:8000 sock=3304 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:09:23.465][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:09:23.465][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:09:54.556][ERR] Private connect 192.168.88.161:8000 sock=3144 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:09:54.556][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:09:54.556][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:10:25.698][ERR] Private connect 192.168.88.161:8000 sock=2336 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:10:25.698][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:10:25.698][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:10:56.819][ERR] Private connect 192.168.88.161:8000 sock=2132 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:10:56.819][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:10:56.819][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:11:27.920][ERR] Private connect 192.168.88.161:8000 sock=2128 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:11:27.920][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:11:27.920][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:11:59.024][ERR] Private connect 192.168.88.161:8000 sock=3412 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:11:59.024][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:11:59.024][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:12:30.095][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:12:30.096][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:12:30.096][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:13:01.192][ERR] Private connect 192.168.88.161:8000 sock=1804 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:13:01.192][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:13:01.192][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:13:32.399][ERR] Private connect 192.168.88.161:8000 sock=2924 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:13:32.399][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:13:32.399][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
-[2026-03-13 19:14:03.486][ERR] Private connect 192.168.88.161:8000 sock=3460 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:14:03.486][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:14:03.486][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[1]
-[2026-03-13 19:14:34.603][ERR] Private connect 192.168.88.161:8000 sock=3464 this=0x82fb6424 cmd=0x10000 sys_err=10060, timeout= 5000 port=0
-[2026-03-13 19:14:34.603][ERR] [192.168.88.161:8000]LogonDevice Link_CreateLink fail[7].
-[2026-03-13 19:14:34.603][ERR] CMemberMgrBase::AllocIndex2, MemberStart Failed, iIndex[0]
+[2026-03-14 13:35:14.377][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libcrypto-1_1-x64.dll], hHandleRet[1485176832]
+[2026-03-14 13:35:14.377][DBG] Load [libcrypto-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libcrypto-1_1-x64.dll]
+[2026-03-14 13:35:14.378][DBG] CCoreGlobalCtrlBase::LoadDSo, HPR_LoadDSo Succ, Path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/libssl-1_1-x64.dll], hHandleRet[2069626880]
+[2026-03-14 13:35:14.378][DBG] Load [libssl-1_1-x64.dll] SUCC, Real Path[C:\Users\adil\OneDrive\Desktop\projectx\backend\winSDK\lib\libssl-1_1-x64.dll]
+[2026-03-14 13:35:14.380][ERR] CSSLTrans::SSLTrans_CTX_Load_CA, invalid path[C:/Users/adil/OneDrive/Desktop/projectx/backend/winSDK/lib/cert/\]
+[2026-03-14 13:35:14.580][DBG] CUserMgr::UnRegisterHeartProxy[0]
+[2026-03-14 13:35:14.773][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-14 13:35:14.819][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1

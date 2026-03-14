@@ -16,6 +16,8 @@ public static class SeedIds
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>(options)
 {
+    public DbSet<Company> Companies => Set<Company>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<DeviceStatus> DeviceStatuses => Set<DeviceStatus>();
     public DbSet<Department> Departments => Set<Department>();
@@ -49,12 +51,29 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.DeviceStatus).WithMany(x => x.Devices).HasForeignKey(x => x.DeviceStatusId);
         });
 
+        builder.Entity<Company>(entity =>
+        {
+            entity.ToTable("companies");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+        });
+
+        builder.Entity<SystemSetting>(entity =>
+        {
+            entity.ToTable("system_settings");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Key).HasMaxLength(120).IsRequired();
+            entity.HasIndex(x => x.Key).IsUnique();
+        });
+
         builder.Entity<Department>(entity =>
         {
             entity.ToTable("departments");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Description).HasMaxLength(500);
+            entity.HasOne(x => x.Company).WithMany(x => x.Departments).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 

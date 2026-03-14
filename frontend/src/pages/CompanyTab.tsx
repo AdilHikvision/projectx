@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { Badge, Button, Input } from '../components/atoms'
+import { Button, Input } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { ConfirmDialog } from '../components/molecules'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
+
+interface Company {
+  id: string
+  name: string
+  description?: string | null
+}
 
 interface DepartmentTreeItem {
   id: string
@@ -12,6 +18,7 @@ interface DepartmentTreeItem {
   description?: string | null
   sortOrder: number
   parentId?: string | null
+  companyId?: string | null
   employeesCount: number
   visitorsCount: number
 }
@@ -20,9 +27,18 @@ interface DepartmentForm {
   name: string
   description: string
   parentId: string | null
+  companyId: string | null
 }
 
-const emptyForm: DepartmentForm = { name: '', description: '', parentId: null }
+interface CompanyForm {
+  name: string
+  description: string
+}
+
+const emptyDeptForm: DepartmentForm = { name: '', description: '', parentId: null, companyId: null }
+const emptyCompanyForm: CompanyForm = { name: '', description: '' }
+
+type AppMode = 'Single' | 'Multiple' | 'None'
 
 function buildTree(items: DepartmentTreeItem[], parentId: string | null): DepartmentTreeItem[] {
   return items
@@ -30,10 +46,10 @@ function buildTree(items: DepartmentTreeItem[], parentId: string | null): Depart
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
 }
 
-const NODE_WIDTH = 180
-const NODE_HEIGHT = 72
+const NODE_WIDTH = 260
+const NODE_HEIGHT = 120
 const HORIZONTAL_GAP = 40
-const VERTICAL_GAP = 48
+const VERTICAL_GAP = 80
 
 function TreeConnector({
   parentX,
@@ -46,32 +62,30 @@ function TreeConnector({
   childCenters: number[]
   childTop: number
 }) {
-  const midY = parentBottom + (childTop - parentBottom) / 2
   if (childCenters.length === 0) return null
-  if (childCenters.length === 1) {
-    return (
-      <path
-        d={`M ${parentX} ${parentBottom} L ${childCenters[0]} ${childTop}`}
-        fill="none"
-        stroke="rgb(56 189 248)"
-        strokeWidth="2"
-      />
-    )
-  }
-  const [first, ...rest] = childCenters
-  const last = rest[rest.length - 1] ?? first
-  const segments = [
-    `M ${parentX} ${parentBottom} L ${parentX} ${midY}`,
-    `M ${Math.min(first, last)} ${midY} L ${Math.max(first, last)} ${midY}`,
-    ...childCenters.map((cx) => `M ${cx} ${midY} L ${cx} ${childTop}`),
-  ]
+  const midY = parentBottom + (childTop - parentBottom) / 2
+  
   return (
-    <path
-      d={segments.join(' ')}
-      fill="none"
-      stroke="rgb(56 189 248)"
-      strokeWidth="2"
-    />
+    <g className="tree-connectors" style={{ pointerEvents: 'none' }}>
+      {childCenters.map((cx, i) => {
+        const d = `M ${parentX} ${parentBottom} C ${parentX} ${midY}, ${cx} ${midY}, ${cx} ${childTop}`
+        return (
+          <path
+            key={i}
+            d={d}
+            fill="none"
+            stroke="#0ea5e9"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            className="transition-all duration-500"
+            style={{ 
+              filter: 'drop-shadow(0px 2px 2px rgba(14, 165, 233, 0.3))',
+              opacity: 0.8
+            }}
+          />
+        )
+      })}
+    </g>
   )
 }
 
@@ -107,8 +121,7 @@ function DepartmentNode({
   const childY = y + NODE_HEIGHT + VERTICAL_GAP
 
   return (
-    <g>
-      {/* Connector from parent to children */}
+    <g className="animate-in fade-in zoom-in-95 duration-500">
       {hasChildren && isExpanded && (
         <TreeConnector
           parentX={x + NODE_WIDTH / 2}
@@ -120,100 +133,103 @@ function DepartmentNode({
         />
       )}
 
-      {/* Node box */}
       <g
         transform={`translate(${x}, ${y})`}
-        className="cursor-pointer"
-        onClick={() => hasChildren && onToggle(item.id)}
+        className="group/node select-none"
       >
+        {/* Glow effect on hover */}
         <rect
           width={NODE_WIDTH}
           height={NODE_HEIGHT}
-          rx={4}
-          fill="white"
-          stroke="rgb(56 189 248)"
-          strokeWidth="2"
-          className="transition-colors hover:fill-sky-50"
+          rx={16}
+          fill="rgb(56 189 248 / 0)"
+          className="transition-all duration-300 group-hover/node:fill-sky-400/10 -m-2 opacity-0 group-hover/node:opacity-100"
         />
-        <foreignObject x={8} y={8} width={NODE_WIDTH - 16} height={NODE_HEIGHT - 16}>
-          <div xmlns="http://www.w3.org/1999/xhtml" className="flex flex-col justify-center h-full overflow-hidden group/node">
-            <div className="flex items-start justify-between gap-1">
+
+        {/* Main Card */}
+        <rect
+          width={NODE_WIDTH}
+          height={NODE_HEIGHT}
+          rx={16}
+          fill="white"
+          filter="url(#nodeShadow)"
+          className="transition-all duration-300 group-hover/node:-translate-y-1 group-hover/node:fill-slate-50/50"
+        />
+        
+        {/* Left accent bar */}
+        <rect
+          width={4}
+          height={NODE_HEIGHT - 48}
+          x={0}
+          y={24}
+          rx={2}
+          fill="rgb(56 189 248)"
+          className="group-hover/node:height-full group-hover/node:y-0 transition-all duration-300"
+        />
+
+        <foreignObject x={0} y={0} width={NODE_WIDTH} height={NODE_HEIGHT} className="transition-transform duration-300 group-hover/node:-translate-y-1 pointer-events-none">
+          <div className="p-3.5 h-full flex flex-col justify-between pointer-events-auto overflow-hidden">
+            <div className="flex items-start justify-between gap-2 overflow-hidden">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-text-dark truncate">{item.name}</p>
-                {item.description && (
-                  <p className="text-[10px] text-text-light truncate">{item.description}</p>
-                )}
+                <h5 className="text-[10px] font-black text-text-dark tracking-wider leading-tight truncate uppercase group-hover/node:text-sky-600 transition-colors">
+                  {item.name}
+                </h5>
+                <p className="text-[9px] text-text-light font-bold truncate opacity-70 mt-0.5 leading-none">
+                  {item.description || 'Нет описания'}
+                </p>
               </div>
-              <div className="flex gap-0.5 opacity-0 group-hover/node:opacity-100 transition-opacity shrink-0">
+              
+              <div className="flex gap-1 opacity-0 group-hover/node:opacity-100 transition-all duration-300 shrink-0">
                 <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onAddChild(item)
-                  }}
-                  className="w-5 h-5 flex items-center justify-center rounded bg-sky-100 text-sky-600 hover:bg-sky-200 text-[10px] font-bold"
-                  title="Добавить подотдел"
+                  onClick={(e) => { e.stopPropagation(); onAddChild(item); }}
+                  className="w-5 h-5 rounded-lg bg-sky-50 text-sky-600 hover:bg-sky-500 hover:text-white flex items-center justify-center transition-all shadow-sm"
                 >
-                  +
+                  <span className="material-symbols-outlined text-[12px]">add</span>
                 </button>
                 <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onEdit(item)
-                  }}
-                  className="w-5 h-5 flex items-center justify-center rounded bg-sky-100 text-sky-600 hover:bg-sky-200 text-[10px]"
-                  title="Редактировать"
+                  onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+                  className="w-5 h-5 rounded-lg bg-slate-50 text-slate-500 hover:bg-slate-200 flex items-center justify-center transition-all shadow-sm"
                 >
-                  ✎
+                  <span className="material-symbols-outlined text-[12px]">edit</span>
                 </button>
                 <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDelete(item)
-                  }}
-                  className="w-5 h-5 flex items-center justify-center rounded bg-red-100 text-red-600 hover:bg-red-200 text-[10px]"
-                  title="Удалить"
+                  onClick={(e) => { e.stopPropagation(); onDelete(item); }}
+                  className="w-5 h-5 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white flex items-center justify-center transition-all shadow-sm"
                 >
-                  ×
+                  <span className="material-symbols-outlined text-[12px]">delete</span>
                 </button>
               </div>
             </div>
-            <div className="flex gap-2 mt-1">
-              <span className="text-[10px] text-text-light">{item.employeesCount} сотрудн.</span>
-              <span className="text-[10px] text-text-light">{item.visitorsCount} посет.</span>
+
+            <div className="flex items-center justify-between">
+              <div className="flex gap-2">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-50/80 border border-divider-light/20 shadow-sm">
+                  <span className="material-symbols-outlined text-[12px] text-sky-500">groups</span>
+                  <span className="text-[10px] font-black text-text-dark">{item.employeesCount}</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-50/80 border border-divider-light/20 shadow-sm">
+                  <span className="material-symbols-outlined text-[12px] text-emerald-500">person_pin_circle</span>
+                  <span className="text-[10px] font-black text-text-dark">{item.visitorsCount}</span>
+                </div>
+              </div>
+              
+              {hasChildren && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
+                  className={`w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-sm ${
+                    isExpanded ? 'bg-sky-500 text-white' : 'bg-sky-50 text-sky-500'
+                  }`}
+                >
+                  <span className={`material-symbols-outlined text-[14px] transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
+                    expand_more
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         </foreignObject>
-        {hasChildren && (
-          <circle
-            cx={NODE_WIDTH - 16}
-            cy={NODE_HEIGHT / 2}
-            r={10}
-            fill="rgb(56 189 248 / 0.2)"
-            className="hover:fill-sky-300/40"
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggle(item.id)
-            }}
-          />
-        )}
-        {hasChildren && (
-          <text
-            x={NODE_WIDTH - 16}
-            y={NODE_HEIGHT / 2 + 1}
-            textAnchor="middle"
-            fontSize="14"
-            fill="rgb(56 189 248)"
-            className="pointer-events-none"
-          >
-            {isExpanded ? '−' : '+'}
-          </text>
-        )}
       </g>
 
-      {/* Children */}
       {hasChildren && isExpanded &&
         children.map((child, idx) => (
           <DepartmentNode
@@ -256,34 +272,72 @@ function getTreeSize(
 export function CompanyTab() {
   const { token } = useAuth()
   const { startLoading, stopLoading } = useLoading()
+  const [mode, setMode] = useState<AppMode>('None')
+  const [companies, setCompanies] = useState<Company[]>([])
   const [items, setItems] = useState<DepartmentTreeItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [modal, setModal] = useState<'add' | 'edit' | null>(null)
-  const [form, setForm] = useState<DepartmentForm>(emptyForm)
+  const [modal, setModal] = useState<'initial' | 'add-dept' | 'edit-dept' | 'add-company' | 'edit-company' | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [parentForAdd, setParentForAdd] = useState<DepartmentTreeItem | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<DepartmentTreeItem | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [deptForm, setDeptForm] = useState<DepartmentForm>(emptyDeptForm)
+  const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [error, setError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'dept' | 'company', item: any } | null>(null)
+  const [zoom, setZoom] = useState<Record<string, number>>({})
+  const [pan, setPan] = useState<Record<string, { x: number, y: number }>>({})
+  const [isPanning, setIsPanning] = useState(false)
+  const [startPos, setStartPos] = useState({ x: 0, y: 0 })
 
-  const toggleExpand = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  const handleMouseDown = (e: React.MouseEvent, companyId: string) => {
+    if (e.button !== 0) return // Only left click
+    const target = e.target as HTMLElement
+    if (target.closest('button') || target.closest('input')) return
+    
+    setIsPanning(true)
+    setStartPos({ 
+      x: e.clientX - (pan[companyId]?.x || 0), 
+      y: e.clientY - (pan[companyId]?.y || 0) 
     })
-  }, [])
+  }
+
+  const handleMouseMove = (e: React.MouseEvent, companyId: string) => {
+    if (!isPanning) return
+    setPan(prev => ({
+      ...prev,
+      [companyId]: {
+        x: e.clientX - startPos.x,
+        y: e.clientY - startPos.y
+      }
+    }))
+  }
+
+  const handleMouseUp = () => {
+    setIsPanning(false)
+  }
 
   const load = useCallback(async () => {
     if (!token) return
     setLoading(true)
     setError(null)
     try {
-      const list = await apiRequest<DepartmentTreeItem[]>('/api/departments/tree', { token })
-      setItems(list)
-      setExpandedIds(new Set(list.map((d) => d.id)))
+      const [settings, companyList, deptList] = await Promise.all([
+        apiRequest<any[]>('/api/system-settings', { token }),
+        apiRequest<Company[]>('/api/companies', { token }),
+        apiRequest<DepartmentTreeItem[]>('/api/departments/tree', { token })
+      ])
+
+      const modeSetting = settings.find(s => s.key === 'CompanyMode')
+      const currentMode = (modeSetting?.value as AppMode) || 'None'
+      
+      setMode(currentMode)
+      setCompanies(companyList)
+      setItems(deptList)
+      setExpandedIds(new Set(deptList.map((d) => d.id)))
+
+      if (currentMode === 'None') {
+        setModal('initial')
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
     } finally {
@@ -297,65 +351,69 @@ export function CompanyTab() {
     load()
   }, [load, startLoading])
 
-  const handleAdd = (parent?: DepartmentTreeItem) => {
-    setParentForAdd(parent ?? null)
-    setForm({ ...emptyForm, parentId: parent?.id ?? null })
-    setEditingId(null)
-    setModal('add')
-  }
-
-  const handleEdit = (item: DepartmentTreeItem) => {
-    setParentForAdd(null)
-    setForm({ name: item.name, description: item.description ?? '', parentId: item.parentId ?? null })
-    setEditingId(item.id)
-    setModal('edit')
-  }
-
-  const handleDelete = (item: DepartmentTreeItem) => {
-    setDeleteConfirm(item)
-  }
-
-  const handleSubmitAdd = async () => {
-    if (!token || !form.name.trim()) return
+  const handleSetMode = async (newMode: AppMode, companyName?: string) => {
+    if (!token) return
     setIsSubmitting(true)
-    setError(null)
     try {
-      await apiRequest('/api/departments', {
+      if (newMode === 'Single' && companyName) {
+        await apiRequest('/api/companies', {
+          method: 'POST',
+          token,
+          body: JSON.stringify({ name: companyName })
+        })
+      }
+      await apiRequest('/api/system-settings', {
         method: 'POST',
         token,
-        body: JSON.stringify({
-          name: form.name.trim(),
-          description: form.description.trim() || null,
-          parentId: form.parentId || null,
-        }),
+        body: JSON.stringify({ key: 'CompanyMode', value: newMode })
       })
       setModal(null)
-      setForm(emptyForm)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка создания')
+      setError(e instanceof Error ? e.message : 'Ошибка настройки')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleSubmitEdit = async () => {
-    if (!token || !editingId || !form.name.trim()) return
+  const handleAddDept = (parent?: DepartmentTreeItem, companyId?: string) => {
+    setDeptForm({ 
+      ...emptyDeptForm, 
+      parentId: parent?.id ?? null,
+      companyId: companyId ?? parent?.companyId ?? companies[0]?.id ?? null
+    })
+    setEditingId(null)
+    setModal('add-dept')
+  }
+
+  const handleEditDept = (item: DepartmentTreeItem) => {
+    setDeptForm({ 
+      name: item.name, 
+      description: item.description ?? '', 
+      parentId: item.parentId ?? null,
+      companyId: item.companyId ?? null
+    })
+    setEditingId(item.id)
+    setModal('edit-dept')
+  }
+
+  const handleSubmitDept = async () => {
+    if (!token || !deptForm.name.trim()) return
     setIsSubmitting(true)
-    setError(null)
     try {
-      await apiRequest(`/api/departments/${editingId}`, {
-        method: 'PUT',
+      const method = editingId ? 'PUT' : 'POST'
+      const url = editingId ? `/api/departments/${editingId}` : '/api/departments'
+      await apiRequest(url, {
+        method,
         token,
         body: JSON.stringify({
-          name: form.name.trim(),
-          description: form.description.trim() || null,
-          parentId: form.parentId || null,
+          name: deptForm.name.trim(),
+          description: deptForm.description.trim() || null,
+          parentId: deptForm.parentId || null,
+          companyId: deptForm.companyId || null,
         }),
       })
       setModal(null)
-      setEditingId(null)
-      setForm(emptyForm)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка сохранения')
@@ -364,15 +422,47 @@ export function CompanyTab() {
     }
   }
 
+  const handleAddCompany = () => {
+    setCompanyForm(emptyCompanyForm)
+    setEditingId(null)
+    setModal('add-company')
+  }
+
+  const handleSubmitCompany = async () => {
+    if (!token || !companyForm.name.trim()) return
+    setIsSubmitting(true)
+    try {
+      const method = editingId ? 'PUT' : 'POST'
+      const url = editingId ? `/api/companies/${editingId}` : '/api/companies'
+      await apiRequest(url, {
+        method,
+        token,
+        body: JSON.stringify({
+          name: companyForm.name.trim(),
+          description: companyForm.description.trim() || null
+        }),
+      })
+      setModal(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сохранения')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDelete = (type: 'dept' | 'company', item: any) => {
+    setDeleteConfirm({ type, item })
+  }
+
   const handleConfirmDelete = async () => {
     if (!token || !deleteConfirm) return
     setIsSubmitting(true)
-    setError(null)
     try {
-      await apiRequest(`/api/departments/${deleteConfirm.id}`, {
-        method: 'DELETE',
-        token,
-      })
+      const url = deleteConfirm.type === 'dept' 
+        ? `/api/departments/${deleteConfirm.item.id}` 
+        : `/api/companies/${deleteConfirm.item.id}`
+      await apiRequest(url, { method: 'DELETE', token })
       setDeleteConfirm(null)
       await load()
     } catch (e) {
@@ -382,193 +472,298 @@ export function CompanyTab() {
     }
   }
 
-  const rootItems = buildTree(items, null)
+  if (loading) return <div className="py-16 text-center text-text-light text-sm">Загрузка...</div>
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">
-          Структура отделов
-        </h3>
-        <div className="flex gap-2">
-          {items.length > 0 && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setExpandedIds(new Set(items.map((d) => d.id)))}
-              >
-                Развернуть всё
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setExpandedIds(new Set())}
-              >
-                Свернуть всё
-              </Button>
-            </>
-          )}
-          <Button icon="add" onClick={() => handleAdd()}>
-            Добавить отдел
-          </Button>
-        </div>
-      </div>
-
       {error && (
         <div className="p-4 bg-error-bg text-error-text rounded-2xl text-sm font-bold">{error}</div>
       )}
 
-      {loading ? (
-        <div className="py-16 text-center text-text-light text-sm">Загрузка...</div>
-      ) : rootItems.length === 0 ? (
-        <div className="py-16 text-center">
-          <span className="material-symbols-outlined text-4xl text-text-light/50 mb-4 block">
-            business
-          </span>
-          <p className="text-sm text-text-light mb-4">Нет отделов. Добавьте первый отдел.</p>
-          <Button onClick={() => handleAdd()}>Добавить отдел</Button>
+      {mode === 'None' && items.length === 0 ? (
+        <div className="py-16 text-center space-y-8">
+           <div className="max-w-2xl mx-auto bg-surface rounded-3xl p-12 border border-divider-light shadow-xl">
+             <span className="material-symbols-outlined text-6xl text-sky-500 mb-6 block">domain_add</span>
+             <h2 className="text-2xl font-black text-text-dark mb-4">Начальная настройка</h2>
+             <p className="text-text-light mb-8">Выберите режим работы системы. Это определит, как будет строиться структура вашей организации.</p>
+             
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               <div 
+                 className="p-6 rounded-2xl border-2 border-divider-light hover:border-sky-400 cursor-pointer transition-all group"
+                 onClick={() => setModal('initial')}
+               >
+                 <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">business</span>
+                 <h3 className="font-bold text-lg mb-2">Одна компания</h3>
+                 <p className="text-xs text-text-light text-center">Используйте этот режим, если вы настраиваете систему для одного офиса или предприятия.</p>
+               </div>
+               
+               <div 
+                 className="p-6 rounded-2xl border-2 border-divider-light hover:border-sky-400 cursor-pointer transition-all group"
+                 onClick={() => handleSetMode('Multiple')}
+               >
+                 <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">hub</span>
+                 <h3 className="font-bold text-lg mb-2">Группа компаний</h3>
+                 <p className="text-xs text-text-light text-center">Позволяет создавать множество независимых компаний и прикреплять к ним отделы.</p>
+               </div>
+             </div>
+           </div>
         </div>
       ) : (
-        <div className="bg-surface rounded-2xl p-8 shadow-md border border-divider-light/50 overflow-auto">
-          <svg
-            width={Math.max(
-              400,
-              rootItems.reduce(
-                (w, r) =>
-                  w +
-                  getTreeSize(items, r.id, expandedIds, expandedIds.has(r.id)).width +
-                  (rootItems.length > 1 ? HORIZONTAL_GAP : 0),
-                rootItems.length > 1 ? -HORIZONTAL_GAP : 0
-              )
-            )}
-            height={
-              rootItems.length > 0
-                ? Math.max(
-                    200,
-                    rootItems.reduce(
-                      (h, r) =>
-                        Math.max(
-                          h,
-                          getTreeSize(items, r.id, expandedIds, expandedIds.has(r.id)).height
-                        ),
-                      0
-                    )
-                  )
-                : 200
-            }
-            className="min-w-full"
-          >
-            {rootItems.map((item, idx) => {
-              const prevWidth = rootItems
-                .slice(0, idx)
-                .reduce(
-                  (w, r) =>
-                    w +
-                    getTreeSize(items, r.id, expandedIds, expandedIds.has(r.id)).width +
-                    HORIZONTAL_GAP,
-                  0
-                )
-              const thisWidth = getTreeSize(
-                items,
-                item.id,
-                expandedIds,
-                expandedIds.has(item.id)
-              ).width
-              const x = prevWidth + Math.max(0, (thisWidth - NODE_WIDTH) / 2)
+        <>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">
+              {mode === 'Multiple' ? 'Компании и отделы' : 'Структура компании'}
+            </h3>
+            <div className="flex gap-2">
+              {mode === 'Multiple' && (
+                <Button variant="outline" icon="add" onClick={handleAddCompany}>
+                  Добавить компанию
+                </Button>
+              )}
+              {companies.length > 0 && (
+                <Button icon="add" onClick={() => handleAddDept()}>
+                  Добавить отдел
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-8">
+            {companies.map(company => {
+              const companyDepts = items.filter(d => d.companyId === company.id)
+              const rootDepts = buildTree(companyDepts, null)
+              
               return (
-                <DepartmentNode
-                  key={item.id}
-                  item={item}
-                  allItems={items}
-                  x={x}
-                  y={0}
-                  expandedIds={expandedIds}
-                  onToggle={toggleExpand}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  onAddChild={handleAdd}
-                />
+                <div key={company.id} className="bg-surface rounded-3xl p-8 shadow-sm border border-divider-light/50 overflow-hidden">
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h4 className="text-lg font-black text-text-dark">{company.name}</h4>
+                      {company.description && <p className="text-xs text-text-light">{company.description}</p>}
+                    </div>
+                    {mode === 'Multiple' && (
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => {
+                            setCompanyForm({ name: company.name, description: company.description ?? '' })
+                            setEditingId(company.id)
+                            setModal('edit-company')
+                          }}
+                        >
+                          ✎
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="text-red-500 hover:bg-red-50"
+                          onClick={() => handleDelete('company', company)}
+                        >
+                          ×
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {rootDepts.length === 0 ? (
+                    <div className="py-8 text-center bg-divider-light/10 rounded-2xl border-2 border-dashed border-divider-light">
+                      <p className="text-xs text-text-light mb-4">В этой компании пока нет отделов</p>
+                      <Button size="sm" variant="outline" onClick={() => handleAddDept(undefined, company.id)}>
+                        Создать первый отдел
+                      </Button>
+                    </div>
+                  ) : (
+                      <div 
+                        className="relative h-[600px] overflow-hidden rounded-2xl border border-divider-light/30 bg-[#e5e7eb] select-none"
+                        onMouseDown={(e) => handleMouseDown(e, company.id)}
+                        onMouseMove={(e) => handleMouseMove(e, company.id)}
+                        onMouseUp={handleMouseUp}
+                        onMouseLeave={handleMouseUp}
+                      >
+                        {/* Zoom Controls */}
+                        <div className="absolute top-4 right-4 z-30 flex flex-col gap-1 bg-white/90 backdrop-blur-md p-1.5 rounded-xl shadow-lg border border-divider-light/10">
+                          <button 
+                            onClick={() => setZoom(prev => ({ ...prev, [company.id]: Math.min((prev[company.id] || 1) + 0.1, 1.5) }))}
+                            className="w-8 h-8 rounded-lg hover:bg-sky-50 text-text-dark transition-all flex items-center justify-center pointer-events-auto"
+                          >
+                            <span className="material-symbols-outlined text-lg">add</span>
+                          </button>
+                          <div className="h-[1px] bg-divider-light/10 mx-1" />
+                          <button 
+                            onClick={() => {
+                              setZoom(prev => ({ ...prev, [company.id]: 1 }))
+                              setPan(prev => ({ ...prev, [company.id]: { x: 0, y: 0 } }))
+                            }}
+                            className="text-[9px] font-black text-center py-1 text-text-light hover:text-sky-500 transition-colors pointer-events-auto"
+                            title="Reset Zoom & Pan"
+                          >
+                            {Math.round((zoom[company.id] || 1) * 100)}%
+                          </button>
+                          <div className="h-[1px] bg-divider-light/10 mx-1" />
+                          <button 
+                            onClick={() => setZoom(prev => ({ ...prev, [company.id]: Math.max((prev[company.id] || 1) - 0.1, 0.4) }))}
+                            className="w-8 h-8 rounded-lg hover:bg-sky-50 text-text-dark transition-all flex items-center justify-center pointer-events-auto"
+                          >
+                            <span className="material-symbols-outlined text-lg">remove</span>
+                          </button>
+                        </div>
+
+                        {/* Interactive Canvas */}
+                        <div 
+                          className={`w-full h-full relative ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+                          style={{ 
+                            transform: `translate(${pan[company.id]?.x || 0}px, ${pan[company.id]?.y || 0}px) scale(${zoom[company.id] || 1})`,
+                            transformOrigin: '0 0',
+                            transition: isPanning ? 'none' : 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)'
+                          }}
+                        >
+                          {/* Grid dots */}
+                          <div className="absolute inset-0 opacity-[0.08] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, #000 1.5px, transparent 1.5px)', backgroundSize: '40px 40px' }} />
+                          
+                          <svg
+                            width={Math.max(2000, rootDepts.reduce((w, r) => w + getTreeSize(companyDepts, r.id, expandedIds, expandedIds.has(r.id)).width + HORIZONTAL_GAP, 2000))}
+                            height={Math.max(1000, Math.max(...rootDepts.map(r => getTreeSize(companyDepts, r.id, expandedIds, expandedIds.has(r.id)).height)) + 500)}
+                            className="relative z-10 overflow-visible"
+                          >
+                        <defs>
+                          <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="150%">
+                            <feGaussianBlur in="SourceAlpha" stdDeviation="4" />
+                            <feOffset dx="0" dy="4" result="offsetblur" />
+                            <feComponentTransfer>
+                              <feFuncA type="linear" slope="0.08" />
+                            </feComponentTransfer>
+                            <feMerge>
+                              <feMergeNode />
+                              <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                          </filter>
+                          <linearGradient id="lineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="rgb(56 189 248)" />
+                            <stop offset="100%" stopColor="rgb(14 165 233)" />
+                          </linearGradient>
+                        </defs>
+
+                         {rootDepts.map((item, idx) => {
+                            const size = getTreeSize(companyDepts, item.id, expandedIds, expandedIds.has(item.id))
+                            const prevWidth = rootDepts.slice(0, idx).reduce((w, r) => w + getTreeSize(companyDepts, r.id, expandedIds, expandedIds.has(r.id)).width + HORIZONTAL_GAP, 0)
+                            const x = prevWidth + Math.max(0, (size.width - NODE_WIDTH) / 2)
+                            return (
+                              <DepartmentNode
+                                key={item.id}
+                                item={item}
+                                allItems={companyDepts}
+                                x={x}
+                                y={NODE_HEIGHT / 4} // Padding top inside SVG
+                                expandedIds={expandedIds}
+                                onToggle={(id) => setExpandedIds(prev => {
+                                  const next = new Set(prev)
+                                  if (next.has(id)) next.delete(id)
+                                  else next.add(id)
+                                  return next
+                                })}
+                                onEdit={handleEditDept}
+                                onDelete={(d) => handleDelete('dept', d)}
+                                onAddChild={handleAddDept}
+                              />
+                            )
+                          })}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )
             })}
-          </svg>
-        </div>
+          </div>
+        </>
       )}
 
-      {modal && (
-        <Modal
-          isOpen
-          title={modal === 'add' ? 'Добавить отдел' : 'Редактировать отдел'}
-          onClose={() => {
-            setModal(null)
-            setForm(emptyForm)
-            setEditingId(null)
-          }}
+      {/* MODALS */}
+      
+      {modal === 'initial' && (
+        <Modal isOpen title="Название компании" onClose={() => setModal(null)}>
+          <div className="space-y-4">
+            <p className="text-xs text-text-light">Введите название вашей компании для завершения настройки.</p>
+            <Input 
+              placeholder="Название компании" 
+              value={companyForm.name} 
+              onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
+              autoFocus
+            />
+            <Button 
+              fullWidth 
+              onClick={() => handleSetMode('Single', companyForm.name)} 
+              isLoading={isSubmitting}
+              disabled={!companyForm.name.trim()}
+            >
+              Завершить
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {(modal === 'add-dept' || modal === 'edit-dept') && (
+        <Modal 
+          isOpen 
+          title={modal === 'add-dept' ? 'Добавить отдел' : 'Редактировать отдел'} 
+          onClose={() => setModal(null)}
         >
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                Название
-              </label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-                placeholder="Отдел продаж"
-                icon="business"
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Название</label>
+              <Input 
+                value={deptForm.name} 
+                onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                placeholder="Напр. Отдел продаж"
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                Описание
-              </label>
-              <Input
-                value={form.description}
-                onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Описание</label>
+              <Input 
+                value={deptForm.description} 
+                onChange={e => setDeptForm({ ...deptForm, description: e.target.value })}
                 placeholder="Опционально"
-                icon="description"
               />
             </div>
-            {modal === 'add' && parentForAdd && (
-              <p className="text-xs text-text-light">
-                Родительский отдел: <strong>{parentForAdd.name}</strong>
-              </p>
-            )}
-            {modal === 'edit' && items.length > 1 && (
+            {mode === 'Multiple' && !deptForm.parentId && (
               <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                  Родительский отдел
-                </label>
-                <select
-                  value={form.parentId ?? ''}
-                  onChange={(e) =>
-                    setForm((p) => ({ ...p, parentId: e.target.value || null }))
-                  }
-                  className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Компания</label>
+                <select 
+                  className="w-full bg-surface border-2 border-divider-light rounded-xl h-12 px-4 text-sm focus:border-sky-400 outline-none transition-all"
+                  value={deptForm.companyId ?? ''}
+                  onChange={e => setDeptForm({ ...deptForm, companyId: e.target.value })}
                 >
-                  <option value="">— Без родителя (корневой) —</option>
-                  {items
-                    .filter((d) => d.id !== editingId)
-                    .map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             )}
-            <div className="flex gap-2 pt-4">
-              <Button
-                fullWidth
-                onClick={modal === 'add' ? handleSubmitAdd : handleSubmitEdit}
-                isLoading={isSubmitting}
-                disabled={!form.name.trim()}
-              >
-                {modal === 'add' ? 'Добавить' : 'Сохранить'}
-              </Button>
-              <Button fullWidth variant="outline" onClick={() => setModal(null)}>
-                Отмена
-              </Button>
-            </div>
+            <Button fullWidth onClick={handleSubmitDept} isLoading={isSubmitting} disabled={!deptForm.name.trim()}>
+              {modal === 'add-dept' ? 'Добавить' : 'Сохранить'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {(modal === 'add-company' || modal === 'edit-company') && (
+        <Modal 
+          isOpen 
+          title={modal === 'add-company' ? 'Добавить компанию' : 'Редактировать компанию'} 
+          onClose={() => setModal(null)}
+        >
+          <div className="space-y-4">
+            <Input 
+              value={companyForm.name} 
+              onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
+              placeholder="Название компании"
+            />
+            <Input 
+              value={companyForm.description} 
+              onChange={e => setCompanyForm({ ...companyForm, description: e.target.value })}
+              placeholder="Описание (опционально)"
+            />
+            <Button fullWidth onClick={handleSubmitCompany} isLoading={isSubmitting} disabled={!companyForm.name.trim()}>
+              {modal === 'add-company' ? 'Добавить' : 'Сохранить'}
+            </Button>
           </div>
         </Modal>
       )}
@@ -576,13 +771,12 @@ export function CompanyTab() {
       {deleteConfirm && (
         <ConfirmDialog
           isOpen
-          onClose={() => setDeleteConfirm(null)}
+          title={deleteConfirm.type === 'dept' ? 'Удалить отдел?' : 'Удалить компанию?'}
+          message={`Это действие нельзя будет отменить.`}
           onConfirm={handleConfirmDelete}
-          title="Удалить отдел?"
-          message={`Отдел «${deleteConfirm.name}» будет удалён. Сотрудники и посетители этого отдела не будут удалены, но у них сбросится привязка к отделу.`}
-          confirmText="Удалить"
-          variant="danger"
+          onClose={() => setDeleteConfirm(null)}
           isLoading={isSubmitting}
+          variant="danger"
         />
       )}
     </div>

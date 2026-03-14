@@ -79,6 +79,33 @@ public sealed class DatabaseInitializer(
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS companies (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Name" character varying(255) NOT NULL,
+                "Description" character varying(500),
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS system_settings (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Key" character varying(120) NOT NULL,
+                "Value" text,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_system_settings_Key" ON system_settings ("Key")
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE departments ADD COLUMN IF NOT EXISTS "CompanyId" uuid REFERENCES companies("Id") ON DELETE SET NULL
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS cards (
                 "Id" uuid NOT NULL PRIMARY KEY,
                 "EmployeeId" uuid REFERENCES employees("Id") ON DELETE CASCADE,
