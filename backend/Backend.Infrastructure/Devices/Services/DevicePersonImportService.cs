@@ -66,7 +66,7 @@ public sealed class DevicePersonImportService(
         return all;
     }
 
-    public async Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default)
+    public async Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, Guid? companyId = null, CancellationToken cancellationToken = default)
     {
         if (deviceIds.Count == 0)
             return new PersonImportResult(0, 0, 0, []);
@@ -182,6 +182,7 @@ public sealed class DevicePersonImportService(
                             Gender = gender,
                             IsActive = user.Type != 3 && !string.Equals(user.UserType, "blackList", StringComparison.OrdinalIgnoreCase),
                             OnlyVerify = user.OnlyVerify,
+                            CompanyId = companyId,
                             CreatedUtc = DateTime.UtcNow
                         };
 

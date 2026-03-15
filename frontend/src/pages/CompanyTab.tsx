@@ -482,14 +482,14 @@ export function CompanyTab() {
 
       {mode === 'None' && items.length === 0 ? (
         <div className="py-16 text-center space-y-8">
-           <div className="max-w-2xl mx-auto bg-surface rounded-3xl p-12 border border-divider-light shadow-xl">
+           <div className="max-w-2xl mx-auto bg-surface rounded-3xl p-12 shadow-md border-none">
              <span className="material-symbols-outlined text-6xl text-sky-500 mb-6 block">domain_add</span>
              <h2 className="text-2xl font-black text-text-dark mb-4">Начальная настройка</h2>
              <p className="text-text-light mb-8">Выберите режим работы системы. Это определит, как будет строиться структура вашей организации.</p>
              
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                <div 
-                 className="p-6 rounded-2xl border-2 border-divider-light hover:border-sky-400 cursor-pointer transition-all group"
+                 className="p-6 rounded-2xl shadow-md hover:shadow-lg cursor-pointer transition-all group bg-white border-none"
                  onClick={() => setModal('initial')}
                >
                  <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">business</span>
@@ -498,7 +498,7 @@ export function CompanyTab() {
                </div>
                
                <div 
-                 className="p-6 rounded-2xl border-2 border-divider-light hover:border-sky-400 cursor-pointer transition-all group"
+                 className="p-6 rounded-2xl shadow-md hover:shadow-lg cursor-pointer transition-all group bg-white border-none"
                  onClick={() => handleSetMode('Multiple')}
                >
                  <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">hub</span>
@@ -507,6 +507,21 @@ export function CompanyTab() {
                </div>
              </div>
            </div>
+        </div>
+      ) : companies.length === 0 ? (
+        <div className="py-16 text-center">
+          <div className="max-w-xl mx-auto bg-surface rounded-2xl p-10 shadow-md border-none">
+            <span className="material-symbols-outlined text-5xl text-sky-500 mb-4 block">domain_add</span>
+            <h2 className="text-lg font-black text-text-dark mb-2">Нет компаний</h2>
+            <p className="text-sm text-text-light mb-6">
+              {mode === 'Single'
+                ? 'Создайте компанию для начала работы.'
+                : 'Добавьте первую компанию для управления структурой.'}
+            </p>
+            <Button icon="add" onClick={handleAddCompany}>
+              {mode === 'Single' ? 'Создать компанию' : 'Добавить компанию'}
+            </Button>
+          </div>
         </div>
       ) : (
         <>
@@ -520,11 +535,9 @@ export function CompanyTab() {
                   Добавить компанию
                 </Button>
               )}
-              {companies.length > 0 && (
-                <Button icon="add" onClick={() => handleAddDept()}>
-                  Добавить отдел
-                </Button>
-              )}
+              <Button icon="add" onClick={() => handleAddDept()}>
+                Добавить отдел
+              </Button>
             </div>
           </div>
 
@@ -534,7 +547,7 @@ export function CompanyTab() {
               const rootDepts = buildTree(companyDepts, null)
               
               return (
-                <div key={company.id} className="bg-surface rounded-3xl p-8 shadow-sm border border-divider-light/50 overflow-hidden">
+                <div key={company.id} className="bg-surface rounded-3xl p-8 shadow-md border-none overflow-hidden">
                   <div className="flex items-center justify-between mb-6">
                     <div>
                       <h4 className="text-lg font-black text-text-dark">{company.name}</h4>
@@ -566,7 +579,7 @@ export function CompanyTab() {
                   </div>
 
                   {rootDepts.length === 0 ? (
-                    <div className="py-8 text-center bg-divider-light/10 rounded-2xl border-2 border-dashed border-divider-light">
+                    <div className="py-8 text-center bg-slate-50 rounded-2xl shadow-sm border-none">
                       <p className="text-xs text-text-light mb-4">В этой компании пока нет отделов</p>
                       <Button size="sm" variant="outline" onClick={() => handleAddDept(undefined, company.id)}>
                         Создать первый отдел
@@ -574,7 +587,7 @@ export function CompanyTab() {
                     </div>
                   ) : (
                       <div 
-                        className="relative h-[600px] overflow-hidden rounded-2xl border border-divider-light/30 bg-[#e5e7eb] select-none"
+                        className="relative h-[600px] overflow-hidden rounded-2xl shadow-md bg-[#e5e7eb] select-none border-none"
                         onMouseDown={(e) => handleMouseDown(e, company.id)}
                         onMouseMove={(e) => handleMouseMove(e, company.id)}
                         onMouseUp={handleMouseUp}
