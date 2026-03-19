@@ -41,7 +41,6 @@ public static class DependencyInjection
         };
 
         services.Configure<JwtOptions>(configuration.GetSection("Jwt"));
-        services.Configure<SeedAdminOptions>(configuration.GetSection("SeedAdmin"));
         services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
         services.Configure<SystemOptions>(configuration.GetSection(SystemOptions.SectionName));
         services.Configure<SadpOptions>(configuration.GetSection(SadpOptions.SectionName));

@@ -21,8 +21,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$JwtKey,
 
-    [string]$SeedAdminEmail = "",
-    [string]$SeedAdminPassword = "",
     [string]$LocalControlKey = "",
     [string]$PostgresServiceName = "postgresql-x64-16",
     [bool]$EnableTrayMonitor = $true,
@@ -57,12 +55,6 @@ $appSettingsProduction = @{
         Audience = $JwtAudience
         Key = $JwtKey
         ExpirationMinutes = 60
-    }
-    SeedAdmin = @{
-        Email = $SeedAdminEmail
-        Password = $SeedAdminPassword
-        FirstName = "System"
-        LastName = "Admin"
     }
     SystemMonitor = @{
         ServiceName = $ServiceName

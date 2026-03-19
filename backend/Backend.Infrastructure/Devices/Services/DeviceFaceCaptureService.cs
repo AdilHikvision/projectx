@@ -55,7 +55,8 @@ public sealed class DeviceFaceCaptureService(
         // Устройство ожидает XML (format=json даёт badXmlFormat)
         var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
         var xmlBody = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escaped}</employeeNo><FDID>1</FDID></CaptureFaceData>""";
-        var (success, _, error) = await client.PostAsync(
+        logger.LogInformation("[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}", device.Name, device.IpAddress, device.Port, employeeNo, personType);
+        var (success, content, error) = await client.PostAsync(
             "ISAPI/AccessControl/CaptureFaceData?format=xml",
             xmlBody,
             "application/xml; charset=UTF-8",
@@ -63,9 +64,10 @@ public sealed class DeviceFaceCaptureService(
 
         if (!success)
         {
-            logger.LogWarning("CaptureFaceData failed for {Device}: {Error}", device.Name, error);
+            logger.LogWarning("[CaptureFace] CaptureFaceData FAILED for {Device}: {Error}. Response body: {Content}", device.Name, error, content ?? "(null)");
             return new DeviceSyncResult(false, error ?? "Ошибка запуска захвата.");
         }
+        logger.LogInformation("[CaptureFace] CaptureFaceData OK for {Device}. Response: {Content}", device.Name, (content?.Length ?? 0) > 200 ? content![..200] + "..." : content ?? "(empty)");
 
         Sessions[deviceId] = new CaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
         return new DeviceSyncResult(true, null);
@@ -94,6 +96,7 @@ public sealed class DeviceFaceCaptureService(
 
         if (!success)
         {
+            logger.LogDebug("[CaptureFace] Progress GET failed for {Device}: {Error}. Raw: {Content}", device.Name, error, content ?? "(null)");
             return new FaceCaptureProgressResult("capturing", null, null, null);
         }
 
