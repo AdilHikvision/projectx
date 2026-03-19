@@ -92,6 +92,9 @@ export function PeopleManagementPage() {
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [devices, setDevices] = useState<{ id: string; name: string; ipAddress: string }[]>([])
   const [importSelectedDeviceIds, setImportSelectedDeviceIds] = useState<string[]>([])
+  const [importCompanyId, setImportCompanyId] = useState<string | null>(null)
+  const [importCompanies, setImportCompanies] = useState<{ id: string; name: string }[]>([])
+  const [importCompanyMode, setImportCompanyMode] = useState<'Single' | 'Multiple' | 'None'>('None')
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<{
     importedCount: number
@@ -347,8 +350,20 @@ export function PeopleManagementPage() {
     setImportSelectedDeviceIds([])
     setError(null)
     try {
-      const list = await apiRequest<{ id: string; name: string; ipAddress: string }[]>('/api/devices', { token })
-      setDevices(list)
+      const [devicesList, companiesList, modeSetting] = await Promise.all([
+        apiRequest<{ id: string; name: string; ipAddress: string }[]>('/api/devices', { token }),
+        apiRequest<{ id: string; name: string }[]>('/api/companies', { token }),
+        apiRequest<{ key: string; value: string }>('/api/system-settings/CompanyMode', { token }).catch(() => ({ value: 'None' }))
+      ])
+      setDevices(devicesList)
+      setImportCompanies(companiesList)
+      const mode = (modeSetting?.value as 'Single' | 'Multiple' | 'None') || 'None'
+      setImportCompanyMode(mode)
+      if (companiesList.length > 0) {
+        setImportCompanyId(companiesList[0].id)
+      } else {
+        setImportCompanyId(null)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load devices')
     }
@@ -358,6 +373,8 @@ export function PeopleManagementPage() {
     setImportModalOpen(false)
     setImportResult(null)
     setImportSelectedDeviceIds([])
+    setImportCompanyId(null)
+    setImportCompanies([])
     setDevices([])
   }
 
@@ -385,7 +402,10 @@ export function PeopleManagementPage() {
       }>('/api/people/import-from-devices', {
         method: 'POST',
         token,
-        body: JSON.stringify({ deviceIds: importSelectedDeviceIds }),
+        body: JSON.stringify({
+          deviceIds: importSelectedDeviceIds,
+          companyId: importCompanyId || undefined,
+        }),
       })
       setImportResult(res)
       await Promise.all([loadEmployees(), loadVisitors()])
@@ -591,6 +611,26 @@ export function PeopleManagementPage() {
         <div className="space-y-4">
           {!importResult ? (
             <>
+              {importCompanies.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Компания</label>
+                  {importCompanyMode === 'Single' ? (
+                    <div className="px-4 py-3 bg-slate-50 rounded-xl text-sm font-bold text-text-dark border border-divider-light">
+                      {importCompanies.find((c) => c.id === importCompanyId)?.name ?? importCompanies[0]?.name}
+                    </div>
+                  ) : (
+                    <select
+                      className="w-full bg-surface border border-divider-light rounded-xl h-12 px-4 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      value={importCompanyId ?? ''}
+                      onChange={(e) => setImportCompanyId(e.target.value || null)}
+                    >
+                      {importCompanies.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
               <p className="text-sm text-text-muted">Select devices to import users from.</p>
               <div className="max-h-64 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
                 {devices.map((d) => (

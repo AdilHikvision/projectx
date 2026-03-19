@@ -169,30 +169,77 @@ public sealed class DevicePersonSyncService(
             return new DeviceSyncResult(false, "Файл изображения не найден.");
         }
 
+        var client = CreateClient(device);
+
+        // 1. Попытка FaceDataRecord (ISAPI/Intelligent/FDLib) — поддерживают DS-K1T671M и др.
+        var faceDataRecordJson = JsonSerializer.Serialize(new
+        {
+            faceLibType = "residentFD",
+            FDID = face.FDID.ToString(),
+            FPID = employeeNo
+        });
+        using (var fileStream = File.OpenRead(fullPath))
+        {
+            var faceContent = new StreamContent(fileStream);
+            faceContent.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            var fdParts = new Dictionary<string, (HttpContent Content, string? FileName)>
+            {
+                ["FaceDataRecord"] = (new StringContent(faceDataRecordJson, Encoding.UTF8, "application/json"), null),
+                ["FaceImage"] = (faceContent, "face.jpg")
+            };
+            var (fdSuccess, _, _) = await client.PostMultipartAsync(
+                "ISAPI/Intelligent/FDLib/FaceDataRecord?format=json",
+                fdParts,
+                cancellationToken);
+            if (fdSuccess)
+                return new DeviceSyncResult(true, null);
+        }
+
+        // 2. Альтернатива: faceLibType как число (некоторые устройства)
+        faceDataRecordJson = JsonSerializer.Serialize(new
+        {
+            faceLibType = 1,
+            FDID = face.FDID.ToString(),
+            FPID = employeeNo
+        });
+        using (var fileStream2 = File.OpenRead(fullPath))
+        {
+            var faceContent2 = new StreamContent(fileStream2);
+            faceContent2.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            var fdParts2 = new Dictionary<string, (HttpContent Content, string? FileName)>
+            {
+                ["FaceDataRecord"] = (new StringContent(faceDataRecordJson, Encoding.UTF8, "application/json"), null),
+                ["FaceImage"] = (faceContent2, "face.jpg")
+            };
+            var (fd2Success, _, _) = await client.PostMultipartAsync(
+                "ISAPI/Intelligent/FDLib/FaceDataRecord?format=json",
+                fdParts2,
+                cancellationToken);
+            if (fd2Success)
+                return new DeviceSyncResult(true, null);
+        }
+
+        // 3. pictureUpload (старый API)
         var escapedNo = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
         var pictureUploadData = $"""<?xml version="1.0" encoding="UTF-8"?><PictureUploadData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escapedNo}</employeeNo><FDID>{face.FDID}</FDID><faceLibType>1</faceLibType></PictureUploadData>""";
-
-        using var fileStream = File.OpenRead(fullPath);
-        var faceContent = new StreamContent(fileStream);
-        faceContent.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-        var parts = new Dictionary<string, (HttpContent Content, string? FileName)>
+        using (var fileStream3 = File.OpenRead(fullPath))
         {
-            ["PictureUploadData"] = (new StringContent(pictureUploadData, Encoding.UTF8, "application/xml"), null),
-            ["face_picture"] = (faceContent, "face_picture.jpg")
-        };
-
-        var client = CreateClient(device);
-        var (success, _, error) = await client.PostMultipartAsync(
-            "ISAPI/Intelligent/FDLib/pictureUpload",
-            parts,
-            cancellationToken);
-
-        if (!success)
-        {
+            var faceContent3 = new StreamContent(fileStream3);
+            faceContent3.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            var parts = new Dictionary<string, (HttpContent Content, string? FileName)>
+            {
+                ["PictureUploadData"] = (new StringContent(pictureUploadData, Encoding.UTF8, "application/xml"), null),
+                ["face_picture"] = (faceContent3, "face_picture.jpg")
+            };
+            var (success, _, error) = await client.PostMultipartAsync(
+                "ISAPI/Intelligent/FDLib/pictureUpload",
+                parts,
+                cancellationToken);
+            if (success)
+                return new DeviceSyncResult(true, null);
             logger.LogWarning("SyncFace {FaceId} to {Device}: {Error}", faceId, device.Name, error);
             return new DeviceSyncResult(false, error ?? "Ошибка синхронизации лица.");
         }
-        return new DeviceSyncResult(true, null);
     }
 
     public async Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default)

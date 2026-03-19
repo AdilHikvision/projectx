@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AppLayout } from '../components/templates'
-import { Button } from '../components/atoms'
-import { PageHeader } from '../components/organisms'
+import { Button, Input } from '../components/atoms'
+import { Modal, PageHeader } from '../components/organisms'
 import { CompanyTab } from './CompanyTab'
 import { DevicesTab } from './DevicesTab'
 import { useAuth } from '../auth/AuthContext'
@@ -20,7 +20,10 @@ export function SystemSettingsPage() {
     const { token } = useAuth()
     const { startLoading, stopLoading } = useLoading()
     const [companyMode, setCompanyMode] = useState<'Single' | 'Multiple' | 'None'>('None')
+    const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
     const [isSavingMode, setIsSavingMode] = useState(false)
+    const [showCompanyNameModal, setShowCompanyNameModal] = useState<'Single' | 'Multiple' | null>(null)
+    const [companyNameInput, setCompanyNameInput] = useState('')
 
     useEffect(() => {
         const tab = new URLSearchParams(location.search).get('tab')
@@ -35,9 +38,13 @@ export function SystemSettingsPage() {
         const loadSettings = async () => {
             startLoading()
             try {
-                const settings = await apiRequest<any[]>('/api/system-settings', { token })
+                const [settings, companyList] = await Promise.all([
+                    apiRequest<any[]>('/api/system-settings', { token }),
+                    apiRequest<{ id: string; name: string }[]>('/api/companies', { token })
+                ])
                 const mode = settings.find(s => s.key === 'CompanyMode')?.value || 'None'
                 setCompanyMode(mode)
+                setCompanies(companyList)
             } catch (e) {
                 console.error('Failed to load settings', e)
             } finally {
@@ -47,21 +54,45 @@ export function SystemSettingsPage() {
         loadSettings()
     }, [token, activeTab, startLoading, stopLoading])
 
-    const handleUpdateMode = async (newMode: 'Single' | 'Multiple') => {
+    const handleUpdateMode = async (newMode: 'Single' | 'Multiple', companyName?: string) => {
         if (!token) return
+        if (newMode === 'Single' && companies.length === 0 && !companyName?.trim()) return
         setIsSavingMode(true)
         try {
+            if (newMode === 'Single' && companies.length === 0 && companyName?.trim()) {
+                await apiRequest('/api/companies', {
+                    method: 'POST',
+                    token,
+                    body: JSON.stringify({ name: companyName.trim() })
+                })
+            }
             await apiRequest('/api/system-settings', {
                 method: 'POST',
                 token,
                 body: JSON.stringify({ key: 'CompanyMode', value: newMode })
             })
             setCompanyMode(newMode)
+            setShowCompanyNameModal(null)
+            setCompanyNameInput('')
         } catch (e) {
             alert(e instanceof Error ? e.message : 'Failed to update mode')
         } finally {
             setIsSavingMode(false)
         }
+    }
+
+    const handleSingleModeClick = () => {
+        if (companies.length > 0) {
+            handleUpdateMode('Single')
+        } else {
+            setShowCompanyNameModal('Single')
+        }
+    }
+
+    const handleConfirmModeWithName = () => {
+        const name = companyNameInput.trim()
+        if (!name) return
+        handleUpdateMode('Single', name)
     }
 
     const handleAction = () => {
@@ -141,20 +172,6 @@ export function SystemSettingsPage() {
                                             </div>
                                         </div>
                                     </div>
-
-                                    <div className="space-y-4">
-                                        <p className="text-[10px] font-black text-text-light uppercase tracking-widest pl-1">Console Heartbeat Interval</p>
-                                        <div className="flex flex-wrap gap-2 p-1.5 bg-slate-50 rounded-2xl shadow-inner border-none">
-                                            {['5s', '15s', '30s', '1m'].map((val, i) => (
-                                                <button
-                                                    key={val}
-                                                    className={`flex-1 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${i === 1 ? 'bg-primary text-white shadow-md' : 'text-text-light hover:text-text-dark'}`}
-                                                >
-                                                    {val}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
 
@@ -203,12 +220,12 @@ export function SystemSettingsPage() {
                                         
                                         <div className="grid grid-cols-2 gap-3">
                                             <button
-                                                onClick={() => handleUpdateMode('Single')}
+                                                onClick={handleSingleModeClick}
                                                 disabled={isSavingMode}
-                                                className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${
+                                                className={`p-4 rounded-2xl shadow-md transition-all flex flex-col items-center gap-2 border-none ${
                                                     companyMode === 'Single' 
-                                                    ? 'border-sky-500 bg-sky-50 text-sky-700' 
-                                                    : 'border-divider-light hover:border-sky-200 text-text-light'
+                                                    ? 'bg-sky-50 text-sky-700 shadow-lg' 
+                                                    : 'bg-surface hover:bg-slate-50 text-text-light hover:text-text-dark hover:shadow-lg'
                                                 }`}
                                             >
                                                 <span className="material-symbols-outlined">business</span>
@@ -218,10 +235,10 @@ export function SystemSettingsPage() {
                                             <button
                                                 onClick={() => handleUpdateMode('Multiple')}
                                                 disabled={isSavingMode}
-                                                className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${
+                                                className={`p-4 rounded-2xl shadow-md transition-all flex flex-col items-center gap-2 border-none ${
                                                     companyMode === 'Multiple' 
-                                                    ? 'border-sky-500 bg-sky-50 text-sky-700' 
-                                                    : 'border-divider-light hover:border-sky-200 text-text-light'
+                                                    ? 'bg-sky-50 text-sky-700 shadow-lg' 
+                                                    : 'bg-surface hover:bg-slate-50 text-text-light hover:text-text-dark hover:shadow-lg'
                                                 }`}
                                             >
                                                 <span className="material-symbols-outlined">hub</span>
@@ -250,6 +267,28 @@ export function SystemSettingsPage() {
                     )}
                 </div>
             </div>
+
+            {showCompanyNameModal === 'Single' && (
+                <Modal isOpen title="Название компании" onClose={() => { setShowCompanyNameModal(null); setCompanyNameInput('') }}>
+                    <div className="space-y-4">
+                        <p className="text-xs text-text-light">Введите название компании. Это обязательное поле для режима «Одна компания».</p>
+                        <Input
+                            placeholder="Название компании"
+                            value={companyNameInput}
+                            onChange={(e) => setCompanyNameInput(e.target.value)}
+                            autoFocus
+                        />
+                        <div className="flex gap-2">
+                            <Button fullWidth onClick={handleConfirmModeWithName} isLoading={isSavingMode} disabled={!companyNameInput.trim()}>
+                                Сохранить
+                            </Button>
+                            <Button fullWidth variant="outline" onClick={() => { setShowCompanyNameModal(null); setCompanyNameInput('') }} disabled={isSavingMode}>
+                                Отмена
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
         </AppLayout>
     )
 }

@@ -204,9 +204,10 @@ public sealed class IsapiClient
             {
                 var errBody = await response.Content.ReadAsStringAsync(cts.Token);
                 var errTrimmed = errBody?.Trim() ?? "";
+                var errSnippet = errTrimmed.Length > 500 ? errTrimmed[..500] + "..." : errTrimmed;
                 var errMsg = string.IsNullOrWhiteSpace(errTrimmed)
                     ? $"HTTP {(int)response.StatusCode}."
-                    : $"HTTP {(int)response.StatusCode}: {(errTrimmed.Length > 200 ? errTrimmed[..200] + "..." : errTrimmed)}";
+                    : $"HTTP {(int)response.StatusCode}: {errSnippet}";
                 return (false, null, errMsg, false);
             }
 

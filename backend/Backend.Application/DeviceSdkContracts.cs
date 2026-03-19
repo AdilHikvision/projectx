@@ -139,6 +139,26 @@ public interface IDeviceFaceCaptureService
     Task<FaceCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Результат захвата карты с устройства.</summary>
+public sealed record CardCaptureProgressResult(string Status, string? Message, Guid? CardId);
+
+/// <summary>Захват карты с устройства Hikvision (CaptureCardData / ReadCard).</summary>
+public interface IDeviceCardCaptureService
+{
+    Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, CancellationToken cancellationToken = default);
+    Task<CardCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Результат захвата отпечатка с устройства.</summary>
+public sealed record FingerprintCaptureProgressResult(string Status, string? Message, Guid? FingerprintId);
+
+/// <summary>Захват отпечатка с устройства Hikvision (CaptureFingerData).</summary>
+public interface IDeviceFingerprintCaptureService
+{
+    Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, int fingerIndex, CancellationToken cancellationToken = default);
+    Task<FingerprintCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Пользователь, полученный с устройства Hikvision (UserInfo Search).</summary>
 public sealed record ImportedUser(
     string EmployeeNo,
@@ -174,5 +194,5 @@ public interface IDevicePersonImportService
     /// <summary>Получает список пользователей с устройства через ISAPI UserInfo Search.</summary>
     Task<IReadOnlyCollection<ImportedUser>> FetchUsersFromDeviceAsync(Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Импортирует пользователей с выбранных устройств в БД (создаёт Employee или Visitor).</summary>
-    Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default);
+    Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, Guid? companyId = null, CancellationToken cancellationToken = default);
 }

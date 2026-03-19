@@ -124,6 +124,8 @@ Content-Length: <length>
 | **SetUp** (применить) | POST | `/ISAPI/AccessControl/FingerPrint/SetUp?format=json` |
 | **Add** | POST | `/ISAPI/AccessControl/FingerPrintDownload?format=json` |
 | **Add Progress** | GET | `/ISAPI/AccessControl/FingerPrintProgress?format=json` |
+
+**FingerPrintDownload (Add)** — запуск сбора отпечатка с устройства. В открытой документации Hikvision (Pro Series .txt, enpinfo.hikvision.com) описан только URL и шаги, **точная структура JSON тела не приведена**. По ответам устройства (MessageParametersLack) требуются: корневой узел **FingerPrintCfg** и узел **enableCardReader**. Варианты тела: `FingerPrintCfg: { EmployeeNo, FingerPrintIndex, FingerPrintData: "", EnableCardReader: true | 1 | { CardReaderID: 1 } }` или camelCase. URL: `POST /ISAPI/AccessControl/FingerPrintCfg/Download?format=json` или `FingerPrintDownload?format=json`. Перед вызовом — GET `/ISAPI/AccessControl/FingerPrintCfg/capabilities?format=json`.
 | **Modify** | POST | `/ISAPI/AccessControl/FingerPrintModify?format=json` |
 | **Delete** | PUT | `/ISAPI/AccessControl/FingerPrint/Delete?format=json` |
 | **Delete Progress** | GET | `/ISAPI/AccessControl/FingerPrint/DeleteProcess?format=json` |

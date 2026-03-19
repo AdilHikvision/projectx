@@ -52,21 +52,78 @@ public sealed class DeviceFaceCaptureService(
         }
 
         var client = CreateClient(device);
-        // Устройство ожидает XML (format=json даёт badXmlFormat)
-        var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
-        var xmlBody = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escaped}</employeeNo><FDID>1</FDID></CaptureFaceData>""";
         logger.LogInformation("[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}", device.Name, device.IpAddress, device.Port, employeeNo, personType);
+
+        await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
+
+        var jsonBodyCamel = JsonSerializer.Serialize(new { CaptureFaceData = new { EmployeeNo = employeeNo, FDID = 1 } }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false });
         var (success, content, error) = await client.PostAsync(
-            "ISAPI/AccessControl/CaptureFaceData?format=xml",
-            xmlBody,
-            "application/xml; charset=UTF-8",
+            "ISAPI/AccessControl/CaptureFaceData?format=json",
+            jsonBodyCamel,
+            "application/json",
             cancellationToken);
 
         if (!success)
         {
-            logger.LogWarning("[CaptureFace] CaptureFaceData FAILED for {Device}: {Error}. Response body: {Content}", device.Name, error, content ?? "(null)");
-            return new DeviceSyncResult(false, error ?? "Ошибка запуска захвата.");
+            var jsonBodyPascal = JsonSerializer.Serialize(new { CaptureFaceData = new { employeeNo, FDID = 1 } });
+            (success, content, error) = await client.PostAsync(
+                "ISAPI/AccessControl/CaptureFaceData?format=json",
+                jsonBodyPascal,
+                "application/json",
+                cancellationToken);
         }
+
+        if (!success)
+        {
+            var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
+            var xmlBody = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escaped}</employeeNo><FDID>1</FDID></CaptureFaceData>""";
+            (success, content, error) = await client.PostAsync(
+                "ISAPI/AccessControl/CaptureFaceData?format=xml",
+                xmlBody,
+                "application/xml; charset=UTF-8",
+                cancellationToken);
+        }
+
+        if (!success)
+        {
+            logger.LogWarning("[CaptureFace] CaptureFaceData FAILED for {Device}: {Error}. Response body: {Content}", device.Name, error, content ?? "(null)");
+            return new DeviceSyncResult(false, error ?? "Ошибка запуска захвата. Устройство может не поддерживать захват с камеры — добавьте лицо с компьютера или веб-камеры.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                if (doc.RootElement.TryGetProperty("statusCode", out var code) && code.TryGetInt32(out var statusCode) && statusCode != 0)
+                {
+                    var msg = doc.RootElement.TryGetProperty("statusString", out var str) ? str.GetString() : null;
+                    var err = $"Устройство вернуло ошибку {statusCode}: {msg ?? "см. документацию Error Code"}.";
+                    logger.LogWarning("CaptureFaceData returned error for {Device}: {Err}", device.Name, err);
+                    return new DeviceSyncResult(false, err);
+                }
+                if (doc.RootElement.TryGetProperty("CaptureFaceData", out var cfd) && cfd.TryGetProperty("statusCode", out var cfdCode) && cfdCode.TryGetInt32(out var cfdStatus) && cfdStatus != 0)
+                {
+                    var msg = cfd.TryGetProperty("statusString", out var s2) ? s2.GetString() : null;
+                    return new DeviceSyncResult(false, $"Устройство вернуло ошибку {cfdStatus}: {msg ?? "см. документацию Error Code"}.");
+                }
+            }
+            catch
+            {
+                if (content.Contains("<statusCode>") && content.Contains("</statusCode>"))
+                {
+                    var start = content.IndexOf("<statusCode>", StringComparison.OrdinalIgnoreCase) + 12;
+                    var end = content.IndexOf("</statusCode>", start, StringComparison.OrdinalIgnoreCase);
+                    if (end > start && int.TryParse(content.AsSpan(start, end - start).Trim(), out var xmlCode) && xmlCode != 0)
+                    {
+                        var err = $"Устройство вернуло ошибку {xmlCode}. Проверьте, что пользователь с employeeNo={employeeNo} синхронизирован на устройство.";
+                        logger.LogWarning("CaptureFaceData XML error for {Device}: {Err}", device.Name, err);
+                        return new DeviceSyncResult(false, err);
+                    }
+                }
+            }
+        }
+
         logger.LogInformation("[CaptureFace] CaptureFaceData OK for {Device}. Response: {Content}", device.Name, (content?.Length ?? 0) > 200 ? content![..200] + "..." : content ?? "(empty)");
 
         Sessions[deviceId] = new CaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
@@ -213,6 +270,32 @@ public sealed class DeviceFaceCaptureService(
     {
         if (string.IsNullOrEmpty(s)) return s;
         return s.Length > 32 ? s[..32] : s;
+    }
+
+    /// <summary>Убедиться, что на устройстве есть библиотека лиц (FDID=1). Документация: GET/POST /ISAPI/Intelligent/FDLib.</summary>
+    private async Task EnsureFaceLibraryExistsAsync(IsapiClient client, Device device, CancellationToken cancellationToken)
+    {
+        var (getSuccess, getContent, _) = await client.GetAsync("ISAPI/Intelligent/FDLib?format=json", cancellationToken);
+        if (getSuccess && !string.IsNullOrWhiteSpace(getContent))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(getContent);
+                var root = doc.RootElement;
+                // Ответ может быть FDLib (одна), FDLibList, или список с FDID
+                if (root.TryGetProperty("FDLib", out _) || root.TryGetProperty("FDLibList", out var list) && list.GetArrayLength() > 0)
+                    return;
+                if (root.TryGetProperty("FDID", out _))
+                    return;
+            }
+            catch { /* не JSON или другая структура — пробуем создать */ }
+        }
+
+        // Пытаемся создать библиотеку по умолчанию (FDID=1, видимый свет)
+        var createBody = JsonSerializer.Serialize(new { FDLib = new { FDID = 1, faceLibType = "blackFD", name = "default" } }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var (postSuccess, _, postErr) = await client.PostAsync("ISAPI/Intelligent/FDLib?format=json", createBody, "application/json", cancellationToken);
+        if (!postSuccess)
+            logger.LogDebug("FDLib create (optional) failed for {Device}: {Error}", device.Name, postErr);
     }
 
     private IsapiClient CreateClient(Device device)

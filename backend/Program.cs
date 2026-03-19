@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using System.Text;
+using System.Xml.Linq;
 using Backend.Application.Security;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
@@ -84,6 +85,12 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+});
 
 var app = builder.Build();
 
@@ -815,6 +822,132 @@ app.MapGet("/api/devices/{id:guid}/faces/capture/progress", async (
     return Results.Ok(new { progress.Status, progress.Progress, progress.Message, progress.FaceId });
 }).RequireAuthorization();
 
+app.MapPost("/api/devices/{id:guid}/cards/capture", async (
+    Guid id,
+    CaptureFaceRequest request,
+    IDeviceCardCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.PersonId) || !Guid.TryParse(request.PersonId, out var personId))
+        return Results.BadRequest(new { message = "PersonId обязателен." });
+    if (string.IsNullOrWhiteSpace(request.PersonType) || (request.PersonType != "employee" && request.PersonType != "visitor"))
+        return Results.BadRequest(new { message = "PersonType должен быть 'employee' или 'visitor'." });
+    var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, cancellationToken);
+    if (!result.Success)
+        return Results.BadRequest(new { message = result.Message });
+    return Results.Ok();
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/cards/capture/progress", async (
+    Guid id,
+    IDeviceCardCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    var progress = await captureService.GetProgressAsync(id, cancellationToken);
+    return Results.Ok(new { progress.Status, progress.Message, progress.CardId });
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/{id:guid}/fingerprints/capture", async (
+    Guid id,
+    CaptureFingerprintRequest request,
+    IDeviceFingerprintCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.PersonId) || !Guid.TryParse(request.PersonId, out var personId))
+        return Results.BadRequest(new { message = "PersonId обязателен." });
+    if (string.IsNullOrWhiteSpace(request.PersonType) || (request.PersonType != "employee" && request.PersonType != "visitor"))
+        return Results.BadRequest(new { message = "PersonType должен быть 'employee' или 'visitor'." });
+    var fingerIndex = Math.Clamp(request.FingerIndex, 1, 10);
+    var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, fingerIndex, cancellationToken);
+    if (!result.Success)
+        return Results.BadRequest(new { message = result.Message });
+    return Results.Ok();
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/fingerprints/capture/progress", async (
+    Guid id,
+    IDeviceFingerprintCaptureService captureService,
+    CancellationToken cancellationToken) =>
+{
+    var progress = await captureService.GetProgressAsync(id, cancellationToken);
+    return Results.Ok(new { progress.Status, progress.Message, progress.FingerprintId });
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{id:guid}/access-control/capabilities", async (
+    Guid id,
+    AppDbContext dbContext,
+    IConfiguration configuration,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.FindAsync([id], cancellationToken);
+    if (device is null) return Results.NotFound();
+
+    var username = configuration["Hikvision:Username"] ?? "admin";
+    var password = (configuration["Hikvision:Password"] ?? "").Trim();
+    if (string.IsNullOrEmpty(password)) password = "12345";
+    var cred = new NetworkCredential(
+        string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
+        string.IsNullOrWhiteSpace(device.Password) ? password : device.Password);
+
+    var client = new IsapiClient(device.IpAddress, device.Port, cred.UserName ?? "admin", cred.Password ?? "", TimeSpan.FromSeconds(10));
+    var (success, content, error) = await client.GetAsync("ISAPI/AccessControl/capabilities?format=xml", cancellationToken);
+
+    if (!success)
+        return Results.BadRequest(new { error, deviceAddress = $"{device.IpAddress}:{device.Port}" });
+
+    static bool ParseBool(string? v) => string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+
+    var payload = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    var raw = (content ?? "").Trim();
+    if (raw.StartsWith("<", StringComparison.Ordinal))
+    {
+        try
+        {
+            var doc = XDocument.Parse(content!);
+            var root = doc.Root;
+            if (root is not null)
+            {
+                var ns = root.Name.Namespace;
+                foreach (var el in root.Elements())
+                {
+                    var name = el.Name.LocalName;
+                    if (!payload.ContainsKey(name))
+                        payload[name] = ParseBool(el.Value);
+                }
+            }
+        }
+        catch
+        {
+            payload["_parseError"] = true;
+        }
+    }
+    else
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(raw);
+            if (json is not null)
+                foreach (var kv in json)
+                    if (kv.Value.ValueKind == System.Text.Json.JsonValueKind.True || kv.Value.ValueKind == System.Text.Json.JsonValueKind.False)
+                        payload[kv.Key] = kv.Value.GetBoolean();
+        }
+        catch
+        {
+            payload["_parseError"] = true;
+        }
+    }
+
+    var result = new
+    {
+        isSupportFingerPrintCfg = payload.GetValueOrDefault("isSupportFingerPrintCfg", false),
+        isSupportFDLib = payload.GetValueOrDefault("isSupportFDLib", false),
+        isSupportIrisInfo = payload.GetValueOrDefault("isSupportIrisInfo", false),
+        isSupportEventCardLinkageCfg = payload.GetValueOrDefault("isSupportEventCardLinkageCfg", false),
+        isSupportCardInfo = payload.GetValueOrDefault("isSupportCardInfo", false),
+    };
+    return Results.Json(result);
+}).RequireAuthorization();
+
 app.MapGet("/api/devices/statuses", async (
     AppDbContext dbContext,
     IDeviceArpStatusService arpStatusService,
@@ -1054,6 +1187,26 @@ app.MapPost("/api/system-settings", async (SystemSettingRequest request, AppDbCo
         setting.Value = request.Value;
         setting.UpdatedUtc = DateTime.UtcNow;
     }
+
+    if (key == "CompanyMode" && request.Value == "Single")
+    {
+        var companies = await dbContext.Companies.OrderBy(c => c.CreatedUtc).ToListAsync(cancellationToken);
+        if (companies.Count > 1)
+        {
+            var firstId = companies[0].Id;
+            foreach (var company in companies.Skip(1))
+            {
+                await dbContext.Departments.Where(d => d.CompanyId == company.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.CompanyId, firstId), cancellationToken);
+                await dbContext.Employees.Where(e => e.CompanyId == company.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(e => e.CompanyId, firstId), cancellationToken);
+                await dbContext.Visitors.Where(v => v.CompanyId == company.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(v => v.CompanyId, firstId), cancellationToken);
+                dbContext.Companies.Remove(company);
+            }
+        }
+    }
+
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.Ok(new SystemSettingResponse(setting.Key, setting.Value));
 }).RequireAuthorization();
@@ -1724,7 +1877,7 @@ app.MapPost("/api/people/import-from-devices", async (ImportFromDevicesRequest r
 {
     if (request.DeviceIds is null || request.DeviceIds.Length == 0)
         return Results.BadRequest(new { message = "Выберите хотя бы одно устройство." });
-    var result = await importService.ImportFromDevicesAsync(request.DeviceIds, cancellationToken);
+    var result = await importService.ImportFromDevicesAsync(request.DeviceIds, request.CompanyId, cancellationToken);
     return Results.Ok(new
     {
         importedCount = result.ImportedCount,
@@ -2342,8 +2495,9 @@ public sealed record UpdateVisitorRequest(string FirstName, string LastName, str
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
 
 public sealed record CaptureFaceRequest(string? PersonId, string? PersonType);
+public sealed record CaptureFingerprintRequest(string? PersonId, string? PersonType, int FingerIndex);
 
-public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds);
+public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds, Guid? CompanyId);
 public sealed record DepartmentRef(Guid Id, string Name);
 public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, int CardsCount, int FacesCount, int FingerprintsCount);
 public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints);

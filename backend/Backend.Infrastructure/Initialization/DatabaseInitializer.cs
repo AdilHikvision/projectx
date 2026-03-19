@@ -99,6 +99,12 @@ public sealed class DatabaseInitializer(
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE departments ADD COLUMN IF NOT EXISTS "CompanyId" uuid REFERENCES companies("Id") ON DELETE SET NULL
             """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE employees ADD COLUMN IF NOT EXISTS "CompanyId" uuid REFERENCES companies("Id") ON DELETE SET NULL
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE visitors ADD COLUMN IF NOT EXISTS "CompanyId" uuid REFERENCES companies("Id") ON DELETE SET NULL
+            """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS cards (
