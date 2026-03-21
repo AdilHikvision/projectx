@@ -17,14 +17,6 @@ public sealed class JwtOptions
     public int ExpirationMinutes { get; init; } = 60;
 }
 
-public sealed class SeedAdminOptions
-{
-    public string Email { get; init; } = string.Empty;
-    public string Password { get; init; } = string.Empty;
-    public string FirstName { get; init; } = "System";
-    public string LastName { get; init; } = "Admin";
-}
-
 public interface IJwtTokenService
 {
     string CreateToken(Guid userId, string userName, string email, IReadOnlyCollection<string> roles);

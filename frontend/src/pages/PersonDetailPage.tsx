@@ -50,7 +50,7 @@ import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
 import { ConfirmDialog } from '../components/molecules'
 import { Modal } from '../components/organisms'
-import { useLoading } from '../context/LoadingContext'
+
 import { apiRequest, getApiBaseUrl } from '../lib/api'
 
 interface DepartmentRef {
@@ -127,7 +127,7 @@ export function PersonDetailPage() {
   const { type, id } = useParams<{ type: 'employee' | 'visitor'; id: string }>()
   const navigate = useNavigate()
   const { token } = useAuth()
-  const { startLoading, stopLoading } = useLoading()
+
   const [detail, setDetail] = useState<PersonDetail | null>(null)
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [credentialTab, setCredentialTab] = useState<CredentialTab>('cards')
@@ -150,20 +150,18 @@ export function PersonDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [addModal, setAddModal] = useState<'card' | 'face' | 'fingerprint' | null>(null)
   const [faceSourceMode, setFaceSourceMode] = useState<'device' | 'computer' | 'webcam'>('computer')
-  const [cardForm, setCardForm] = useState({ cardNo: '', cardNumber: '', deviceIds: [] as string[] })
+  const [cardForm, setCardForm] = useState({ cardNo: '' })
   const [faceFile, setFaceFile] = useState<File | null>(null)
-  const [faceDeviceIds, setFaceDeviceIds] = useState<string[]>([])
   const [faceCaptureDeviceId, setFaceCaptureDeviceId] = useState<string>('')
   const [faceCaptureProgress, setFaceCaptureProgress] = useState<{ status: string; progress?: number; message?: string } | null>(null)
   const [webcamError, setWebcamError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [fpForm, setFpForm] = useState({ templateData: '', fingerIndex: 1, deviceIds: [] as string[] })
   const [cardSourceMode, setCardSourceMode] = useState<'manual' | 'device'>('manual')
   const [cardCaptureDeviceId, setCardCaptureDeviceId] = useState<string>('')
   const [cardCaptureProgress, setCardCaptureProgress] = useState<{ status: string; message?: string } | null>(null)
-  const [fingerprintSourceMode, setFingerprintSourceMode] = useState<'manual' | 'device'>('manual')
+  
   const [fingerprintCaptureDeviceId, setFingerprintCaptureDeviceId] = useState<string>('')
   const [fingerprintCaptureProgress, setFingerprintCaptureProgress] = useState<{ status: string; message?: string } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -175,16 +173,13 @@ export function PersonDetailPage() {
   const loadDetail = useCallback(async () => {
     if (!token || !id) return
     setError(null)
-    startLoading()
     try {
       const data = await apiRequest<PersonDetail>(`${apiPath}/${id}`, { token })
       setDetail(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
-    } finally {
-      stopLoading()
     }
-  }, [token, id, apiPath, startLoading, stopLoading])
+  }, [token, id, apiPath])
 
   const loadCompanies = useCallback(async (): Promise<Company[]> => {
     if (!token) return []
@@ -400,16 +395,16 @@ export function PersonDetailPage() {
           headers: { Authorization: `Bearer ${token}` },
         })
         const prog = await progRes.json().catch(() => ({}))
-        setCardCaptureProgress({ status: prog.status ?? 'capturing', message: prog.message })
-        if (prog.status === 'completed') {
-          setAddModal(null)
-          setCardCaptureDeviceId('')
+        const st = String(prog.status ?? '').toLowerCase()
+        setCardCaptureProgress({ status: st || 'capturing', message: prog.message })
+        if (st === 'completed') {
           setCardCaptureProgress(null)
-          if (prog.cardId) await loadDetail()
-          else if (prog.message) setError(prog.message)
+          setCardCaptureDeviceId('')
+          setAddModal(null)
+          await loadDetail()
           return
         }
-        if (prog.status === 'failed') throw new Error(prog.message || 'Захват карты не удался')
+        if (st === 'failed') throw new Error(prog.message || 'Захват карты не удался')
         await new Promise((r) => setTimeout(r, 1500))
         return pollProgress()
       }
@@ -440,15 +435,15 @@ export function PersonDetailPage() {
         token,
         body: JSON.stringify({
           cardNo: cardForm.cardNo.trim(),
-          cardNumber: cardForm.cardNumber.trim() || null,
+          cardNumber: null,
           employeeId: type === 'employee' ? id : null,
           visitorId: type === 'visitor' ? id : null,
-          deviceIds: cardForm.deviceIds,
+          deviceIds: [],
         }),
       })
       showSyncWarnings(res)
       setAddModal(null)
-      setCardForm({ cardNo: '', cardNumber: '', deviceIds: [] })
+      setCardForm({ cardNo: '' })
       await loadDetail()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add card')
@@ -464,7 +459,6 @@ export function PersonDetailPage() {
     fd.append('VisitorId', type === 'visitor' ? id! : '')
     fd.append('FDID', '1')
     fd.append('Image', imageBlob, 'face.jpg')
-    if (faceDeviceIds.length) fd.append('DeviceIds', faceDeviceIds.join(','))
     const res = await fetch(`${getApiBaseUrl()}/api/faces`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -475,7 +469,6 @@ export function PersonDetailPage() {
     showSyncWarnings(data)
     setAddModal(null)
     setFaceFile(null)
-    setFaceDeviceIds([])
     await loadDetail()
   }
 
@@ -589,7 +582,7 @@ export function PersonDetailPage() {
       const startRes = await fetch(`${getApiBaseUrl()}/api/devices/${fingerprintCaptureDeviceId}/fingerprints/capture`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ personId: id, personType: type, fingerIndex: fpForm.fingerIndex }),
+        body: JSON.stringify({ personId: id, personType: type, fingerIndex: 1 }),
       })
       if (!startRes.ok) {
         const err = await startRes.json().catch(() => ({}))
@@ -624,37 +617,7 @@ export function PersonDetailPage() {
 
   async function handleAddFingerprint() {
     if (!token || !detail) return
-    if (fingerprintSourceMode === 'device') {
-      await handleAddFingerprintFromDevice()
-      return
-    }
-    if (!fpForm.templateData.trim()) {
-      setError('Fingerprint template (base64) is required')
-      return
-    }
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      const res = await apiRequest<{ syncWarnings?: string[] }>('/api/fingerprints', {
-        method: 'POST',
-        token,
-        body: JSON.stringify({
-          templateData: fpForm.templateData.trim(),
-          fingerIndex: fpForm.fingerIndex,
-          employeeId: type === 'employee' ? id : null,
-          visitorId: type === 'visitor' ? id : null,
-          deviceIds: fpForm.deviceIds,
-        }),
-      })
-      showSyncWarnings(res)
-      setAddModal(null)
-      setFpForm({ templateData: '', fingerIndex: 1, deviceIds: [] })
-      await loadDetail()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add fingerprint')
-    } finally {
-      setIsSubmitting(false)
-    }
+    await handleAddFingerprintFromDevice()
   }
 
   async function handleDeleteCard(cardId: string) {
@@ -668,12 +631,23 @@ export function PersonDetailPage() {
   }
 
   async function handleDeleteFace(faceId: string) {
-    if (!token || !confirm('Delete face?')) return
+    if (!token || !confirm('Удалить лицо? Оно будет удалено со всех устройств.')) return
+    setError(null)
     try {
-      await apiRequest(`/api/faces/${faceId}`, { method: 'DELETE', token })
+      const res = await fetch(`${getApiBaseUrl()}/api/faces/${faceId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.status === 204) {
+        await loadDetail()
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || 'Ошибка удаления')
+      showSyncWarnings(data)
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : 'Ошибка удаления лица')
     }
   }
 
@@ -1009,24 +983,27 @@ export function PersonDetailPage() {
                   )}
 
                   {credentialTab === 'faces' && (
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                    <div className="flex flex-col items-center gap-4">
                       {detail.faces.length === 0 ? (
-                        <div className="col-span-full py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">No biometric templates found</div>
+                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">Лицо не зарегистрировано</div>
                       ) : (
-                        detail.faces.map((f) => (
-                          <div key={f.id} className="relative group">
-                            <div className="aspect-square rounded-2xl overflow-hidden shadow-md transition-transform group-hover:scale-105 border-none">
-                              <FaceImage faceId={f.id} token={token} className="w-full h-full object-cover" />
-                            </div>
-                            <button
-                              onClick={() => handleDeleteFace(f.id)}
-                              className="absolute -top-2 -right-2 w-6 h-6 bg-error-bg text-error-text border border-error-text/20 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-[14px]">close</span>
-                            </button>
+                        <div className="relative group">
+                          <div className="w-48 h-48 rounded-2xl overflow-hidden shadow-md transition-transform group-hover:scale-105 border-none">
+                            <FaceImage faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover" />
                           </div>
-                        ))
+                          <button
+                            onClick={() => handleDeleteFace(detail.faces[0].id)}
+                            className="absolute -top-2 -right-2 w-7 h-7 bg-error-bg text-error-text border border-error-text/20 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">close</span>
+                          </button>
+                        </div>
                       )}
+                      <p className="text-[10px] text-text-light text-center">
+                        {detail.faces.length > 0
+                          ? 'Нажмите «Enroll» чтобы заменить лицо. Синхронизация при сохранении профиля.'
+                          : 'Нажмите «Enroll» чтобы захватить лицо с устройства.'}
+                      </p>
                     </div>
                   )}
 
@@ -1169,42 +1146,6 @@ export function PersonDetailPage() {
                     icon="nfc"
                   />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">Legacy Number (Optional)</label>
-                  <Input
-                    value={cardForm.cardNumber}
-                    onChange={(e) => setCardForm((p) => ({ ...p, cardNumber: e.target.value }))}
-                    placeholder="External mapping"
-                    icon="fingerprint"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2.5 ml-1">Propagation Targets</label>
-                  <div className="space-y-1.5">
-                    {devicesFromAccessLevels.length === 0 ? (
-                      <p className="text-xs text-text-light py-2">Выберите уровни доступа с контрольными точками</p>
-                    ) : (
-                      devicesFromAccessLevels.map((d) => (
-                        <label key={d.id} className="flex items-center justify-between p-3 rounded-xl border border-divider-light/50 hover:bg-slate-50 cursor-pointer group transition-all">
-                          <span className="text-xs font-bold text-text-dark group-hover:text-primary transition-colors">{d.name}</span>
-                          <input
-                            type="checkbox"
-                            checked={cardForm.deviceIds.includes(d.id)}
-                            onChange={() =>
-                              setCardForm((p) => ({
-                                ...p,
-                                deviceIds: p.deviceIds.includes(d.id)
-                                  ? p.deviceIds.filter((x) => x !== d.id)
-                                  : [...p.deviceIds, d.id],
-                              }))
-                            }
-                            className="w-5 h-5 rounded-md border-divider-light text-primary focus:ring-primary/20 transition-all"
-                          />
-                        </label>
-                      ))
-                    )}
-                  </div>
-                </div>
               </>
             )}
             <div className="flex gap-2 pt-4">
@@ -1311,44 +1252,11 @@ export function PersonDetailPage() {
               </div>
             )}
 
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                Устройства для синхронизации
-                {(faceSourceMode === 'webcam' || faceSourceMode === 'computer') && (
-                  <span className="block text-[9px] font-bold text-text-muted normal-case mt-1">Выберите устройства, на которые отправить лицо</span>
-                )}
-              </label>
-              {devicesFromAccessLevels.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setFaceDeviceIds(faceDeviceIds.length === devicesFromAccessLevels.length ? [] : devicesFromAccessLevels.map((d) => d.id))}
-                  className="text-[9px] font-bold text-primary hover:underline mb-1.5"
-                >
-                  {faceDeviceIds.length === devicesFromAccessLevels.length ? 'Снять выбор' : 'Выбрать все'}
-                </button>
-              )}
-              <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                {devicesFromAccessLevels.length === 0 ? (
-                  <p className="text-xs text-text-light py-2">Выберите уровни доступа с контрольными точками</p>
-                ) : (
-                  devicesFromAccessLevels.map((d) => (
-                    <label key={d.id} className="flex items-center justify-between p-3 rounded-xl border border-divider-light/50 hover:bg-slate-50 cursor-pointer">
-                      <span className="text-xs font-bold text-text-dark">{d.name}</span>
-                      <input
-                        type="checkbox"
-                        checked={faceDeviceIds.includes(d.id)}
-                        onChange={() =>
-                          setFaceDeviceIds((prev) =>
-                            prev.includes(d.id) ? prev.filter((x) => x !== d.id) : [...prev, d.id]
-                          )
-                        }
-                        className="w-5 h-5 rounded border-divider-light text-primary focus:ring-primary/20"
-                      />
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
+            {(faceSourceMode === 'computer' || faceSourceMode === 'webcam') && (
+              <p className="text-[10px] text-text-light bg-slate-50 rounded-xl p-3">
+                Лицо будет автоматически синхронизировано с устройствами из назначенных уровней доступа при сохранении профиля.
+              </p>
+            )}
 
             <div className="flex gap-2 pt-2">
               <Button
@@ -1380,114 +1288,35 @@ export function PersonDetailPage() {
           }}
         >
           <div className="space-y-5">
-            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
-              {(['manual', 'device'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setFingerprintSourceMode(mode)}
-                  className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
-                    fingerprintSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
-                  }`}
-                >
-                  {mode === 'device' ? 'С устройства' : 'Вручную'}
-                </button>
-              ))}
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Устройство</label>
+              <select
+                value={devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId) ? fingerprintCaptureDeviceId : ''}
+                onChange={(e) => setFingerprintCaptureDeviceId(e.target.value)}
+                className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
+              >
+                <option value="">Выберите устройство</option>
+                {devicesSupportingFingerprint.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+              {devicesFromAccessLevels.length > 0 && devicesSupportingFingerprint.length === 0 && (
+                <p className="text-xs text-error-text mt-1.5">Нет устройств с поддержкой добавления отпечатков</p>
+              )}
             </div>
-            {fingerprintSourceMode === 'device' && (
-              <>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Устройство</label>
-                  <select
-                    value={devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId) ? fingerprintCaptureDeviceId : ''}
-                    onChange={(e) => setFingerprintCaptureDeviceId(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
-                  >
-                    <option value="">Выберите устройство</option>
-                    {devicesSupportingFingerprint.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  {devicesFromAccessLevels.length > 0 && devicesSupportingFingerprint.length === 0 && (
-                    <p className="text-xs text-error-text mt-1.5">Нет устройств с поддержкой добавления отпечатков</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">Палец (1–10)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={fpForm.fingerIndex}
-                    onChange={(e) => setFpForm((p) => ({ ...p, fingerIndex: Math.min(10, Math.max(1, parseInt(e.target.value) || 1)) }))}
-                    icon="pin"
-                  />
-                </div>
-                {fingerprintCaptureProgress && (
-                  <div className="p-4 bg-slate-50 rounded-xl text-sm">
-                    <p className="font-bold">{fingerprintCaptureProgress.message || fingerprintCaptureProgress.status}</p>
-                  </div>
-                )}
-              </>
-            )}
-            {fingerprintSourceMode === 'manual' && (
-              <>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">Binary Template Data</label>
-                  <Input
-                    value={fpForm.templateData}
-                    onChange={(e) => setFpForm((p) => ({ ...p, templateData: e.target.value }))}
-                    placeholder="Base64-encoded asset"
-                    icon="data_object"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">Anatomical Index (1-10)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={fpForm.fingerIndex}
-                    onChange={(e) => setFpForm((p) => ({ ...p, fingerIndex: parseInt(e.target.value) || 1 }))}
-                    icon="pin"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2.5 ml-1">Propagation Targets</label>
-                  <div className="space-y-1.5">
-                    {devicesFromAccessLevels.length === 0 ? (
-                      <p className="text-xs text-text-light py-2">Выберите уровни доступа с контрольными точками</p>
-                    ) : (
-                      devicesFromAccessLevels.map((d) => (
-                    <label key={d.id} className="flex items-center justify-between p-3 rounded-xl border border-divider-light/50 hover:bg-slate-50 cursor-pointer group transition-all">
-                      <span className="text-xs font-bold text-text-dark group-hover:text-primary transition-colors">{d.name}</span>
-                      <input
-                        type="checkbox"
-                        checked={fpForm.deviceIds.includes(d.id)}
-                        onChange={() =>
-                          setFpForm((p) => ({
-                            ...p,
-                            deviceIds: p.deviceIds.includes(d.id)
-                              ? p.deviceIds.filter((x) => x !== d.id)
-                              : [...p.deviceIds, d.id],
-                          }))
-                        }
-                        className="w-5 h-5 rounded-md border-divider-light text-primary focus:ring-primary/20 transition-all"
-                      />
-                    </label>
-                  ))
-                )}
+            {fingerprintCaptureProgress && (
+              <div className="p-4 bg-slate-50 rounded-xl text-sm">
+                <p className="font-bold">{fingerprintCaptureProgress.message || fingerprintCaptureProgress.status}</p>
               </div>
-            </div>
-              </>
             )}
             <div className="flex gap-2 pt-4">
               <Button
                 fullWidth
                 onClick={handleAddFingerprint}
                 isLoading={isSubmitting}
-                disabled={fingerprintSourceMode === 'device' ? !fingerprintCaptureDeviceId || devicesSupportingFingerprint.length === 0 || !devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId) : !fpForm.templateData.trim()}
+                disabled={!fingerprintCaptureDeviceId || devicesSupportingFingerprint.length === 0 || !devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId)}
               >
-                {fingerprintSourceMode === 'device' ? 'Запустить захват' : 'Register Signature'}
+                Запустить захват
               </Button>
               <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Отмена</Button>
             </div>

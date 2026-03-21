@@ -4,7 +4,6 @@ using Backend.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Backend.Infrastructure.Initialization;
 
@@ -12,7 +11,6 @@ public sealed class DatabaseInitializer(
     AppDbContext dbContext,
     RoleManager<IdentityRole<Guid>> roleManager,
     UserManager<ApplicationUser> userManager,
-    IOptions<SeedAdminOptions> seedAdminOptions,
     ILogger<DatabaseInitializer> logger) : IDatabaseInitializer
 {
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -179,42 +177,10 @@ public sealed class DatabaseInitializer(
             }
         }
 
-        if (await userManager.Users.AnyAsync(cancellationToken))
+        // Первый администратор создаётся только вручную через /api/auth/setup-admin-password (страница Initial Setup), не из конфигурации.
+        if (!await userManager.Users.AnyAsync(cancellationToken))
         {
-            return;
-        }
-
-        var admin = seedAdminOptions.Value;
-        if (!string.IsNullOrWhiteSpace(admin.Password))
-        {
-            if (string.IsNullOrWhiteSpace(admin.Email))
-            {
-                logger.LogWarning("SeedAdmin email is missing. Admin user was not created.");
-                return;
-            }
-            var user = new ApplicationUser
-            {
-                Id = Guid.NewGuid(),
-                UserName = admin.Email,
-                Email = admin.Email,
-                EmailConfirmed = true,
-                FirstName = admin.FirstName,
-                LastName = admin.LastName,
-                RequiresPasswordSetup = false
-            };
-            var createResult = await userManager.CreateAsync(user, admin.Password);
-            if (!createResult.Succeeded)
-            {
-                var errors = string.Join("; ", createResult.Errors.Select(x => x.Description));
-                logger.LogError("Failed to create seed admin user: {Errors}", errors);
-                return;
-            }
-            await userManager.AddToRoleAsync(user, SystemRoles.Admin);
-            logger.LogInformation("Seed admin user created with email {Email}", admin.Email);
-        }
-        else
-        {
-            logger.LogInformation("SeedAdmin password is empty. First admin will be created via setup page with user-provided email.");
+            logger.LogInformation("No users in database. Complete initial setup in the UI to create the administrator account.");
         }
     }
 }

@@ -138,6 +138,11 @@ app.MapPost("/api/auth/register", async (
     var hasUsers = await userManager.Users.AnyAsync(cancellationToken);
     var isAdmin = httpContext.User.IsInRole(SystemRoles.Admin);
 
+    if (!hasUsers)
+    {
+        return Results.BadRequest(new { message = "Complete initial setup first (Initial Setup page) to create the administrator account." });
+    }
+
     if (hasUsers && !isAdmin)
     {
         return Results.Forbid();
@@ -1508,6 +1513,10 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
         : [];
     var syncWarnings = new List<string>();
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
+    // Sync employee + credentials (face, fingerprints, cards) to devices from access levels
+    var empFaces = await dbContext.Faces.Where(f => f.EmployeeId == id).ToListAsync(cancellationToken);
+    var empFingerprints = await dbContext.Fingerprints.Where(f => f.EmployeeId == id).ToListAsync(cancellationToken);
+    var empCards = await dbContext.Cards.Where(c => c.EmployeeId == id).ToListAsync(cancellationToken);
     foreach (var deviceId in deviceIds)
     {
         var result = await syncService.SyncEmployeeAsync(id, deviceId, cancellationToken);
@@ -1515,6 +1524,24 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
         {
             syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
             logger.LogWarning("Синхронизация сотрудника {EmployeeId} на устройство {DeviceId}: {Message}", id, deviceId, result.Message);
+        }
+        foreach (var face in empFaces)
+        {
+            var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
+            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Лицо → \"{d.Name}\": {fr.Message}");
+        }
+        foreach (var fp in empFingerprints)
+        {
+            var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
+            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Отпечаток → \"{d.Name}\": {fr.Message}");
+        }
+        foreach (var card in empCards)
+        {
+            var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
+            if (!cr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Карта → \"{d.Name}\": {cr.Message}");
         }
     }
 
@@ -1803,6 +1830,10 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
         : [];
     var syncWarnings = new List<string>();
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
+    // Sync visitor + credentials (face, fingerprints, cards) to devices from access levels
+    var visFaces = await dbContext.Faces.Where(f => f.VisitorId == id).ToListAsync(cancellationToken);
+    var visFingerprints = await dbContext.Fingerprints.Where(f => f.VisitorId == id).ToListAsync(cancellationToken);
+    var visCards = await dbContext.Cards.Where(c => c.VisitorId == id).ToListAsync(cancellationToken);
     foreach (var deviceId in deviceIds)
     {
         var result = await syncService.SyncVisitorAsync(id, deviceId, cancellationToken);
@@ -1810,6 +1841,24 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
         {
             syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
             logger.LogWarning("Синхронизация посетителя {VisitorId} на устройство {DeviceId}: {Message}", id, deviceId, result.Message);
+        }
+        foreach (var face in visFaces)
+        {
+            var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
+            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Лицо → \"{d.Name}\": {fr.Message}");
+        }
+        foreach (var fp in visFingerprints)
+        {
+            var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
+            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Отпечаток → \"{d.Name}\": {fr.Message}");
+        }
+        foreach (var card in visCards)
+        {
+            var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
+            if (!cr.Success && devices.TryGetValue(deviceId, out var d))
+                syncWarnings.Add($"Карта → \"{d.Name}\": {cr.Message}");
         }
     }
 
@@ -2046,9 +2095,26 @@ app.MapPost("/api/faces", async (HttpRequest request, AppDbContext dbContext, ID
     dbContext.Faces.Add(face);
     await dbContext.SaveChangesAsync(cancellationToken);
 
-    var deviceIds = form["DeviceIds"].SelectMany(x => (x ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
-        .Select(x => Guid.TryParse(x.Trim(), out var g) ? g : (Guid?)null)
-        .Where(g => g.HasValue).Cast<Guid>().ToList();
+    var deviceIds = new HashSet<Guid>();
+    if (employeeId.HasValue)
+    {
+        var empDeviceIds = await dbContext.Set<EmployeeAccessLevel>()
+            .Where(eal => eal.EmployeeId == employeeId.Value)
+            .SelectMany(eal => eal.AccessLevel!.Doors.Select(d => d.DeviceId))
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        foreach (var did in empDeviceIds) deviceIds.Add(did);
+    }
+    else if (visitorId.HasValue)
+    {
+        var visDeviceIds = await dbContext.Set<VisitorAccessLevel>()
+            .Where(val => val.VisitorId == visitorId.Value)
+            .SelectMany(val => val.AccessLevel!.Doors.Select(d => d.DeviceId))
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        foreach (var did in visDeviceIds) deviceIds.Add(did);
+    }
+
     var syncWarnings = new List<string>();
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
     foreach (var deviceId in deviceIds)
@@ -2056,7 +2122,7 @@ app.MapPost("/api/faces", async (HttpRequest request, AppDbContext dbContext, ID
         var result = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
         if (!result.Success && devices.TryGetValue(deviceId, out var dev))
         {
-            syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
+            syncWarnings.Add($"Лицо → \"{dev.Name}\": {result.Message}");
             logger.LogWarning("Sync face {FaceId} to device {DeviceId}: {Message}", face.Id, deviceId, result.Message);
         }
     }
@@ -2064,19 +2130,51 @@ app.MapPost("/api/faces", async (HttpRequest request, AppDbContext dbContext, ID
     return Results.Created($"/api/faces/{face.Id}", new { face.Id, face.FilePath, face.FDID, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
-app.MapDelete("/api/faces/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, CancellationToken cancellationToken) =>
+app.MapDelete("/api/faces/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     var face = await dbContext.Faces.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (face is null) return Results.NotFound();
-    var devices = await dbContext.Devices.Select(d => d.Id).ToListAsync(cancellationToken);
-    foreach (var deviceId in devices)
-        _ = syncService.DeleteFaceFromDeviceAsync(id, deviceId, cancellationToken);
+
+    // Determine devices from access levels
+    var deviceIds = new HashSet<Guid>();
+    if (face.EmployeeId.HasValue)
+    {
+        var ids = await dbContext.Set<EmployeeAccessLevel>()
+            .Where(eal => eal.EmployeeId == face.EmployeeId.Value)
+            .SelectMany(eal => eal.AccessLevel!.Doors.Select(d => d.DeviceId))
+            .Distinct().ToListAsync(cancellationToken);
+        foreach (var did in ids) deviceIds.Add(did);
+    }
+    else if (face.VisitorId.HasValue)
+    {
+        var ids = await dbContext.Set<VisitorAccessLevel>()
+            .Where(val => val.VisitorId == face.VisitorId.Value)
+            .SelectMany(val => val.AccessLevel!.Doors.Select(d => d.DeviceId))
+            .Distinct().ToListAsync(cancellationToken);
+        foreach (var did in ids) deviceIds.Add(did);
+    }
+
+    var syncWarnings = new List<string>();
+    var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
+    foreach (var deviceId in deviceIds)
+    {
+        var result = await syncService.DeleteFaceFromDeviceAsync(id, deviceId, cancellationToken);
+        if (!result.Success && devices.TryGetValue(deviceId, out var dev))
+        {
+            syncWarnings.Add($"Лицо → \"{dev.Name}\": {result.Message}");
+            logger.LogWarning("DeleteFace {FaceId} from device {DeviceId}: {Message}", id, deviceId, result.Message);
+        }
+    }
+
     var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
     var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
     if (File.Exists(fullPath)) File.Delete(fullPath);
     dbContext.Faces.Remove(face);
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.NoContent();
+
+    return syncWarnings.Count > 0
+        ? Results.Ok(new { syncWarnings })
+        : Results.NoContent();
 }).RequireAuthorization();
 
 app.MapPost("/api/faces/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
