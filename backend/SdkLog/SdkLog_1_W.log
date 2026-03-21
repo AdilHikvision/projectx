@@ -266,3 +266,71 @@
 [2026-03-22 02:09:08.961][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
 [2026-03-22 02:09:10.961][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
 [2026-03-22 02:09:10.993][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:13.004][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:13.051][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:13.051][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:15.054][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:15.117][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:17.119][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:17.167][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:19.184][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:19.231][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:19.231][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:21.236][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:21.360][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:21.360][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:23.375][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:23.483][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:25.494][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:25.541][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:25.541][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:27.546][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:27.608][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:29.612][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:29.704][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:29.704][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:31.713][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:31.759][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:33.765][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:33.826][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:35.827][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:35.889][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:37.899][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:37.961][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:39.973][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:40.036][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:40.036][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:42.041][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:42.088][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:44.089][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:44.151][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:46.159][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:46.206][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:48.215][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:48.324][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:50.335][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:50.398][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:52.408][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:52.548][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:52.548][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:09:54.551][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:54.628][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:56.634][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:56.697][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:09:58.703][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:09:58.750][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:09:58.750][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:10:00.758][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:10:00.805][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:10:00.805][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:10:02.815][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:10:02.893][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:10:04.897][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:10:04.959][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:10:04.959][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:10:06.973][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:10:07.019][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=1
+[2026-03-22 02:10:07.019][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
+[2026-03-22 02:10:09.020][DBG] CLongConfigSessionEx::start succ [userid:0][command:2514]
+[2026-03-22 02:10:09.066][ERR] [NET_DVR_GetNext] GetNext FAILED, handle=0
+[2026-03-22 02:10:09.066][ERR] [DoRealRecvEx] select return 1, socket=-1, sys_err=0
