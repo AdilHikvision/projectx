@@ -21,7 +21,7 @@ export function ForgotPasswordPage() {
     setError(null)
     setSuccess(null)
     if (!email?.trim()) {
-      setError('Введите email.')
+      setError('Enter your email.')
       return
     }
     startLoading()
@@ -38,7 +38,7 @@ export function ForgotPasswordPage() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Ошибка при запросе восстановления.')
+      setError(msg || 'Password reset request failed.')
     } finally {
       stopLoading()
     }
@@ -57,8 +57,8 @@ export function ForgotPasswordPage() {
               <span className="material-symbols-outlined text-3xl">lock_reset</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Восстановление пароля</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Введите email для получения ссылки</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Reset password</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Enter your email to receive a link</p>
             </div>
           </div>
 
@@ -69,7 +69,7 @@ export function ForgotPasswordPage() {
               </div>
               <Link to="/login" className="block">
                 <Button fullWidth size="lg" className="rounded-2xl font-black uppercase tracking-widest h-12">
-                  Вернуться к входу
+                  Back to sign in
                 </Button>
               </Link>
             </div>
@@ -106,14 +106,14 @@ export function ForgotPasswordPage() {
                 size="lg"
                 className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
               >
-                Отправить
+                Send
               </Button>
             </form>
           )}
 
           <div className="pt-4 text-center">
             <Link to="/login" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              ← Вернуться к входу
+              ← Back to sign in
             </Link>
           </div>
         </div>

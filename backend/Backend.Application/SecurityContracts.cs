@@ -5,8 +5,10 @@ public static class SystemRoles
     public const string Admin = "Admin";
     public const string SecurityOperator = "SecurityOperator";
     public const string HrOperator = "HrOperator";
+    /// <summary>Роль для сотрудников, использующих портал самообслуживания.</summary>
+    public const string Employee = "Employee";
 
-    public static IReadOnlyCollection<string> All => [Admin, SecurityOperator, HrOperator];
+    public static IReadOnlyCollection<string> All => [Admin, SecurityOperator, HrOperator, Employee];
 }
 
 public sealed class JwtOptions

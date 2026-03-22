@@ -269,21 +269,21 @@ export function SystemSettingsPage() {
             </div>
 
             {showCompanyNameModal === 'Single' && (
-                <Modal isOpen title="Название компании" onClose={() => { setShowCompanyNameModal(null); setCompanyNameInput('') }}>
+                <Modal isOpen title="Company name" onClose={() => { setShowCompanyNameModal(null); setCompanyNameInput('') }}>
                     <div className="space-y-4">
-                        <p className="text-xs text-text-light">Введите название компании. Это обязательное поле для режима «Одна компания».</p>
+                        <p className="text-xs text-text-light">Enter the company name. This is required for Single Company mode.</p>
                         <Input
-                            placeholder="Название компании"
+                            placeholder="Company name"
                             value={companyNameInput}
                             onChange={(e) => setCompanyNameInput(e.target.value)}
                             autoFocus
                         />
                         <div className="flex gap-2">
                             <Button fullWidth onClick={handleConfirmModeWithName} isLoading={isSavingMode} disabled={!companyNameInput.trim()}>
-                                Сохранить
+                                Save
                             </Button>
                             <Button fullWidth variant="outline" onClick={() => { setShowCompanyNameModal(null); setCompanyNameInput('') }} disabled={isSavingMode}>
-                                Отмена
+                                Cancel
                             </Button>
                         </div>
                     </div>

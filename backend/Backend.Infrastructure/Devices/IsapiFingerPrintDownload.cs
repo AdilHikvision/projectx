@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -54,4 +55,78 @@ public static class IsapiFingerPrintDownload
         [JsonPropertyName("enableCardReader")]
         public int[] EnableCardReader { get; set; } = [1];
     }
+
+    /// <summary>
+    /// Приоритетные тела для PUT FingerPrint/Delete: устройство явно требует корень FingerPrintDelete.
+    /// (MessageParametersLack: required node does not exist.FingerPrintDelete)
+    /// </summary>
+    public static IReadOnlyList<string> BuildPrimaryDeleteBodies(string employeeNo, int fingerPrintId)
+    {
+        return
+        [
+            // Минимальный вариант — только employeeNo + fingerPrintID.
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["FingerPrintDelete"] = new Dictionary<string, object?>
+                    {
+                        ["employeeNo"] = employeeNo,
+                        ["fingerPrintID"] = fingerPrintId,
+                    },
+                },
+                SerializerOptions),
+
+            // С enableCardReader — некоторые прошивки требуют указать считыватель.
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["FingerPrintDelete"] = new Dictionary<string, object?>
+                    {
+                        ["employeeNo"] = employeeNo,
+                        ["fingerPrintID"] = fingerPrintId,
+                        ["enableCardReader"] = new[] { 1 },
+                    },
+                },
+                SerializerOptions),
+        ];
+    }
+
+    /// <summary>
+    /// Загрузка готового шаблона на терминал. По доке Hikvision Pro/Value:
+    /// POST <c>FingerPrint/SetUp</c> применяет отпечаток (новый или замена);
+    /// <c>FingerPrintDownload</c> только «добавление» — при уже существующем пальце или других учётных данных часто ошибка.
+    /// </summary>
+    public static async Task<(bool Success, string? Error)> TryUploadTemplateAsync(
+        IsapiClient client,
+        string jsonBody,
+        CancellationToken cancellationToken = default)
+    {
+        string? lastError = null;
+        foreach (var path in UploadEndpointOrder)
+        {
+            var (success, content, error) = await client.PostJsonAsync(path, jsonBody, cancellationToken);
+            if (!success)
+            {
+                lastError = error;
+                continue;
+            }
+            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } failMsg)
+            {
+                lastError = failMsg;
+                continue;
+            }
+            return (true, null);
+        }
+
+        return (false, lastError);
+    }
+
+    /// <summary>Порядок: SetUp (универсальный), затем Download и альтернативный путь.</summary>
+    private static readonly string[] UploadEndpointOrder =
+    [
+        "ISAPI/AccessControl/FingerPrint/SetUp?format=json",
+        "ISAPI/AccessControl/FingerPrintDownload?format=json",
+        "ISAPI/AccessControl/FingerPrintCfg/Download?format=json",
+    ];
+
 }

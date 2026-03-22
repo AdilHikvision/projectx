@@ -100,12 +100,13 @@ public sealed class IsapiClient
         string? contentType = null,
         CancellationToken cancellationToken = default)
     {
-        HttpContent? content = null;
-        if (body != null && contentType != null)
-            content = new StringContent(body, Encoding.UTF8, contentType);
         string? lastError = null;
         foreach (var port in _ports)
         {
+            // Новый StringContent на каждый порт: после SendAsync контент запроса освобождается, повторное использование даёт ObjectDisposedException.
+            HttpContent? content = body != null && contentType != null
+                ? new StringContent(body, Encoding.UTF8, contentType)
+                : null;
             var (success, c, error, isAuthError) = await TryRequestAsync(port, path, HttpMethod.Delete, content, cancellationToken);
             if (success) return (true, c, null);
             if (isAuthError) return (false, null, error);

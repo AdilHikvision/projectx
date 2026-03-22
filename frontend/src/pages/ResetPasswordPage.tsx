@@ -18,19 +18,19 @@ export function ResetPasswordPage() {
     e.preventDefault()
     setError(null)
     if (!email?.trim()) {
-      setError('Введите email.')
+      setError('Enter your email.')
       return
     }
     if (!token?.trim()) {
-      setError('Введите токен восстановления.')
+      setError('Enter the reset token.')
       return
     }
     if (password !== confirmPassword) {
-      setError('Пароли не совпадают.')
+      setError('Passwords do not match.')
       return
     }
     if (password.length < 8) {
-      setError('Пароль должен быть не менее 8 символов.')
+      setError('Password must be at least 8 characters.')
       return
     }
     startLoading()
@@ -47,7 +47,7 @@ export function ResetPasswordPage() {
       setSuccess(true)
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Ошибка при сбросе пароля.')
+      setError(msg || 'Password reset failed.')
     } finally {
       stopLoading()
     }
@@ -66,13 +66,13 @@ export function ResetPasswordPage() {
                 <span className="material-symbols-outlined text-3xl">check_circle</span>
               </div>
               <div className="space-y-1">
-                <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Пароль изменён</h1>
-                <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Теперь вы можете войти с новым паролем</p>
+                <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Password updated</h1>
+                <p className="text-text-light text-[10px] font-black uppercase tracking-widest">You can now sign in with your new password</p>
               </div>
             </div>
             <Link to="/login" className="block">
               <Button fullWidth size="lg" className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20">
-                Войти
+                Sign in
               </Button>
             </Link>
           </div>
@@ -94,8 +94,8 @@ export function ResetPasswordPage() {
               <span className="material-symbols-outlined text-3xl">key</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Новый пароль</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Введите токен и новый пароль</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">New password</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Enter the token and your new password</p>
             </div>
           </div>
 
@@ -123,10 +123,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Токен восстановления</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Reset token</label>
                 <Input
                   type="text"
-                  placeholder="Вставьте токен из письма"
+                  placeholder="Paste token from email"
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full font-mono text-xs"
@@ -135,10 +135,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Новый пароль</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">New password</label>
                 <Input
                   type="password"
-                  placeholder="Минимум 8 символов"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full"
@@ -148,10 +148,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Подтвердите пароль</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Confirm password</label>
                 <Input
                   type="password"
-                  placeholder="Повторите пароль"
+                  placeholder="Repeat password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full"
@@ -168,17 +168,17 @@ export function ResetPasswordPage() {
               size="lg"
               className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
             >
-              Сбросить пароль
+              Reset password
             </Button>
           </form>
 
           <div className="pt-4 text-center">
             <Link to="/forgot-password" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              Запросить новый токен
+              Request new token
             </Link>
             <span className="text-text-light/50 mx-2">|</span>
             <Link to="/login" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              Вернуться к входу
+              Back to sign in
             </Link>
           </div>
         </div>

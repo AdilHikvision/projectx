@@ -30,6 +30,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Card> Cards => Set<Card>();
     public DbSet<Face> Faces => Set<Face>();
     public DbSet<Fingerprint> Fingerprints => Set<Fingerprint>();
+    public DbSet<WorkSchedule> WorkSchedules => Set<WorkSchedule>();
+    public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
+    public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -99,9 +102,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.EmployeeNo).HasMaxLength(32);
             entity.Property(x => x.Gender).HasMaxLength(16);
+            entity.Property(x => x.SelfServiceEmail).HasMaxLength(256);
             entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
+            entity.HasIndex(x => x.SelfServiceEmail).IsUnique().HasFilter("\"SelfServiceEmail\" IS NOT NULL");
             entity.HasOne(x => x.Department).WithMany(x => x.Employees).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.Company).WithMany(x => x.Employees).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.WorkSchedule).WithMany(x => x.Employees).HasForeignKey(x => x.WorkScheduleId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<Visitor>(entity =>
@@ -180,6 +186,36 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Employee).WithMany(x => x.Fingerprints).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Fingerprints).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
             entity.HasCheckConstraint("CK_Fingerprints_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+        });
+
+        builder.Entity<WorkSchedule>(entity =>
+        {
+            entity.ToTable("work_schedules");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Type).HasConversion<int>().IsRequired();
+            entity.Property(x => x.RequiredHoursPerDay).HasPrecision(5, 2);
+        });
+
+        builder.Entity<AttendanceRecord>(entity =>
+        {
+            entity.ToTable("attendance_records");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EventType).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Source).HasMaxLength(32).IsRequired();
+            entity.HasOne(x => x.Employee).WithMany(x => x.AttendanceRecords).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.EmployeeId, x.EventTimeUtc }).IsUnique();
+        });
+
+        builder.Entity<AttendanceRequest>(entity =>
+        {
+            entity.ToTable("attendance_requests");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Comment).HasMaxLength(1000);
+            entity.Property(x => x.ReviewComment).HasMaxLength(1000);
+            entity.HasOne(x => x.Employee).WithMany(x => x.AttendanceRequests).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

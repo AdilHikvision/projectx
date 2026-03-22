@@ -203,14 +203,13 @@ public sealed class DeviceFingerprintCaptureService(
             fpId = fp.Id;
         }
 
-        // Upload fingerprint to device via FingerPrintDownload (enableCardReader обязателен на прошивке)
+        // SetUp → Download: второй и следующие пальцы без SetUp часто не принимаются (см. ISAPI Pro 9.12.2.3 / 9.12.2.4)
         var downloadBody = IsapiFingerPrintDownload.BuildJson(session.EmployeeNo, session.FingerIndex, fingerData.Trim());
-        var (dlOk, _, dlErr) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/FingerPrintDownload?format=json", downloadBody, ct);
+        var (dlOk, dlErr) = await IsapiFingerPrintDownload.TryUploadTemplateAsync(client, downloadBody, ct);
         if (!dlOk)
-            logger.LogWarning("[CaptureFP] FingerPrintDownload failed: {Err}. Fingerprint saved to DB only.", dlErr);
+            logger.LogWarning("[CaptureFP] Fingerprint template upload failed: {Err}. Fingerprint saved to DB only.", dlErr);
         else
-            logger.LogInformation("[CaptureFP] FingerPrintDownload OK for {EmpNo} finger={Idx}", session.EmployeeNo, session.FingerIndex);
+            logger.LogInformation("[CaptureFP] Fingerprint template OK for {EmpNo} finger={Idx}", session.EmployeeNo, session.FingerIndex);
 
         session.Status = "completed";
         session.Message = "Отпечаток успешно захвачен.";

@@ -9,4 +9,7 @@ public sealed class ApplicationUser : IdentityUser<Guid>
 
     /// <summary>При первом запуске, если admin создан без пароля — требуется задать пароль.</summary>
     public bool RequiresPasswordSetup { get; set; }
+
+    /// <summary>Связь с сотрудником для роли Employee (портал самообслуживания).</summary>
+    public Guid? EmployeeId { get; set; }
 }

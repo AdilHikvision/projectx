@@ -34,6 +34,34 @@ public sealed class DevicePersonSyncService(
         return s.Length > 32 ? s[..32] : s;
     }
 
+    /// <summary>Лог тела запроса и ответа устройства при удалении отпечатка (отладка ISAPI).</summary>
+    private void LogDeleteFingerprintExchange(
+        string stage,
+        string httpMethod,
+        string path,
+        string requestBody,
+        bool httpSuccess,
+        string? responseBody,
+        string? transportError)
+    {
+        const int max = 8192;
+        static string Trim(string? s, int m)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Length <= m ? s : s[..m] + "…(truncated)";
+        }
+
+        logger.LogInformation(
+            "[DeleteFP] {Stage} {Method} {Path} httpOk={HttpOk} transportErr={TransportErr} request={Request} response={Response}",
+            stage,
+            httpMethod,
+            path,
+            httpSuccess,
+            transportError ?? "-",
+            Trim(requestBody, max),
+            Trim(responseBody, max));
+    }
+
     public async Task<DeviceSyncResult> SyncEmployeeAsync(Guid employeeId, Guid deviceId, CancellationToken cancellationToken = default)
     {
         var employee = await dbContext.Employees
@@ -126,10 +154,7 @@ public sealed class DevicePersonSyncService(
         });
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/CardInfo/Record?format=json",
-            body,
-            cancellationToken);
+        var (success, error) = await TrySyncCardInfoAsync(client, body, cancellationToken);
 
         if (!success)
         {
@@ -138,6 +163,42 @@ public sealed class DevicePersonSyncService(
         }
         return new DeviceSyncResult(true, null);
     }
+
+    /// <summary>
+    /// Hikvision: PUT CardInfo/SetUp применяет карту (добавление или правка). POST Record только для новой карты и часто
+    /// даёт cardNoAlreadyExist/checkEmployeeNo, если у пользователя уже есть другая карта или отпечаток.
+    /// </summary>
+    private async Task<(bool Success, string? Error)> TrySyncCardInfoAsync(IsapiClient client, string body, CancellationToken cancellationToken)
+    {
+        var (success, _, error) = await client.PutJsonAsync(
+            "ISAPI/AccessControl/CardInfo/SetUp?format=json",
+            body,
+            cancellationToken);
+        if (success) return (true, null);
+
+        (success, _, error) = await client.PostJsonAsync(
+            "ISAPI/AccessControl/CardInfo/Record?format=json",
+            body,
+            cancellationToken);
+        if (success) return (true, null);
+
+        if (error != null && IsCardInfoRetryableConflict(error))
+        {
+            logger.LogDebug("CardInfo Record failed ({Error}), retrying with Modify", error);
+            (success, _, error) = await client.PutJsonAsync(
+                "ISAPI/AccessControl/CardInfo/Modify?format=json",
+                body,
+                cancellationToken);
+            if (success) return (true, null);
+        }
+
+        return (false, error);
+    }
+
+    private static bool IsCardInfoRetryableConflict(string error) =>
+        error.Contains("cardNoAlreadyExist", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("checkEmployeeNo", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase);
 
     public async Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default)
     {
@@ -279,10 +340,7 @@ public sealed class DevicePersonSyncService(
             Convert.ToBase64String(fp.TemplateData));
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/FingerPrintDownload?format=json",
-            body,
-            cancellationToken);
+        var (success, error) = await IsapiFingerPrintDownload.TryUploadTemplateAsync(client, body, cancellationToken);
 
         if (!success)
         {
@@ -292,19 +350,36 @@ public sealed class DevicePersonSyncService(
         return new DeviceSyncResult(true, null);
     }
 
-    public async Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, string? employeeNo = null, CancellationToken cancellationToken = default)
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var body = JsonSerializer.Serialize(new { CardInfo = new { cardNo } });
         var client = CreateClient(device);
         var path = "ISAPI/AccessControl/CardInfo/Delete?format=json";
-        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
-        if (success) return new DeviceSyncResult(true, null);
-        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
-        return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+
+        var bodies = new List<string>
+        {
+            JsonSerializer.Serialize(new { CardInfo = new { cardNo } }),
+        };
+        if (!string.IsNullOrWhiteSpace(employeeNo))
+            bodies.Add(JsonSerializer.Serialize(new { CardInfo = new { cardNo, employeeNo } }));
+
+        string? lastError = null;
+        foreach (var body in bodies)
+        {
+            // Документация Pro/Value: удаление карт — PUT; POST — запасной вариант.
+            var (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+            (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+
+        logger.LogWarning("DeleteCardFromDevice cardNo={CardNo} device={Device}: {Error}", cardNo, device.Name, lastError);
+        return new DeviceSyncResult(false, lastError);
     }
 
     public async Task<DeviceSyncResult> DeleteFaceFromDeviceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default)
@@ -342,22 +417,385 @@ public sealed class DevicePersonSyncService(
         return new DeviceSyncResult(false, error ?? "Ошибка удаления лица с устройства.");
     }
 
-    public async Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(string employeeNo, int fingerIndex, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default)
     {
+        var fp = await dbContext.Fingerprints
+            .Include(f => f.Employee)!.ThenInclude(e => e!.AccessLevels).ThenInclude(a => a.AccessLevel)!.ThenInclude(al => al!.Doors)
+            .Include(f => f.Visitor)!.ThenInclude(v => v!.AccessLevels).ThenInclude(a => a.AccessLevel)!.ThenInclude(al => al!.Doors)
+            .FirstOrDefaultAsync(f => f.Id == fingerprintId, cancellationToken);
+        if (fp is null)
+            return new DeviceSyncResult(false, "Отпечаток не найден.");
+
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var body = JsonSerializer.Serialize(new
-        {
-            FingerPrint = new { employeeNo, fingerPrintIndex = fingerIndex }
-        });
+        var employeeNo = fp.Employee != null
+            ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
+            : TruncateEmployeeNo(GetEmployeeNo(fp.Visitor!));
+        var fingerIndex = fp.FingerIndex;
+
         var client = CreateClient(device);
-        var path = "ISAPI/AccessControl/FingerPrint/Delete?format=json";
-        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
-        if (success) return new DeviceSyncResult(true, null);
-        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
-        return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+
+        // Устройство требует корень FingerPrintDelete на пути FingerPrint/Delete.
+        // (MessageParametersLack: required node does not exist.FingerPrintDelete)
+        // FingerPrintCfg/* — notSupport; XML на FingerPrint/Delete — badJsonFormat; пустое тело — MessageParametersLack.
+        var deletePath = "ISAPI/AccessControl/FingerPrint/Delete?format=json";
+        var primaryBodies = IsapiFingerPrintDownload.BuildPrimaryDeleteBodies(employeeNo, fingerIndex);
+        var queryPath =
+            $"ISAPI/AccessControl/FingerPrint/Delete?format=json&employeeNo={Uri.EscapeDataString(employeeNo)}&fingerPrintID={fingerIndex}";
+
+        string? lastError = null;
+
+        bool TryHandleDeleteResponse(string? content, ref string? errSlot)
+        {
+            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } isapiErr)
+            {
+                errSlot = isapiErr;
+                logger.LogDebug("Fingerprint delete rejected by device {Device}: {Err}", device.Name, isapiErr);
+                return false;
+            }
+
+            if (!IsapiJsonStatus.HasExplicitSuccess(content))
+            {
+                errSlot = "Нет подтверждения ISAPI (statusCode=1) в ответе на удаление.";
+                return false;
+            }
+
+            return true;
+        }
+
+        async Task<DeviceSyncResult?> TryPathAndBodyAsync(string path, string body)
+        {
+            var (success, content, error) = await client.PutJsonAsync(path, body, cancellationToken);
+            LogDeleteFingerprintExchange("FingerPrintDelete", "PUT", path, body, success, content, error);
+            if (!success)
+            {
+                (success, content, error) = await client.PostJsonAsync(path, body, cancellationToken);
+                LogDeleteFingerprintExchange("FingerPrintDelete", "POST", path, body, success, content, error);
+            }
+
+            if (!success)
+            {
+                (success, content, error) = await client.DeleteAsync(path, body, "application/json", cancellationToken);
+                LogDeleteFingerprintExchange("FingerPrintDelete", "DELETE", path, body, success, content, error);
+            }
+
+            if (!success)
+            {
+                lastError = error;
+                return null;
+            }
+
+            if (!TryHandleDeleteResponse(content, ref lastError))
+                return null;
+
+            var waitErr = await WaitFingerprintDeleteProcessAsync(client, cancellationToken);
+            if (waitErr != null)
+            {
+                logger.LogWarning("Fingerprint delete process failed on {Device}: {Err}", device.Name, waitErr);
+                lastError = waitErr;
+                return null;
+            }
+
+            return new DeviceSyncResult(true, null);
+        }
+
+        // Шаг 1: PUT FingerPrint/Delete с корнем FingerPrintDelete (подтверждено логами устройства).
+        foreach (var body in primaryBodies)
+        {
+            var done = await TryPathAndBodyAsync(deletePath, body);
+            if (done != null)
+                return done;
+        }
+
+        // Шаг 2: те же тела через POST (некоторые прошивки не принимают PUT).
+        foreach (var body in primaryBodies)
+        {
+            var (success, content, error) = await client.PostJsonAsync(deletePath, body, cancellationToken);
+            LogDeleteFingerprintExchange("FingerPrintDelete", "POST", deletePath, body, success, content, error);
+            if (success && TryHandleDeleteResponse(content, ref lastError))
+            {
+                var we = await WaitFingerprintDeleteProcessAsync(client, cancellationToken);
+                if (we == null)
+                    return new DeviceSyncResult(true, null);
+                lastError = we;
+            }
+        }
+
+        // Шаг 3: параметры в query + тело FingerPrintDelete (запасной вариант).
+        {
+            var done = await TryPathAndBodyAsync(queryPath, primaryBodies[0]);
+            if (done != null)
+                return done;
+        }
+
+        // Шаг 4: fallback — UserInfo/Modify + FPInfo (работает на устройстве, но удаляет запись, не шаблон).
+        var fullInfo = await TryDeleteFingerprintViaFullUserInfoAsync(device, fp.Employee, fp.Visitor, fingerIndex, cancellationToken);
+        if (fullInfo != null)
+            return fullInfo;
+
+        logger.LogWarning("DeleteFingerprintFromDevice emp={EmpNo} idx={Idx} device={Device}: {Error}", employeeNo, fingerIndex, device.Name, lastError);
+        return new DeviceSyncResult(false, lastError);
+    }
+
+    /// <summary>Удаление отпечатка через UserInfo Record/Modify с полем FPInfo (схема Ultra/Pro API Reference).</summary>
+    private async Task<DeviceSyncResult?> TryDeleteFingerprintViaFullUserInfoAsync(
+        Device device,
+        Employee? employee,
+        Visitor? visitor,
+        int fingerIndex,
+        CancellationToken cancellationToken)
+    {
+        if (employee == null && visitor == null)
+            return null;
+
+        string employeeNo;
+        string name;
+        int userType;
+        int[] doorRight;
+        string userCategory;
+        var onlyVerify = false;
+        string? gender = null;
+        DateTime? validFromUtc = null;
+        DateTime? validToUtc = null;
+
+        if (employee != null)
+        {
+            employeeNo = TruncateEmployeeNo(GetEmployeeNo(employee));
+            name = $"{employee.FirstName} {employee.LastName}".Trim();
+            doorRight = GetDoorRightForDevice(employee.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, device.Id);
+            (userType, userCategory) = employee.IsActive ? (1, "normal") : (3, "blackList");
+            gender = employee.Gender;
+            onlyVerify = employee.OnlyVerify;
+            validFromUtc = employee.ValidFromUtc;
+            validToUtc = employee.ValidToUtc;
+        }
+        else
+        {
+            employeeNo = GetEmployeeNo(visitor!);
+            name = $"{visitor!.FirstName} {visitor.LastName}".Trim();
+            doorRight = GetDoorRightForDevice(visitor!.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, device.Id);
+            (userType, userCategory) = visitor.IsActive ? (2, "visitor") : (3, "blackList");
+            validFromUtc = visitor.ValidFromUtc;
+            validToUtc = visitor.ValidToUtc;
+        }
+
+        var parts = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var givenName = parts.Length > 0 ? parts[0] : name;
+        var familyName = parts.Length > 1 ? parts[1] : (parts.Length == 1 ? parts[0] : "");
+
+        var doorNoList = doorRight.Length > 0
+            ? doorRight.Select(i => i + 1).ToList()
+            : new List<int> { 1 };
+
+        var genderValue = string.IsNullOrWhiteSpace(gender) ? "unknown" : gender.Trim().ToLowerInvariant();
+        if (genderValue is not ("male" or "female"))
+            genderValue = "unknown";
+
+        var tz = GetTimeZone();
+        var todayUtc = DateTime.UtcNow.Date;
+        var defaultEndUtc = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+        var fromUtc = validFromUtc ?? todayUtc;
+        var toUtc = validToUtc ?? defaultEndUtc;
+        var beginTime = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
+        var endTime = TimeZoneInfo.ConvertTimeFromUtc(toUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
+
+        var doorRightStr = string.Join(",", doorNoList);
+        var rightPlan = doorNoList.Select(d => new { doorNo = d, planTemplateNo = "1" }).ToArray();
+
+        object[] fpInfoVariants =
+        [
+            new { deleteAllFP = false, List = new[] { new { fingerID = fingerIndex, deleteFP = true } } },
+            new { deleteAllFP = false, List = new[] { new { fingerPrintID = fingerIndex, deleteFP = true } } },
+            new { deleteAllFP = false, List = new[] { new { fingerID = fingerIndex, fingerPrintID = fingerIndex, deleteFP = true, enableCardReaderNo = 1 } } },
+        ];
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var isapiClient = CreateClient(device);
+
+        foreach (var fpInfoObj in fpInfoVariants)
+        {
+            var userInfo = new
+            {
+                employeeNo,
+                no = employeeNo,
+                name,
+                type = userType,
+                userType = userCategory,
+                givenName,
+                familyName,
+                gender = genderValue,
+                doorRight = doorRightStr,
+                RightPlan = rightPlan,
+                onlyVerify,
+                localUIRight = false,
+                maxOpenDoorTime = 0,
+                userVerifyMode = "",
+                password = "",
+                telNo = "",
+                email = "",
+                Valid = new { enable = true, beginTime, endTime, timeType = "local" },
+                FPInfo = fpInfoObj,
+            };
+
+            var body = JsonSerializer.Serialize(new { UserInfo = userInfo }, jsonOptions);
+
+            var (ok, err) = await TryPushUserInfoFingerprintDeleteAsync(isapiClient, body, cancellationToken);
+            if (ok)
+            {
+                logger.LogInformation(
+                    "DeleteFingerprint: {Device} — UserInfo Record/Modify + FPInfo (emp={EmpNo}, idx={Idx})",
+                    device.Name, employeeNo, fingerIndex);
+                return new DeviceSyncResult(true, null);
+            }
+
+            logger.LogDebug("DeleteFingerprint FPInfo variant failed on {Device}: {Err}", device.Name, err);
+        }
+
+        return null;
+    }
+
+    /// <summary>Record, затем Modify; успех только при statusCode=1 в ответе.</summary>
+    private async Task<(bool Ok, string? Error)> TryPushUserInfoFingerprintDeleteAsync(IsapiClient client, string body, CancellationToken cancellationToken)
+    {
+        bool OkContent(string? c) =>
+            IsapiJsonStatus.GetErrorMessageIfFailed(c) is null && IsapiJsonStatus.HasExplicitSuccess(c);
+
+        const string pathRecord = "ISAPI/AccessControl/UserInfo/Record?format=json";
+        const string pathModify = "ISAPI/AccessControl/UserInfo/Modify?format=json";
+
+        var (success, content, error) = await client.PostJsonAsync(pathRecord, body, cancellationToken);
+        LogDeleteFingerprintExchange("UserInfo+FPInfo-delete", "POST", pathRecord, body, success, content, error);
+
+        if (success && OkContent(content))
+            return (true, null);
+
+        (success, content, error) = await client.PutJsonAsync(pathModify, body, cancellationToken);
+        LogDeleteFingerprintExchange("UserInfo+FPInfo-delete", "PUT", pathModify, body, success, content, error);
+
+        if (success && OkContent(content))
+            return (true, null);
+
+        var msg = IsapiJsonStatus.GetErrorMessageIfFailed(content)
+                  ?? error
+                  ?? "UserInfo Record/Modify: нет подтверждения ISAPI (statusCode=1).";
+        return (false, msg);
+    }
+
+    /// <summary>Ожидание завершения асинхронного удаления отпечатка (GET FingerPrint/DeleteProcess).</summary>
+    private async Task<string?> WaitFingerprintDeleteProcessAsync(IsapiClient client, CancellationToken cancellationToken)
+    {
+        const string progressPath = "ISAPI/AccessControl/FingerPrint/DeleteProcess?format=json";
+        const int maxAttempts = 35;
+
+        // Один раз: если API прогресса нет (404) — удаление считается синхронным, не помечаем успехом из-за сетевых сбоев.
+        var (probeOk, probeContent, probeErr) = await client.GetAsync(progressPath, cancellationToken);
+        LogDeleteFingerprintExchange("FingerPrint/DeleteProcess-probe", "GET", progressPath, "", probeOk, probeContent, probeErr);
+        if (!probeOk && probeErr != null && (probeErr.Contains("404", StringComparison.Ordinal) || probeErr.Contains("не найден", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var loggedFirstPoll = false;
+        string? lastPollContent = null;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var (ok, content, pollErr) = await client.GetAsync(progressPath, cancellationToken);
+            if (ok && !string.IsNullOrWhiteSpace(content))
+                lastPollContent = content;
+            if (ok && !string.IsNullOrWhiteSpace(content) && !loggedFirstPoll)
+            {
+                LogDeleteFingerprintExchange("FingerPrint/DeleteProcess", "GET", progressPath, "", true, content, pollErr);
+                loggedFirstPoll = true;
+            }
+
+            if (!ok)
+            {
+                await Task.Delay(400, cancellationToken);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                await Task.Delay(400, cancellationToken);
+                continue;
+            }
+
+            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } rootFail)
+            {
+                LogDeleteFingerprintExchange("FingerPrint/DeleteProcess-fail", "GET", progressPath, "", true, content, rootFail);
+                return rootFail;
+            }
+
+            if (IsapiJsonStatus.HasExplicitSuccess(content))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                if (TryGetFingerprintDeleteProcess(root, out var proc))
+                {
+                    var status = GetJsonStringProperty(proc, "status", "Status");
+                    if (!string.IsNullOrEmpty(status))
+                    {
+                        if (status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                            status.Contains("error", StringComparison.OrdinalIgnoreCase))
+                            return content.Length > 400 ? content[..400] : content;
+                        if (status.Contains("complete", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
+                            return null;
+                    }
+
+                    if (proc.TryGetProperty("percent", out var pctEl) && pctEl.TryGetInt32(out var pct) && pct >= 100)
+                        return null;
+                }
+            }
+            catch (JsonException)
+            {
+                /* не JSON */
+            }
+
+            await Task.Delay(450, cancellationToken);
+        }
+
+        LogDeleteFingerprintExchange(
+            "FingerPrint/DeleteProcess-timeout",
+            "GET",
+            progressPath,
+            "",
+            !string.IsNullOrEmpty(lastPollContent),
+            lastPollContent,
+            "Таймаут ожидания DeleteProcess");
+        return "Таймаут: нет подтверждения завершения удаления (FingerPrint/DeleteProcess).";
+    }
+
+    private static bool TryGetFingerprintDeleteProcess(JsonElement root, out JsonElement proc)
+    {
+        proc = default;
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+        ReadOnlySpan<string> names =
+        [
+            "FingerPrintDeleteProcess",
+            "fingerPrintDeleteProcess",
+        ];
+        foreach (var name in names)
+        {
+            if (root.TryGetProperty(name, out proc))
+                return true;
+        }
+        return false;
+    }
+
+    private static string? GetJsonStringProperty(JsonElement obj, params string[] propertyNames)
+    {
+        foreach (var n in propertyNames)
+        {
+            if (obj.TryGetProperty(n, out var el) && el.ValueKind == JsonValueKind.String)
+                return el.GetString();
+        }
+        return null;
     }
 
     public async Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default)
