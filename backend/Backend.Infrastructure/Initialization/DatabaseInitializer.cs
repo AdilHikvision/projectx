@@ -3,12 +3,15 @@ using Backend.Infrastructure.Identity;
 using Backend.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Backend.Infrastructure.Initialization;
 
 public sealed class DatabaseInitializer(
     AppDbContext dbContext,
-    RoleManager<IdentityRole<Guid>> roleManager) : IDatabaseInitializer
+    RoleManager<IdentityRole<Guid>> roleManager,
+    UserManager<ApplicationUser> userManager,
+    ILogger<DatabaseInitializer> logger) : IDatabaseInitializer
 {
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -174,5 +177,10 @@ public sealed class DatabaseInitializer(
             }
         }
 
+        // Первый администратор создаётся только вручную через /api/auth/setup-admin-password (страница Initial Setup), не из конфигурации.
+        if (!await userManager.Users.AnyAsync(cancellationToken))
+        {
+            logger.LogInformation("No users in database. Complete initial setup in the UI to create the administrator account.");
+        }
     }
 }

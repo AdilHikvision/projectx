@@ -115,14 +115,14 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Синхронизирует лицо на устройство (FDLib pictureUpload).</summary>
     Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Синхронизирует отпечаток на устройство (FingerPrintDownload).</summary>
+    /// <summary>Синхронизирует отпечаток на устройство (FingerPrint/SetUp с запасом FingerPrintDownload).</summary>
     Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Удаляет карту с устройства.</summary>
-    Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет карту с устройства. employeeNo — person ID на терминале (как при синхронизации), часть прошивок требует в теле Delete.</summary>
+    Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, string? employeeNo = null, CancellationToken cancellationToken = default);
     /// <summary>Удаляет лицо с устройства.</summary>
     Task<DeviceSyncResult> DeleteFaceFromDeviceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Удаляет отпечаток с устройства.</summary>
-    Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(string employeeNo, int fingerIndex, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет отпечаток с устройства (нужен Id записи — подгружается полный UserInfo как при синхронизации).</summary>
+    Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Удаляет пользователя (Person) с устройства по employeeNo.</summary>
     Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
 }

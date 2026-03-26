@@ -10,16 +10,21 @@ using Microsoft.Extensions.Logging;
 
 namespace Backend.Infrastructure.Devices.Services;
 
-/// <summary>Захват карты с устройства Hikvision (CaptureCardData / ReadCard).</summary>
 public sealed class DeviceCardCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
     IConfiguration configuration,
     ILogger<DeviceCardCaptureService> logger) : IDeviceCardCaptureService
 {
-    private static readonly ConcurrentDictionary<Guid, CardCaptureSession> Sessions = new();
+    private static readonly ConcurrentDictionary<Guid, CardSession> Sessions = new();
 
-    private sealed class CardCaptureSession
+    /// <summary>
+    /// Если карта уже сохранена внутри StartCapture (ответ устройства с номером сразу),
+    /// сессии опроса нет — отдаём completed при первом GET progress.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Guid, Guid> PendingCardCaptureComplete = new();
+
+    private sealed class CardSession
     {
         public required string EmployeeNo { get; init; }
         public required Guid PersonId { get; init; }
@@ -38,7 +43,7 @@ public sealed class DeviceCardCaptureService(
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
             if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
-            employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
+            employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
             if (!syncRes.Success) return syncRes;
         }
@@ -46,45 +51,69 @@ public sealed class DeviceCardCaptureService(
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
             if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
-            employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
+            employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
             var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
             if (!syncRes.Success) return syncRes;
         }
 
+        // ISAPI doc: Card Capture is GET /ISAPI/AccessControl/CaptureCardInfo?format=json
+        // It puts device into "waiting for card swipe" mode.
+        // The actual card data comes from polling progress or the same endpoint.
         var client = CreateClient(device);
-        var jsonBody = JsonSerializer.Serialize(new { CaptureCardData = new { employeeNo } });
 
-        var (success, _, error) = await client.PostAsync(
-            "ISAPI/AccessControl/CaptureCardData?format=json",
-            jsonBody,
-            "application/json",
-            cancellationToken);
+        logger.LogInformation("[CaptureCard] Start device={Device} employeeNo={EmpNo}", device.Name, employeeNo);
 
-        if (!success && (error?.Contains("404") == true || error?.Contains("не найден") == true))
+        // Try GET first (documented for terminals)
+        var (ok, content, err) = await client.GetAsync(
+            "ISAPI/AccessControl/CaptureCardInfo?format=json", cancellationToken);
+
+        if (!ok)
         {
-            var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
-            var xmlBody = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureCardData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escaped}</employeeNo></CaptureCardData>""";
-            (success, _, error) = await client.PostAsync(
-                "ISAPI/AccessControl/CaptureCardData?format=xml",
-                xmlBody,
-                "application/xml",
-                cancellationToken);
+            // Fallback: POST CaptureCardInfo (some older devices)
+            var postBody = JsonSerializer.Serialize(new { CaptureCardInfo = new { employeeNo } });
+            (ok, content, err) = await client.PostJsonAsync(
+                "ISAPI/AccessControl/CaptureCardInfo?format=json", postBody, cancellationToken);
         }
 
-        if (!success)
+        if (!ok)
         {
-            logger.LogWarning("CaptureCardData failed for {Device}: {Error}", device.Name, error);
-            return new DeviceSyncResult(false, error ?? "Устройство не поддерживает захват карты. Добавьте карту вручную (введите номер карты).");
+            // Fallback: POST CaptureCardData (legacy name)
+            var postBody2 = JsonSerializer.Serialize(new { CaptureCardData = new { employeeNo } });
+            (ok, content, err) = await client.PostJsonAsync(
+                "ISAPI/AccessControl/CaptureCardData?format=json", postBody2, cancellationToken);
         }
 
-        Sessions[deviceId] = new CardCaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
+        logger.LogInformation("[CaptureCard] result: ok={Ok} err={Err} len={Len}", ok, err ?? "-", content?.Length ?? 0);
+
+        if (!ok)
+        {
+            logger.LogWarning("[CaptureCard] FAILED: {Error}", err);
+            return new DeviceSyncResult(false, err ?? "Устройство не поддерживает захват карты. Добавьте карту вручную.");
+        }
+
+        // Some devices return cardNo immediately in the start response
+        var immediateCard = ExtractCardNo(content);
+        if (!string.IsNullOrWhiteSpace(immediateCard))
+        {
+            var saved = await SaveAndReturnAsync(immediateCard, personId, personType, deviceId, cancellationToken);
+            if (!saved.Success)
+                return new DeviceSyncResult(false, saved.Error);
+            if (saved.CardId.HasValue)
+                PendingCardCaptureComplete[deviceId] = saved.CardId.Value;
+            return new DeviceSyncResult(true, null);
+        }
+
+        Sessions[deviceId] = new CardSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
         return new DeviceSyncResult(true, null);
     }
 
     public async Task<CardCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
+        if (PendingCardCaptureComplete.TryRemove(deviceId, out var pendingCardId))
+            return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", pendingCardId);
+
         if (!Sessions.TryGetValue(deviceId, out var session))
-            return new CardCaptureProgressResult("idle", "Сессия захвата не найдена. Запустите захват.", null);
+            return new CardCaptureProgressResult("idle", "Сессия не найдена. Запустите захват.", null);
 
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
@@ -100,80 +129,122 @@ public sealed class DeviceCardCaptureService(
         }
 
         var client = CreateClient(device);
-        var (success, content, error) = await client.GetAsync("ISAPI/AccessControl/CaptureCardData/Progress?format=json", cancellationToken);
 
-        if (!success)
+        // Poll various possible progress/capture endpoints
+        string? content = null;
+        foreach (var path in new[]
+        {
+            "ISAPI/AccessControl/CaptureCardInfo?format=json",
+            "ISAPI/AccessControl/CaptureCardData/Progress?format=json",
+        })
+        {
+            var (ok, c, _) = await client.GetAsync(path, cancellationToken);
+            if (ok && !string.IsNullOrWhiteSpace(c)) { content = c; break; }
+        }
+
+        if (string.IsNullOrWhiteSpace(content))
             return new CardCaptureProgressResult("capturing", null, null);
 
         try
         {
-            using var doc = JsonDocument.Parse(content ?? "{}");
-            var root = doc.RootElement;
-            string? cardNo = null;
-            string status = "capturing";
-            bool? isCurRequestOver = null;
-
-            foreach (var prop in new[] { "CaptureCardDataProgress", "captureCardDataProgress" })
-            {
-                if (root.TryGetProperty(prop, out var progEl))
-                {
-                    if (progEl.TryGetProperty("cardNo", out var cn)) cardNo = cn.GetString();
-                    if (string.IsNullOrWhiteSpace(cardNo) && progEl.TryGetProperty("CardNo", out var cn2)) cardNo = cn2.GetString();
-                    if (progEl.TryGetProperty("status", out var s)) status = s.GetString() ?? status;
-                    if (progEl.TryGetProperty("Status", out var s2)) status = s2.GetString() ?? status;
-                    if (progEl.TryGetProperty("isCurRequestOver", out var iso) && iso.ValueKind == JsonValueKind.True) isCurRequestOver = true;
-                    if (progEl.TryGetProperty("IsCurRequestOver", out var iso2) && iso2.ValueKind == JsonValueKind.True) isCurRequestOver = true;
-                    break;
-                }
-            }
-
-            if (isCurRequestOver == true && string.IsNullOrWhiteSpace(cardNo))
-            {
-                Sessions.TryRemove(deviceId, out _);
-                return new CardCaptureProgressResult("failed", "Карта не была считана. Приложите карту к считывателю и повторите.", null);
-            }
+            var cardNo = ExtractCardNo(content);
 
             if (!string.IsNullOrWhiteSpace(cardNo))
             {
-                cardNo = cardNo.Trim();
+                Sessions.TryRemove(deviceId, out _);
+
                 var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, cancellationToken);
                 if (exists)
-                {
-                    Sessions.TryRemove(deviceId, out _);
                     return new CardCaptureProgressResult("failed", "Карта с таким номером уже зарегистрирована.", null);
-                }
 
                 var card = new Card
                 {
                     Id = Guid.NewGuid(),
                     EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
                     VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
-                    CardNo = cardNo,
-                    CardNumber = null,
-                    CreatedUtc = DateTime.UtcNow
+                    CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
                 };
                 dbContext.Cards.Add(card);
                 await dbContext.SaveChangesAsync(cancellationToken);
 
-                var syncRes = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
-                if (!syncRes.Success)
-                    logger.LogWarning("Sync card {CardNo} to device after capture: {Message}", cardNo, syncRes.Message);
+                _ = Task.Run(async () =>
+                {
+                    try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
+                    catch { }
+                });
 
-                Sessions.TryRemove(deviceId, out _);
                 return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", card.Id);
             }
 
-            return new CardCaptureProgressResult(status, null, null);
+            // Check isCurRequestOver without card
+            using var doc = JsonDocument.Parse(content);
+            foreach (var prop in new[] { "CaptureCardInfo", "captureCardInfo", "CaptureCardDataProgress", "captureCardDataProgress" })
+            {
+                if (doc.RootElement.TryGetProperty(prop, out var el))
+                {
+                    if (el.TryGetProperty("isCurRequestOver", out var iso) && iso.ValueKind == JsonValueKind.True)
+                    {
+                        Sessions.TryRemove(deviceId, out _);
+                        return new CardCaptureProgressResult("failed", "Карта не была считана. Приложите карту и повторите.", null);
+                    }
+                }
+            }
         }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Parse CaptureCardData Progress");
-        }
+        catch (Exception ex) { logger.LogDebug(ex, "Parse CaptureCard Progress"); }
 
         return new CardCaptureProgressResult("capturing", null, null);
     }
 
-    private static string TruncateEmployeeNo(string s) => string.IsNullOrEmpty(s) ? s : (s.Length > 32 ? s[..32] : s);
+    private static string? ExtractCardNo(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            foreach (var prop in new[] { "CaptureCardInfo", "captureCardInfo", "CaptureCardDataProgress", "captureCardDataProgress", "CardInfo", "cardInfo" })
+            {
+                if (root.TryGetProperty(prop, out var el))
+                {
+                    if (el.TryGetProperty("cardNo", out var cn)) return cn.GetString()?.Trim();
+                    if (el.TryGetProperty("CardNo", out var cn2)) return cn2.GetString()?.Trim();
+                }
+            }
+
+            if (root.TryGetProperty("cardNo", out var topCn)) return topCn.GetString()?.Trim();
+            if (root.TryGetProperty("CardNo", out var topCn2)) return topCn2.GetString()?.Trim();
+        }
+        catch { }
+        return null;
+    }
+
+    private async Task<(bool Success, string? Error, Guid? CardId)> SaveAndReturnAsync(string cardNo, Guid personId, string personType, Guid deviceId, CancellationToken ct)
+    {
+        var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, ct);
+        if (exists)
+            return (false, "Карта с таким номером уже зарегистрирована.", null);
+
+        var card = new Card
+        {
+            Id = Guid.NewGuid(),
+            EmployeeId = personType == "employee" ? personId : null,
+            VisitorId = personType == "visitor" ? personId : null,
+            CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
+        };
+        dbContext.Cards.Add(card);
+        await dbContext.SaveChangesAsync(ct);
+
+        _ = Task.Run(async () =>
+        {
+            try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
+            catch { }
+        });
+
+        return (true, null, card.Id);
+    }
+
+    private static string Truncate(string s) => s.Length > 32 ? s[..32] : s;
 
     private IsapiClient CreateClient(Device device)
     {
@@ -181,8 +252,7 @@ public sealed class DeviceCardCaptureService(
         var password = (configuration["Hikvision:Password"] ?? "").Trim();
         if (string.IsNullOrEmpty(password)) password = "12345";
         return new IsapiClient(
-            device.IpAddress,
-            device.Port,
+            device.IpAddress, device.Port,
             string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
             string.IsNullOrWhiteSpace(device.Password) ? password : device.Password,
             TimeSpan.FromSeconds(20));

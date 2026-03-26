@@ -65,6 +65,7 @@ public static class DependencyInjection
         services.AddSingleton<DeviceArpStatusService>();
         services.AddSingleton<IDeviceArpStatusService>(provider => provider.GetRequiredService<DeviceArpStatusService>());
         services.AddHostedService(provider => provider.GetRequiredService<DeviceArpStatusService>());
+        services.AddHostedService<AttendanceCollectorService>();
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();

@@ -10,7 +10,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Backend.Infrastructure.Devices.Services;
 
-/// <summary>Захват лица с устройства Hikvision через ISAPI CaptureFaceData.</summary>
 public sealed class DeviceFaceCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
@@ -38,7 +37,7 @@ public sealed class DeviceFaceCaptureService(
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
             if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
-            employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
+            employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
             if (!syncRes.Success) return syncRes;
         }
@@ -46,7 +45,7 @@ public sealed class DeviceFaceCaptureService(
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
             if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
-            employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
+            employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
             var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
             if (!syncRes.Success) return syncRes;
         }
@@ -56,73 +55,31 @@ public sealed class DeviceFaceCaptureService(
 
         await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
 
-        var jsonBodyCamel = JsonSerializer.Serialize(new { CaptureFaceData = new { EmployeeNo = employeeNo, FDID = 1 } }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false });
-        var (success, content, error) = await client.PostAsync(
-            "ISAPI/AccessControl/CaptureFaceData?format=json",
-            jsonBodyCamel,
-            "application/json",
-            cancellationToken);
+        // Cancel any previous capture first to avoid "Device Busy"
+        await CancelCaptureAsync(client, cancellationToken);
+
+        var (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+
+        // If "Device Busy" — cancel and retry once
+        if (!success && error != null && error.Contains("deviceBusy", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("[CaptureFace] Device busy, cancelling and retrying...");
+            await CancelCaptureAsync(client, cancellationToken);
+            await Task.Delay(1500, cancellationToken);
+            (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+        }
+
+        logger.LogInformation("[CaptureFace] POST result: success={S} error={E} len={L}",
+            success, error ?? "-", content?.Length ?? 0);
 
         if (!success)
         {
-            var jsonBodyPascal = JsonSerializer.Serialize(new { CaptureFaceData = new { employeeNo, FDID = 1 } });
-            (success, content, error) = await client.PostAsync(
-                "ISAPI/AccessControl/CaptureFaceData?format=json",
-                jsonBodyPascal,
-                "application/json",
-                cancellationToken);
+            logger.LogWarning("[CaptureFace] FAILED: {Error}", error);
+            return new DeviceSyncResult(false, error ?? "Не удалось запустить захват лица.");
         }
 
-        if (!success)
-        {
-            var escaped = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
-            var xmlBody = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escaped}</employeeNo><FDID>1</FDID></CaptureFaceData>""";
-            (success, content, error) = await client.PostAsync(
-                "ISAPI/AccessControl/CaptureFaceData?format=xml",
-                xmlBody,
-                "application/xml; charset=UTF-8",
-                cancellationToken);
-        }
-
-        if (!success)
-        {
-            logger.LogWarning("[CaptureFace] CaptureFaceData FAILED for {Device}: {Error}. Response body: {Content}", device.Name, error, content ?? "(null)");
-            return new DeviceSyncResult(false, error ?? "Ошибка запуска захвата. Устройство может не поддерживать захват с камеры — добавьте лицо с компьютера или веб-камеры.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(content))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(content);
-                if (doc.RootElement.TryGetProperty("statusCode", out var code) && code.TryGetInt32(out var statusCode) && statusCode != 0)
-                {
-                    var msg = doc.RootElement.TryGetProperty("statusString", out var str) ? str.GetString() : null;
-                    var err = $"Устройство вернуло ошибку {statusCode}: {msg ?? "см. документацию Error Code"}.";
-                    logger.LogWarning("CaptureFaceData returned error for {Device}: {Err}", device.Name, err);
-                    return new DeviceSyncResult(false, err);
-                }
-                if (doc.RootElement.TryGetProperty("CaptureFaceData", out var cfd) && cfd.TryGetProperty("statusCode", out var cfdCode) && cfdCode.TryGetInt32(out var cfdStatus) && cfdStatus != 0)
-                {
-                    var msg = cfd.TryGetProperty("statusString", out var s2) ? s2.GetString() : null;
-                    return new DeviceSyncResult(false, $"Устройство вернуло ошибку {cfdStatus}: {msg ?? "см. документацию Error Code"}.");
-                }
-            }
-            catch
-            {
-                if (content.Contains("<statusCode>") && content.Contains("</statusCode>"))
-                {
-                    var start = content.IndexOf("<statusCode>", StringComparison.OrdinalIgnoreCase) + 12;
-                    var end = content.IndexOf("</statusCode>", start, StringComparison.OrdinalIgnoreCase);
-                    if (end > start && int.TryParse(content.AsSpan(start, end - start).Trim(), out var xmlCode) && xmlCode != 0)
-                    {
-                        var err = $"Устройство вернуло ошибку {xmlCode}. Проверьте, что пользователь с employeeNo={employeeNo} синхронизирован на устройство.";
-                        logger.LogWarning("CaptureFaceData XML error for {Device}: {Err}", device.Name, err);
-                        return new DeviceSyncResult(false, err);
-                    }
-                }
-            }
-        }
+        if (ParseStatusCodeError(content) is { } errMsg)
+            return new DeviceSyncResult(false, errMsg);
 
         logger.LogInformation("[CaptureFace] CaptureFaceData OK for {Device}. Response: {Content}", device.Name, (content?.Length ?? 0) > 200 ? content![..200] + "..." : content ?? "(empty)");
 
@@ -149,153 +106,273 @@ public sealed class DeviceFaceCaptureService(
         }
 
         var client = CreateClient(device);
-        var (success, content, error) = await client.GetAsync("ISAPI/AccessControl/CaptureFaceData/Progress?format=json", cancellationToken);
 
-        if (!success)
+        // Try JSON first, then XML (without ?format=json)
+        string? content = null;
+        var (success, c, _) = await client.GetAsync(
+            "ISAPI/AccessControl/CaptureFaceData/Progress?format=json", cancellationToken);
+        if (success && !string.IsNullOrWhiteSpace(c)) content = c;
+
+        if (string.IsNullOrWhiteSpace(content))
         {
-            logger.LogDebug("[CaptureFace] Progress GET failed for {Device}: {Error}. Raw: {Content}", device.Name, error, content ?? "(null)");
-            return new FaceCaptureProgressResult("capturing", null, null, null);
+            (success, c, _) = await client.GetAsync(
+                "ISAPI/AccessControl/CaptureFaceData/Progress", cancellationToken);
+            if (success && !string.IsNullOrWhiteSpace(c)) content = c;
         }
+
+        if (!success || string.IsNullOrWhiteSpace(content))
+            return new FaceCaptureProgressResult("capturing", null, null, null);
+
+        logger.LogDebug("[CaptureFace] Progress raw (first 500): {Raw}",
+            content!.Length > 500 ? content[..500] : content);
 
         try
         {
-            using var doc = JsonDocument.Parse(content ?? "{}");
-            var root = doc.RootElement;
-            var status = "capturing";
             int? progress = null;
+            bool? isOver = null;
+            string? faceB64 = null;
             string? message = null;
-            byte[]? imageData = null;
-            bool? isCurRequestOver = null;
 
-            // Документация: captureProgress (0=не собрано, 100=собрано), isCurRequestOver (true при 0 = провал)
-            static bool TryGetInt(JsonElement el, string[] names, out int value)
+            if (content.TrimStart().StartsWith('<'))
             {
-                foreach (var n in names)
-                    if (el.TryGetProperty(n, out var p) && p.TryGetInt32(out value)) return true;
-                value = 0;
-                return false;
-            }
-            static bool TryGetBool(JsonElement el, string[] names, out bool value)
-            {
-                value = false;
-                foreach (var n in names)
-                {
-                    if (el.TryGetProperty(n, out var p) && (p.ValueKind == JsonValueKind.True || p.ValueKind == JsonValueKind.False))
-                    {
-                        value = p.GetBoolean();
-                        return true;
-                    }
-                }
-                return false;
-            }
+                // XML response from device
+                var xml = new global::System.Xml.XmlDocument();
+                xml.LoadXml(content);
+                var ns = new global::System.Xml.XmlNamespaceManager(xml.NameTable);
+                ns.AddNamespace("h", "http://www.isapi.org/ver20/XMLSchema");
 
-            foreach (var prop in new[] { "CaptureFaceDataProgress", "captureFaceDataProgress" })
+                string? XPath(string path) =>
+                    xml.SelectSingleNode(path, ns)?.InnerText ??
+                    xml.SelectSingleNode(path.Replace("h:", ""), ns)?.InnerText;
+
+                var progStr = XPath("//h:captureProgress") ?? XPath("//h:CaptureProgress");
+                if (int.TryParse(progStr, out var pv)) progress = pv;
+
+                var overStr = XPath("//h:isCurRequestOver") ?? XPath("//h:IsCurRequestOver");
+                if (bool.TryParse(overStr, out var ov)) isOver = ov;
+
+                faceB64 = XPath("//h:faceData") ?? XPath("//h:FaceData")
+                    ?? XPath("//h:faceURL") ?? XPath("//h:FaceURL")
+                    ?? XPath("//h:faceDataUrl") ?? XPath("//h:FaceDataUrl");
+                message = XPath("//h:message") ?? XPath("//h:Message");
+            }
+            else
             {
-                if (root.TryGetProperty(prop, out var progEl))
+                // JSON
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                foreach (var prop in new[] { "CaptureFaceDataProgress", "captureFaceDataProgress" })
                 {
-                    if (progEl.TryGetProperty("status", out var s)) status = s.GetString() ?? status;
-                    if (progEl.TryGetProperty("Status", out var s2)) status = s2.GetString() ?? status;
-                    if (TryGetInt(progEl, new[] { "captureProgress", "CaptureProgress", "progress", "Progress" }, out var pv)) progress = pv;
-                    if (progEl.TryGetProperty("message", out var m)) message = m.GetString();
-                    if (progEl.TryGetProperty("Message", out var m2)) message = m2.GetString();
-                    if (TryGetBool(progEl, new[] { "isCurRequestOver", "IsCurRequestOver" }, out var iso)) isCurRequestOver = iso;
-                    if (progEl.TryGetProperty("faceData", out var fd) || progEl.TryGetProperty("FaceData", out fd))
-                    {
-                        var b64 = fd.GetString();
-                        if (!string.IsNullOrWhiteSpace(b64))
-                            imageData = Convert.FromBase64String(b64);
-                    }
+                    if (!root.TryGetProperty(prop, out var el)) continue;
+                    progress = TryInt(el, "captureProgress", "CaptureProgress");
+                    isOver = TryBool(el, "isCurRequestOver", "IsCurRequestOver");
+                    faceB64 = TryStr(el, "faceData", "FaceData");
+                    message = TryStr(el, "message", "Message");
                     break;
                 }
             }
 
-            // Документация: captureProgress=0 и isCurRequestOver=true → захват провалился
-            if (progress == 0 && isCurRequestOver == true)
+            if (progress == 0 && isOver == true)
             {
                 Sessions.TryRemove(deviceId, out _);
                 return new FaceCaptureProgressResult("failed", null, message ?? "Захват лица не удался.", null);
             }
 
-            // captureProgress=100 → лицо собрано
-            if (progress == 100)
-            {
-                status = "completed";
-            }
-
-            if (status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+            if (progress == 100 || !string.IsNullOrWhiteSpace(faceB64))
             {
                 Sessions.TryRemove(deviceId, out _);
-                if (imageData != null && imageData.Length > 0)
+                byte[]? imageData = null;
+                if (!string.IsNullOrWhiteSpace(faceB64))
                 {
-                    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+                    if (faceB64.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // URL may have @WEB... suffix — strip it
+                        var downloadUrl = faceB64.Contains('@') ? faceB64[..faceB64.LastIndexOf('@')] : faceB64;
+                        logger.LogInformation("[CaptureFace] Downloading face image from: {Url}", downloadUrl);
+                        try
+                        {
+                            var (dlOk, dlData, dlErr) = await client.GetBytesFromUrlAsync(downloadUrl, cancellationToken);
+                            if (dlOk && dlData is { Length: > 0 })
+                            {
+                                imageData = dlData;
+                            }
+                            else
+                            {
+                                logger.LogWarning("[CaptureFace] Digest download failed ({Err}), trying without auth", dlErr);
+                                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                                imageData = await http.GetByteArrayAsync(downloadUrl, cancellationToken);
+                            }
+                        }
+                        catch (Exception ex) { logger.LogWarning(ex, "Failed to download face from {Url}", downloadUrl); }
+                    }
+                    else
+                    {
+                        try { imageData = Convert.FromBase64String(faceB64); } catch { }
+                    }
+                }
+
+                if (imageData is { Length: > 0 })
+                {
+                    var facesPath = configuration["Storage:FacesPath"]
+                        ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
                     Directory.CreateDirectory(facesPath);
                     var fileName = $"{Guid.NewGuid():N}.jpg";
-                    var filePath = Path.Combine(facesPath, fileName);
-                    await File.WriteAllBytesAsync(filePath, imageData, cancellationToken);
+                    await File.WriteAllBytesAsync(Path.Combine(facesPath, fileName), imageData, cancellationToken);
+
+                    // Remove old faces for this person (keep only one)
+                    var oldFaces = session.PersonType == "employee"
+                        ? await dbContext.Faces.Where(f => f.EmployeeId == session.PersonId).ToListAsync(cancellationToken)
+                        : await dbContext.Faces.Where(f => f.VisitorId == session.PersonId).ToListAsync(cancellationToken);
+                    if (oldFaces.Count > 0)
+                    {
+                        dbContext.Faces.RemoveRange(oldFaces);
+                        // Delete old image files
+                        foreach (var old in oldFaces)
+                        {
+                            try
+                            {
+                                var oldPath = Path.Combine(facesPath, old.FilePath.TrimStart('/', '\\'));
+                                if (File.Exists(oldPath)) File.Delete(oldPath);
+                            }
+                            catch { }
+                        }
+                    }
 
                     var face = new Face
                     {
                         Id = Guid.NewGuid(),
                         EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
                         VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
-                        FilePath = fileName,
-                        FDID = 1,
-                        CreatedUtc = DateTime.UtcNow
+                        FilePath = fileName, FDID = 1, CreatedUtc = DateTime.UtcNow
                     };
                     dbContext.Faces.Add(face);
                     await dbContext.SaveChangesAsync(cancellationToken);
 
-                    return new FaceCaptureProgressResult("completed", 100, "Лицо успешно захвачено.", face.Id);
+                    return new FaceCaptureProgressResult("completed", 100,
+                        "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.",
+                        face.Id);
                 }
-                return new FaceCaptureProgressResult("completed", 100, "Лицо захвачено на устройстве. Изображение не получено — добавьте лицо с компьютера или веб-камеры.", null);
+                return new FaceCaptureProgressResult("completed", 100,
+                    "Лицо захвачено на устройстве. Изображение не получено — добавьте лицо с компьютера.", null);
             }
 
-            if (status.Equals("failed", StringComparison.OrdinalIgnoreCase))
-            {
-                Sessions.TryRemove(deviceId, out _);
-                return new FaceCaptureProgressResult("failed", null, message ?? "Захват не удался.", null);
-            }
-
-            return new FaceCaptureProgressResult(status, progress, message, null);
+            return new FaceCaptureProgressResult("capturing", progress, message, null);
         }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Parse CaptureFaceData Progress");
-        }
+        catch (Exception ex) { logger.LogDebug(ex, "Parse CaptureFaceData Progress"); }
 
         return new FaceCaptureProgressResult("capturing", null, null, null);
     }
 
-    private static string TruncateEmployeeNo(string s)
+    private static string? ParseStatusCodeError(string? json)
     {
-        if (string.IsNullOrEmpty(s)) return s;
-        return s.Length > 32 ? s[..32] : s;
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var r = doc.RootElement;
+            if (TryStatusCode(r, out var code, out var msg) && code != 0)
+                return $"Ошибка устройства {code}: {msg ?? "см. документацию"}";
+            if (r.TryGetProperty("CaptureFaceData", out var inner) && TryStatusCode(inner, out code, out msg) && code != 0)
+                return $"Ошибка устройства {code}: {msg ?? "см. документацию"}";
+        }
+        catch { }
+        return null;
     }
 
-    /// <summary>Убедиться, что на устройстве есть библиотека лиц (FDID=1). Документация: GET/POST /ISAPI/Intelligent/FDLib.</summary>
-    private async Task EnsureFaceLibraryExistsAsync(IsapiClient client, Device device, CancellationToken cancellationToken)
+    private static bool TryStatusCode(JsonElement el, out int code, out string? msg)
     {
-        var (getSuccess, getContent, _) = await client.GetAsync("ISAPI/Intelligent/FDLib?format=json", cancellationToken);
-        if (getSuccess && !string.IsNullOrWhiteSpace(getContent))
+        code = 0; msg = null;
+        if (el.TryGetProperty("statusCode", out var c) && c.TryGetInt32(out code))
+        {
+            msg = el.TryGetProperty("statusString", out var s) ? s.GetString() : null;
+            return true;
+        }
+        return false;
+    }
+
+    private async Task EnsureFaceLibraryExistsAsync(IsapiClient client, Device device, CancellationToken ct)
+    {
+        var (ok, content, _) = await client.GetAsync("ISAPI/Intelligent/FDLib?format=json", ct);
+        if (ok && !string.IsNullOrWhiteSpace(content))
         {
             try
             {
-                using var doc = JsonDocument.Parse(getContent);
-                var root = doc.RootElement;
-                // Ответ может быть FDLib (одна), FDLibList, или список с FDID
-                if (root.TryGetProperty("FDLib", out _) || root.TryGetProperty("FDLibList", out var list) && list.GetArrayLength() > 0)
-                    return;
-                if (root.TryGetProperty("FDID", out _))
+                using var doc = JsonDocument.Parse(content);
+                if (doc.RootElement.TryGetProperty("FDLib", out _) ||
+                    (doc.RootElement.TryGetProperty("FDLibList", out var list) && list.GetArrayLength() > 0) ||
+                    doc.RootElement.TryGetProperty("FDID", out _))
                     return;
             }
-            catch { /* не JSON или другая структура — пробуем создать */ }
+            catch { }
+        }
+        var body = JsonSerializer.Serialize(new { FDLib = new { FDID = 1, faceLibType = "blackFD", name = "default" } });
+        var (_, _, err) = await client.PostJsonAsync("ISAPI/Intelligent/FDLib?format=json", body, ct);
+        if (err != null)
+            logger.LogDebug("FDLib create (optional) failed for {Device}: {Error}", device.Name, err);
+    }
+
+    private static int? TryInt(JsonElement el, params string[] names)
+    {
+        foreach (var n in names)
+            if (el.TryGetProperty(n, out var p) && p.TryGetInt32(out var v)) return v;
+        return null;
+    }
+    private static bool? TryBool(JsonElement el, params string[] names)
+    {
+        foreach (var n in names)
+            if (el.TryGetProperty(n, out var p) && (p.ValueKind is JsonValueKind.True or JsonValueKind.False)) return p.GetBoolean();
+        return null;
+    }
+    private static string? TryStr(JsonElement el, params string[] names)
+    {
+        foreach (var n in names)
+            if (el.TryGetProperty(n, out var p)) return p.GetString();
+        return null;
+    }
+
+    private static string Truncate(string s) => s.Length > 32 ? s[..32] : s;
+
+    private async Task CancelCaptureAsync(IsapiClient client, CancellationToken ct)
+    {
+        try
+        {
+            // DELETE cancels in-progress face capture
+            var (ok, _, err) = await client.DeleteAsync("ISAPI/AccessControl/CaptureFaceData", null, null, ct);
+            logger.LogDebug("[CaptureFace] Cancel: ok={Ok} err={Err}", ok, err ?? "-");
+
+            if (!ok)
+            {
+                // Some firmware accepts PUT with empty body to cancel
+                await client.PutAsync("ISAPI/AccessControl/CaptureFaceData/Cancel",
+                    @"<?xml version=""1.0"" encoding=""UTF-8""?><CancelCaptureCmd version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""/>",
+                    "application/xml", ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[CaptureFace] Cancel exception (non-fatal)");
+        }
+    }
+
+    private async Task<(bool Success, string? Content, string? Error)> StartCaptureFaceAsync(
+        IsapiClient client, string employeeNo, CancellationToken ct)
+    {
+        // DS-K1T342MFX rejects JSON with badXmlFormat — try JSON then XML
+        var jsonBody = JsonSerializer.Serialize(new { CaptureFaceData = new { employeeNo, FDID = 1 } });
+        var (success, content, error) = await client.PostJsonAsync(
+            "ISAPI/AccessControl/CaptureFaceData?format=json", jsonBody, ct);
+        logger.LogInformation("[CaptureFace] JSON attempt: success={S} error={E}", success, error ?? "-");
+
+        if (!success)
+        {
+            var esc = global::System.Security.SecurityElement.Escape(employeeNo);
+            var xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><employeeNo>{esc}</employeeNo><FDID>1</FDID></CaptureFaceDataCond>";
+            (success, content, error) = await client.PostAsync(
+                "ISAPI/AccessControl/CaptureFaceData", xmlBody, "application/xml", ct);
+            logger.LogInformation("[CaptureFace] XML attempt: success={S} error={E}", success, error ?? "-");
         }
 
-        // Пытаемся создать библиотеку по умолчанию (FDID=1, видимый свет)
-        var createBody = JsonSerializer.Serialize(new { FDLib = new { FDID = 1, faceLibType = "blackFD", name = "default" } }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-        var (postSuccess, _, postErr) = await client.PostAsync("ISAPI/Intelligent/FDLib?format=json", createBody, "application/json", cancellationToken);
-        if (!postSuccess)
-            logger.LogDebug("FDLib create (optional) failed for {Device}: {Error}", device.Name, postErr);
+        return (success, content, error);
     }
 
     private IsapiClient CreateClient(Device device)
@@ -304,8 +381,7 @@ public sealed class DeviceFaceCaptureService(
         var password = (configuration["Hikvision:Password"] ?? "").Trim();
         if (string.IsNullOrEmpty(password)) password = "12345";
         return new IsapiClient(
-            device.IpAddress,
-            device.Port,
+            device.IpAddress, device.Port,
             string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
             string.IsNullOrWhiteSpace(device.Password) ? password : device.Password,
             TimeSpan.FromSeconds(20));

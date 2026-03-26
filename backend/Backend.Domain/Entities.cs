@@ -121,10 +121,21 @@ public sealed class Employee : BaseEntity
     public Guid? CompanyId { get; set; }
     public Company? Company { get; set; }
 
+    /// <summary>Расписание работы сотрудника.</summary>
+    public Guid? WorkScheduleId { get; set; }
+    public WorkSchedule? WorkSchedule { get; set; }
+
+    /// <summary>Включён ли портал самообслуживания для сотрудника.</summary>
+    public bool SelfServiceEnabled { get; set; }
+    /// <summary>Email для входа в портал самообслуживания.</summary>
+    public string? SelfServiceEmail { get; set; }
+
     public ICollection<EmployeeAccessLevel> AccessLevels { get; set; } = new List<EmployeeAccessLevel>();
     public ICollection<Card> Cards { get; set; } = new List<Card>();
     public ICollection<Face> Faces { get; set; } = new List<Face>();
     public ICollection<Fingerprint> Fingerprints { get; set; } = new List<Fingerprint>();
+    public ICollection<AttendanceRecord> AttendanceRecords { get; set; } = new List<AttendanceRecord>();
+    public ICollection<AttendanceRequest> AttendanceRequests { get; set; } = new List<AttendanceRequest>();
 }
 
 public sealed class Visitor : BaseEntity
@@ -204,6 +215,56 @@ public sealed class EmployeeAccessLevel
 
     public DateTime GrantedFromUtc { get; set; } = DateTime.UtcNow;
     public DateTime? GrantedToUtc { get; set; }
+}
+
+// ─── Time Attendance ───────────────────────────────────────────────────────────
+
+public enum ScheduleType { Standard, Shift, Flexible }
+
+/// <summary>Расписание работы: стандартное (9–18), сменное или гибкое.</summary>
+public sealed class WorkSchedule : BaseEntity
+{
+    public string Name { get; set; } = "";
+    public ScheduleType Type { get; set; } = ScheduleType.Standard;
+    /// <summary>Начало смены (для Standard и Shift).</summary>
+    public TimeSpan? ShiftStart { get; set; }
+    /// <summary>Конец смены (для Standard и Shift).</summary>
+    public TimeSpan? ShiftEnd { get; set; }
+    /// <summary>Норма часов в день (для Flexible).</summary>
+    public decimal RequiredHoursPerDay { get; set; } = 8;
+    public ICollection<Employee> Employees { get; set; } = [];
+}
+
+public enum AttendanceEventType { In, Out }
+
+/// <summary>Фактическая запись прихода/ухода с устройства или добавленная вручную.</summary>
+public sealed class AttendanceRecord : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public DateTime EventTimeUtc { get; set; }
+    public AttendanceEventType EventType { get; set; }
+    public Guid? DeviceId { get; set; }
+    /// <summary>"device" — с устройства, "manual" — вручную после одобрения заявки.</summary>
+    public string Source { get; set; } = "device";
+}
+
+public enum AttendanceRequestType { CheckIn, CheckOut, Absence, Vacation, Overtime }
+public enum AttendanceRequestStatus { Pending, Approved, Rejected }
+
+/// <summary>Заявка сотрудника: приход/уход/отсутствие/отпуск/переработка.</summary>
+public sealed class AttendanceRequest : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public AttendanceRequestType Type { get; set; }
+    public DateTime RequestedTimeUtc { get; set; }
+    public DateTime? RequestedEndTimeUtc { get; set; }
+    public string? Comment { get; set; }
+    public AttendanceRequestStatus Status { get; set; } = AttendanceRequestStatus.Pending;
+    public Guid? ReviewedByUserId { get; set; }
+    public DateTime? ReviewedAtUtc { get; set; }
+    public string? ReviewComment { get; set; }
 }
 
 public sealed class VisitorAccessLevel

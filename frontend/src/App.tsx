@@ -16,6 +16,7 @@ import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { SystemStatusPage } from './pages/SystemStatusPage'
 import { WorkHoursTrackingPage } from './pages/WorkHoursTrackingPage'
 import { DashboardPage } from './pages/DashboardPage'
+import { SelfServicePage } from './pages/SelfServicePage'
 import './App.css'
 
 import { useAuth } from './auth/AuthContext'
@@ -36,6 +37,10 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+        {/* Self-service portal — independent auth, no ProtectedRoute */}
+        <Route path="/self-service" element={<SelfServicePage />} />
+
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

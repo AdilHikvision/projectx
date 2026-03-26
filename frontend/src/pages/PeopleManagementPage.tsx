@@ -142,7 +142,7 @@ export function PeopleManagementPage() {
   const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
 
-    // В режиме группы компаний, если компания не выбрана - не показываем отделы
+    // In group-of-companies mode, hide departments until a company is selected
     if (companyMode === 'Multiple' && !cId) {
       setDepartments([])
       return
@@ -281,7 +281,7 @@ export function PeopleManagementPage() {
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
     if (Array.isArray(w) && w.length > 0) {
-      setError('Ошибки синхронизации с устройствами:\n' + w.join('\n'))
+      setError('Device synchronization errors:\n' + w.join('\n'))
     }
   }
 
@@ -493,7 +493,7 @@ export function PeopleManagementPage() {
 
           {/* Status filter */}
           <div className="flex flex-wrap items-center gap-4">
-            <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Статус:</span>
+            <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Status:</span>
             {tab === 'employees' ? (
               <>
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -503,7 +503,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, active: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Активен</span>
+                  <span className="text-sm font-bold text-text-dark">Active</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -512,7 +512,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, dismissed: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Уволен</span>
+                  <span className="text-sm font-bold text-text-dark">Terminated</span>
                 </label>
               </>
             ) : (
@@ -524,7 +524,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, active: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Активный</span>
+                  <span className="text-sm font-bold text-text-dark">Active</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -533,7 +533,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, blocked: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Заблокированный</span>
+                  <span className="text-sm font-bold text-text-dark">Blocked</span>
                 </label>
               </>
             )}
@@ -590,7 +590,7 @@ export function PeopleManagementPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant={item.isActive ? 'success' : 'neutral'}>
-                        {item.type === 'employee' ? (item.isActive ? 'Активен' : 'Уволен') : (item.isActive ? 'Активен' : 'Заблокирован')}
+                        {item.type === 'employee' ? (item.isActive ? 'Active' : 'Terminated') : (item.isActive ? 'Active' : 'Blocked')}
                       </Badge>
                       <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
                     </div>
@@ -613,7 +613,7 @@ export function PeopleManagementPage() {
             <>
               {importCompanies.length > 0 && (
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Компания</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Company</label>
                   {importCompanyMode === 'Single' ? (
                     <div className="px-4 py-3 bg-slate-50 rounded-xl text-sm font-bold text-text-dark border border-divider-light">
                       {importCompanies.find((c) => c.id === importCompanyId)?.name ?? importCompanies[0]?.name}
@@ -680,7 +680,7 @@ export function PeopleManagementPage() {
 
       <Modal
         isOpen={!!modalMode}
-        title={tab === 'employees' ? 'Добавить сотрудника' : 'Добавить посетителя'}
+        title={tab === 'employees' ? 'Add employee' : 'Add visitor'}
         onClose={() => setModalMode(null)}
       >
         <div className="space-y-4">
@@ -743,8 +743,8 @@ export function PeopleManagementPage() {
                   className="w-5 h-5 mt-0.5 rounded border-border-light text-primary focus:ring-primary"
                 />
                 <div>
-                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Только учёт рабочего времени</span>
-                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">При включении у работника будет учитываться рабочее время, но дверь открываться не будет.</p>
+                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Time attendance only</span>
+                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">When enabled, attendance is tracked but the door will not unlock.</p>
                 </div>
               </label>
             </>
@@ -773,21 +773,21 @@ export function PeopleManagementPage() {
 
           {companyMode !== 'None' && (
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Компания</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Company</label>
               {companyMode === 'Multiple' ? (
                 <select
                   value={formData.companyId ?? ''}
                   onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
                   className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
                 >
-                  <option value="">— Не выбрана —</option>
+                  <option value="">— Not selected —</option>
                   {companies.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
               ) : (
                 <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
-                  {companies.find(c => c.id === formData.companyId)?.name || 'Основная компания'}
+                  {companies.find(c => c.id === formData.companyId)?.name || 'Primary company'}
                 </div>
               )}
             </div>
@@ -795,13 +795,13 @@ export function PeopleManagementPage() {
 
           {departments.length > 0 && (
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Отдел</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Department</label>
               <select
                 value={formData.departmentId ?? ''}
                 onChange={(e) => setFormData((p) => ({ ...p, departmentId: e.target.value || null }))}
                 className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
               >
-                <option value="">— Не назначен —</option>
+                <option value="">— Not assigned —</option>
                 {departments.map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}

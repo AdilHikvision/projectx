@@ -35,6 +35,34 @@ public sealed class DevicePersonSyncService(
         return s.Length > 32 ? s[..32] : s;
     }
 
+    /// <summary>Лог тела запроса и ответа устройства при удалении отпечатка (отладка ISAPI).</summary>
+    private void LogDeleteFingerprintExchange(
+        string stage,
+        string httpMethod,
+        string path,
+        string requestBody,
+        bool httpSuccess,
+        string? responseBody,
+        string? transportError)
+    {
+        const int max = 8192;
+        static string Trim(string? s, int m)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Length <= m ? s : s[..m] + "…(truncated)";
+        }
+
+        logger.LogInformation(
+            "[DeleteFP] {Stage} {Method} {Path} httpOk={HttpOk} transportErr={TransportErr} request={Request} response={Response}",
+            stage,
+            httpMethod,
+            path,
+            httpSuccess,
+            transportError ?? "-",
+            Trim(requestBody, max),
+            Trim(responseBody, max));
+    }
+
     public async Task<DeviceSyncResult> SyncEmployeeAsync(Guid employeeId, Guid deviceId, CancellationToken cancellationToken = default)
     {
         var employee = await dbContext.Employees
@@ -114,21 +142,20 @@ public sealed class DevicePersonSyncService(
         if (!syncPerson.Success)
             return syncPerson;
 
+        // ISAPI: в CardInfo обязателен узел cardType (см. capabilities: normalCard, patrolCard, …).
         var body = JsonSerializer.Serialize(new
         {
             CardInfo = new
             {
                 cardNo = card.CardNo,
                 cardNumber = string.IsNullOrWhiteSpace(card.CardNumber) ? card.CardNo : card.CardNumber,
-                employeeNo
+                employeeNo,
+                cardType = "normalCard"
             }
         });
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/CardInfo/Record?format=json",
-            body,
-            cancellationToken);
+        var (success, error) = await TrySyncCardInfoAsync(client, body, cancellationToken);
 
         if (!success)
         {
@@ -137,6 +164,42 @@ public sealed class DevicePersonSyncService(
         }
         return new DeviceSyncResult(true, null);
     }
+
+    /// <summary>
+    /// Hikvision: PUT CardInfo/SetUp применяет карту (добавление или правка). POST Record только для новой карты и часто
+    /// даёт cardNoAlreadyExist/checkEmployeeNo, если у пользователя уже есть другая карта или отпечаток.
+    /// </summary>
+    private async Task<(bool Success, string? Error)> TrySyncCardInfoAsync(IsapiClient client, string body, CancellationToken cancellationToken)
+    {
+        var (success, _, error) = await client.PutJsonAsync(
+            "ISAPI/AccessControl/CardInfo/SetUp?format=json",
+            body,
+            cancellationToken);
+        if (success) return (true, null);
+
+        (success, _, error) = await client.PostJsonAsync(
+            "ISAPI/AccessControl/CardInfo/Record?format=json",
+            body,
+            cancellationToken);
+        if (success) return (true, null);
+
+        if (error != null && IsCardInfoRetryableConflict(error))
+        {
+            logger.LogDebug("CardInfo Record failed ({Error}), retrying with Modify", error);
+            (success, _, error) = await client.PutJsonAsync(
+                "ISAPI/AccessControl/CardInfo/Modify?format=json",
+                body,
+                cancellationToken);
+            if (success) return (true, null);
+        }
+
+        return (false, error);
+    }
+
+    private static bool IsCardInfoRetryableConflict(string error) =>
+        error.Contains("cardNoAlreadyExist", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("checkEmployeeNo", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase);
 
     public async Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default)
     {
@@ -170,76 +233,83 @@ public sealed class DevicePersonSyncService(
         }
 
         var client = CreateClient(device);
+        var imageBytes = await File.ReadAllBytesAsync(fullPath, cancellationToken);
 
-        // 1. Попытка FaceDataRecord (ISAPI/Intelligent/FDLib) — поддерживают DS-K1T671M и др.
-        var faceDataRecordJson = JsonSerializer.Serialize(new
-        {
-            faceLibType = "residentFD",
-            FDID = face.FDID.ToString(),
-            FPID = employeeNo
-        });
-        using (var fileStream = File.OpenRead(fullPath))
-        {
-            var faceContent = new StreamContent(fileStream);
-            faceContent.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-            var fdParts = new Dictionary<string, (HttpContent Content, string? FileName)>
-            {
-                ["FaceDataRecord"] = (new StringContent(faceDataRecordJson, Encoding.UTF8, "application/json"), null),
-                ["FaceImage"] = (faceContent, "face.jpg")
-            };
-            var (fdSuccess, _, _) = await client.PostMultipartAsync(
-                "ISAPI/Intelligent/FDLib/FaceDataRecord?format=json",
-                fdParts,
-                cancellationToken);
-            if (fdSuccess)
-                return new DeviceSyncResult(true, null);
+        ByteArrayContent MakeImage() => new(imageBytes) { Headers = { ContentType = new("image/jpeg") } };
+        StringContent MakeJson(string json) {
+            var c = new StringContent(json, Encoding.UTF8, "application/json");
+            c.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            return c;
         }
-
-        // 2. Альтернатива: faceLibType как число (некоторые устройства)
-        faceDataRecordJson = JsonSerializer.Serialize(new
-        {
-            faceLibType = 1,
-            FDID = face.FDID.ToString(),
-            FPID = employeeNo
-        });
-        using (var fileStream2 = File.OpenRead(fullPath))
-        {
-            var faceContent2 = new StreamContent(fileStream2);
-            faceContent2.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-            var fdParts2 = new Dictionary<string, (HttpContent Content, string? FileName)>
-            {
-                ["FaceDataRecord"] = (new StringContent(faceDataRecordJson, Encoding.UTF8, "application/json"), null),
-                ["FaceImage"] = (faceContent2, "face.jpg")
-            };
-            var (fd2Success, _, _) = await client.PostMultipartAsync(
-                "ISAPI/Intelligent/FDLib/FaceDataRecord?format=json",
-                fdParts2,
-                cancellationToken);
-            if (fd2Success)
-                return new DeviceSyncResult(true, null);
-        }
-
-        // 3. pictureUpload (старый API)
         var escapedNo = employeeNo.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
-        var pictureUploadData = $"""<?xml version="1.0" encoding="UTF-8"?><PictureUploadData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escapedNo}</employeeNo><FDID>{face.FDID}</FDID><faceLibType>1</faceLibType></PictureUploadData>""";
-        using (var fileStream3 = File.OpenRead(fullPath))
+        string? lastErr = null;
+
+        // Ensure FDLib exists on the device (required before adding faces)
+        await EnsureFDLibExistsAsync(client, cancellationToken);
+
+        var personName = face.Employee != null ? $"{face.Employee.FirstName} {face.Employee.LastName}".Trim() : employeeNo;
+
+        // Strategy 1 (Primary): PUT FDLib/FDSetUp — apply face (add or update)
         {
-            var faceContent3 = new StreamContent(fileStream3);
-            faceContent3.Headers.ContentType = new global::System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-            var parts = new Dictionary<string, (HttpContent Content, string? FileName)>
+            var json = JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                ["PictureUploadData"] = (new StringContent(pictureUploadData, Encoding.UTF8, "application/xml"), null),
-                ["face_picture"] = (faceContent3, "face_picture.jpg")
-            };
-            var (success, _, error) = await client.PostMultipartAsync(
-                "ISAPI/Intelligent/FDLib/pictureUpload",
-                parts,
-                cancellationToken);
-            if (success)
-                return new DeviceSyncResult(true, null);
-            logger.LogWarning("SyncFace {FaceId} to {Device}: {Error}", faceId, device.Name, error);
-            return new DeviceSyncResult(false, error ?? "Ошибка синхронизации лица.");
+                ["faceLibType"] = "blackFD",
+                ["FDID"] = "1",
+                ["FPID"] = employeeNo,
+                ["name"] = personName,
+                ["bornTime"] = "2000-01-01"
+            });
+            logger.LogDebug("[SyncFace] Strategy 1: PUT FDLib/FDSetUp, JSON={Json}", json);
+            var (ok, body, err) = await client.PutMultipartAsync("ISAPI/Intelligent/FDLib/FDSetUp?format=json",
+                () => new Dictionary<string, (HttpContent, string?)>
+                {
+                    ["faceURL"] = (MakeJson(json), null),
+                    ["img"] = (MakeImage(), "faceImage.jpg")
+                }, cancellationToken);
+            logger.LogDebug("[SyncFace] Strategy 1 FDSetUp: ok={Ok} body={Body} err={Err}", ok, body ?? "-", err ?? "-");
+            if (ok) return new DeviceSyncResult(true, null);
+            lastErr = err;
         }
+
+        // Strategy 2: POST FDLib/FaceDataRecord — add new face
+        {
+            var json = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["faceLibType"] = "blackFD",
+                ["FDID"] = "1",
+                ["FPID"] = employeeNo,
+                ["name"] = personName,
+                ["bornTime"] = "2000-01-01"
+            });
+            logger.LogDebug("[SyncFace] Strategy 2: POST FDLib/FaceDataRecord");
+            var (ok, body, err) = await client.PostMultipartAsync("ISAPI/Intelligent/FDLib/FaceDataRecord?format=json",
+                () => new Dictionary<string, (HttpContent, string?)>
+                {
+                    ["faceURL"] = (MakeJson(json), null),
+                    ["img"] = (MakeImage(), "facePic.jpg")
+                }, cancellationToken);
+            logger.LogDebug("[SyncFace] Strategy 2 FaceDataRecord: ok={Ok} body={Body} err={Err}", ok, body ?? "-", err ?? "-");
+            if (ok) return new DeviceSyncResult(true, null);
+            lastErr = err;
+        }
+
+        // Strategy 3: POST FDLib/pictureUpload (XML) — legacy devices
+        {
+            var xmlData = $"""<?xml version="1.0" encoding="UTF-8"?><PictureUploadData version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{escapedNo}</employeeNo><FDID>1</FDID><faceLibType>blackFD</faceLibType></PictureUploadData>""";
+            logger.LogDebug("[SyncFace] Strategy 3: POST FDLib/pictureUpload");
+            var (ok, body, err) = await client.PostMultipartAsync("ISAPI/Intelligent/FDLib/pictureUpload",
+                () => new Dictionary<string, (HttpContent, string?)>
+                {
+                    ["PictureUploadData"] = (new StringContent(xmlData, Encoding.UTF8, "application/xml"), null),
+                    ["face_picture"] = (MakeImage(), "face_picture.jpg")
+                }, cancellationToken);
+            logger.LogDebug("[SyncFace] Strategy 3 pictureUpload: ok={Ok} body={Body} err={Err}", ok, body ?? "-", err ?? "-");
+            if (ok) return new DeviceSyncResult(true, null);
+            lastErr = err;
+        }
+
+        logger.LogWarning("SyncFace {FaceId} to {Device}: all strategies failed. Last: {Error}", faceId, device.Name, lastErr);
+        return new DeviceSyncResult(false, lastErr ?? "Ошибка синхронизации лица.");
     }
 
     public async Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default)
@@ -265,21 +335,13 @@ public sealed class DevicePersonSyncService(
         if (!syncPerson.Success)
             return syncPerson;
 
-        var body = JsonSerializer.Serialize(new
-        {
-            FingerPrint = new
-            {
-                employeeNo,
-                fingerPrintIndex = fp.FingerIndex,
-                fingerPrintData = Convert.ToBase64String(fp.TemplateData)
-            }
-        });
+        var body = IsapiFingerPrintDownload.BuildJson(
+            employeeNo,
+            fp.FingerIndex,
+            Convert.ToBase64String(fp.TemplateData));
 
         var client = CreateClient(device);
-        var (success, _, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/FingerPrintDownload?format=json",
-            body,
-            cancellationToken);
+        var (success, error) = await IsapiFingerPrintDownload.TryUploadTemplateAsync(client, body, cancellationToken);
 
         if (!success)
         {
@@ -289,19 +351,36 @@ public sealed class DevicePersonSyncService(
         return new DeviceSyncResult(true, null);
     }
 
-    public async Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, string? employeeNo = null, CancellationToken cancellationToken = default)
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var body = JsonSerializer.Serialize(new { CardInfo = new { cardNo } });
         var client = CreateClient(device);
         var path = "ISAPI/AccessControl/CardInfo/Delete?format=json";
-        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
-        if (success) return new DeviceSyncResult(true, null);
-        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
-        return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+
+        var bodies = new List<string>
+        {
+            JsonSerializer.Serialize(new { CardInfo = new { cardNo } }),
+        };
+        if (!string.IsNullOrWhiteSpace(employeeNo))
+            bodies.Add(JsonSerializer.Serialize(new { CardInfo = new { cardNo, employeeNo } }));
+
+        string? lastError = null;
+        foreach (var body in bodies)
+        {
+            // Документация Pro/Value: удаление карт — PUT; POST — запасной вариант.
+            var (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+            (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+
+        logger.LogWarning("DeleteCardFromDevice cardNo={CardNo} device={Device}: {Error}", cardNo, device.Name, lastError);
+        return new DeviceSyncResult(false, lastError);
     }
 
     public async Task<DeviceSyncResult> DeleteFaceFromDeviceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default)
@@ -320,33 +399,404 @@ public sealed class DevicePersonSyncService(
         var employeeNo = face.Employee != null
             ? TruncateEmployeeNo(GetEmployeeNo(face.Employee))
             : GetEmployeeNo(face.Visitor!);
-        var fdId = face.FDID;
-        var faceLibType = 1;
 
         var client = CreateClient(device);
-        var path = $"ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID={fdId}&faceLibType={faceLibType}&employeeNo={Uri.EscapeDataString(employeeNo)}";
-        var (success, _, error) = await client.PostJsonAsync(path, "{}", cancellationToken);
+
+        // PUT /ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID=1&faceLibType=blackFD
+        // Body: {"FPID":[{"value":"<employeeNo>"}]}
+        var body = JsonSerializer.Serialize(new { FPID = new[] { new { value = employeeNo } } });
+        var path = "ISAPI/Intelligent/FDLib/FDSearch/Delete?format=json&FDID=1&faceLibType=blackFD";
+
+        var (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
         if (success) return new DeviceSyncResult(true, null);
-        (success, _, error) = await client.PutJsonAsync(path, "{}", cancellationToken);
-        return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+
+        logger.LogDebug("[DeleteFace] PUT failed: {Error}, trying POST", error);
+        (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
+        if (success) return new DeviceSyncResult(true, null);
+
+        logger.LogWarning("DeleteFace {FaceId} from {Device}: {Error}", faceId, device.Name, error);
+        return new DeviceSyncResult(false, error ?? "Ошибка удаления лица с устройства.");
     }
 
-    public async Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(string employeeNo, int fingerIndex, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default)
     {
+        var fp = await dbContext.Fingerprints
+            .Include(f => f.Employee)!.ThenInclude(e => e!.AccessLevels).ThenInclude(a => a.AccessLevel)!.ThenInclude(al => al!.Doors)
+            .Include(f => f.Visitor)!.ThenInclude(v => v!.AccessLevels).ThenInclude(a => a.AccessLevel)!.ThenInclude(al => al!.Doors)
+            .FirstOrDefaultAsync(f => f.Id == fingerprintId, cancellationToken);
+        if (fp is null)
+            return new DeviceSyncResult(false, "Отпечаток не найден.");
+
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var body = JsonSerializer.Serialize(new
-        {
-            FingerPrint = new { employeeNo, fingerPrintIndex = fingerIndex }
-        });
+        var employeeNo = fp.Employee != null
+            ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
+            : TruncateEmployeeNo(GetEmployeeNo(fp.Visitor!));
+        var fingerIndex = fp.FingerIndex;
+
         var client = CreateClient(device);
-        var path = "ISAPI/AccessControl/FingerPrint/Delete?format=json";
-        var (success, _, error) = await client.PostJsonAsync(path, body, cancellationToken);
-        if (success) return new DeviceSyncResult(true, null);
-        (success, _, error) = await client.PutJsonAsync(path, body, cancellationToken);
-        return success ? new DeviceSyncResult(true, null) : new DeviceSyncResult(false, error);
+
+        // Устройство требует корень FingerPrintDelete на пути FingerPrint/Delete.
+        // (MessageParametersLack: required node does not exist.FingerPrintDelete)
+        // FingerPrintCfg/* — notSupport; XML на FingerPrint/Delete — badJsonFormat; пустое тело — MessageParametersLack.
+        var deletePath = "ISAPI/AccessControl/FingerPrint/Delete?format=json";
+        var primaryBodies = IsapiFingerPrintDownload.BuildPrimaryDeleteBodies(employeeNo, fingerIndex);
+        var queryPath =
+            $"ISAPI/AccessControl/FingerPrint/Delete?format=json&employeeNo={Uri.EscapeDataString(employeeNo)}&fingerPrintID={fingerIndex}";
+
+        string? lastError = null;
+
+        bool TryHandleDeleteResponse(string? content, ref string? errSlot)
+        {
+            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } isapiErr)
+            {
+                errSlot = isapiErr;
+                logger.LogDebug("Fingerprint delete rejected by device {Device}: {Err}", device.Name, isapiErr);
+                return false;
+            }
+
+            if (!IsapiJsonStatus.HasExplicitSuccess(content))
+            {
+                errSlot = "Нет подтверждения ISAPI (statusCode=1) в ответе на удаление.";
+                return false;
+            }
+
+            return true;
+        }
+
+        async Task<DeviceSyncResult?> TryPathAndBodyAsync(string path, string body)
+        {
+            var (success, content, error) = await client.PutJsonAsync(path, body, cancellationToken);
+            LogDeleteFingerprintExchange("FingerPrintDelete", "PUT", path, body, success, content, error);
+            if (!success)
+            {
+                (success, content, error) = await client.PostJsonAsync(path, body, cancellationToken);
+                LogDeleteFingerprintExchange("FingerPrintDelete", "POST", path, body, success, content, error);
+            }
+
+            if (!success)
+            {
+                (success, content, error) = await client.DeleteAsync(path, body, "application/json", cancellationToken);
+                LogDeleteFingerprintExchange("FingerPrintDelete", "DELETE", path, body, success, content, error);
+            }
+
+            if (!success)
+            {
+                lastError = error;
+                return null;
+            }
+
+            if (!TryHandleDeleteResponse(content, ref lastError))
+                return null;
+
+            var waitErr = await WaitFingerprintDeleteProcessAsync(client, cancellationToken);
+            if (waitErr != null)
+            {
+                logger.LogWarning("Fingerprint delete process failed on {Device}: {Err}", device.Name, waitErr);
+                lastError = waitErr;
+                return null;
+            }
+
+            return new DeviceSyncResult(true, null);
+        }
+
+        // Шаг 1: PUT FingerPrint/Delete с корнем FingerPrintDelete (подтверждено логами устройства).
+        foreach (var body in primaryBodies)
+        {
+            var done = await TryPathAndBodyAsync(deletePath, body);
+            if (done != null)
+                return done;
+        }
+
+        // Шаг 2: те же тела через POST (некоторые прошивки не принимают PUT).
+        foreach (var body in primaryBodies)
+        {
+            var (success, content, error) = await client.PostJsonAsync(deletePath, body, cancellationToken);
+            LogDeleteFingerprintExchange("FingerPrintDelete", "POST", deletePath, body, success, content, error);
+            if (success && TryHandleDeleteResponse(content, ref lastError))
+            {
+                var we = await WaitFingerprintDeleteProcessAsync(client, cancellationToken);
+                if (we == null)
+                    return new DeviceSyncResult(true, null);
+                lastError = we;
+            }
+        }
+
+        // Шаг 3: параметры в query + тело FingerPrintDelete (запасной вариант).
+        {
+            var done = await TryPathAndBodyAsync(queryPath, primaryBodies[0]);
+            if (done != null)
+                return done;
+        }
+
+        // Шаг 4: fallback — UserInfo/Modify + FPInfo (работает на устройстве, но удаляет запись, не шаблон).
+        var fullInfo = await TryDeleteFingerprintViaFullUserInfoAsync(device, fp.Employee, fp.Visitor, fingerIndex, cancellationToken);
+        if (fullInfo != null)
+            return fullInfo;
+
+        logger.LogWarning("DeleteFingerprintFromDevice emp={EmpNo} idx={Idx} device={Device}: {Error}", employeeNo, fingerIndex, device.Name, lastError);
+        return new DeviceSyncResult(false, lastError);
+    }
+
+    /// <summary>Удаление отпечатка через UserInfo Record/Modify с полем FPInfo (схема Ultra/Pro API Reference).</summary>
+    private async Task<DeviceSyncResult?> TryDeleteFingerprintViaFullUserInfoAsync(
+        Device device,
+        Employee? employee,
+        Visitor? visitor,
+        int fingerIndex,
+        CancellationToken cancellationToken)
+    {
+        if (employee == null && visitor == null)
+            return null;
+
+        string employeeNo;
+        string name;
+        int userType;
+        int[] doorRight;
+        string userCategory;
+        var onlyVerify = false;
+        string? gender = null;
+        DateTime? validFromUtc = null;
+        DateTime? validToUtc = null;
+
+        if (employee != null)
+        {
+            employeeNo = TruncateEmployeeNo(GetEmployeeNo(employee));
+            name = $"{employee.FirstName} {employee.LastName}".Trim();
+            doorRight = GetDoorRightForDevice(employee.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, device.Id);
+            (userType, userCategory) = employee.IsActive ? (1, "normal") : (3, "blackList");
+            gender = employee.Gender;
+            onlyVerify = employee.OnlyVerify;
+            validFromUtc = employee.ValidFromUtc;
+            validToUtc = employee.ValidToUtc;
+        }
+        else
+        {
+            employeeNo = GetEmployeeNo(visitor!);
+            name = $"{visitor!.FirstName} {visitor.LastName}".Trim();
+            doorRight = GetDoorRightForDevice(visitor!.AccessLevels.Select(a => a.AccessLevel).Where(al => al != null)!, device.Id);
+            (userType, userCategory) = visitor.IsActive ? (2, "visitor") : (3, "blackList");
+            validFromUtc = visitor.ValidFromUtc;
+            validToUtc = visitor.ValidToUtc;
+        }
+
+        var parts = name.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var givenName = parts.Length > 0 ? parts[0] : name;
+        var familyName = parts.Length > 1 ? parts[1] : (parts.Length == 1 ? parts[0] : "");
+
+        var doorNoList = doorRight.Length > 0
+            ? doorRight.Select(i => i + 1).ToList()
+            : new List<int> { 1 };
+
+        var genderValue = string.IsNullOrWhiteSpace(gender) ? "unknown" : gender.Trim().ToLowerInvariant();
+        if (genderValue is not ("male" or "female"))
+            genderValue = "unknown";
+
+        var tz = GetTimeZone();
+        var todayUtc = DateTime.UtcNow.Date;
+        var defaultEndUtc = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+        var fromUtc = validFromUtc ?? todayUtc;
+        var toUtc = validToUtc ?? defaultEndUtc;
+        var beginTime = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
+        var endTime = TimeZoneInfo.ConvertTimeFromUtc(toUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
+
+        var doorRightStr = string.Join(",", doorNoList);
+        var rightPlan = doorNoList.Select(d => new { doorNo = d, planTemplateNo = "1" }).ToArray();
+
+        object[] fpInfoVariants =
+        [
+            new { deleteAllFP = false, List = new[] { new { fingerID = fingerIndex, deleteFP = true } } },
+            new { deleteAllFP = false, List = new[] { new { fingerPrintID = fingerIndex, deleteFP = true } } },
+            new { deleteAllFP = false, List = new[] { new { fingerID = fingerIndex, fingerPrintID = fingerIndex, deleteFP = true, enableCardReaderNo = 1 } } },
+        ];
+
+        var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var isapiClient = CreateClient(device);
+
+        foreach (var fpInfoObj in fpInfoVariants)
+        {
+            var userInfo = new
+            {
+                employeeNo,
+                no = employeeNo,
+                name,
+                type = userType,
+                userType = userCategory,
+                givenName,
+                familyName,
+                gender = genderValue,
+                doorRight = doorRightStr,
+                RightPlan = rightPlan,
+                onlyVerify,
+                localUIRight = false,
+                maxOpenDoorTime = 0,
+                userVerifyMode = "",
+                password = "",
+                telNo = "",
+                email = "",
+                Valid = new { enable = true, beginTime, endTime, timeType = "local" },
+                FPInfo = fpInfoObj,
+            };
+
+            var body = JsonSerializer.Serialize(new { UserInfo = userInfo }, jsonOptions);
+
+            var (ok, err) = await TryPushUserInfoFingerprintDeleteAsync(isapiClient, body, cancellationToken);
+            if (ok)
+            {
+                logger.LogInformation(
+                    "DeleteFingerprint: {Device} — UserInfo Record/Modify + FPInfo (emp={EmpNo}, idx={Idx})",
+                    device.Name, employeeNo, fingerIndex);
+                return new DeviceSyncResult(true, null);
+            }
+
+            logger.LogDebug("DeleteFingerprint FPInfo variant failed on {Device}: {Err}", device.Name, err);
+        }
+
+        return null;
+    }
+
+    /// <summary>Record, затем Modify; успех только при statusCode=1 в ответе.</summary>
+    private async Task<(bool Ok, string? Error)> TryPushUserInfoFingerprintDeleteAsync(IsapiClient client, string body, CancellationToken cancellationToken)
+    {
+        bool OkContent(string? c) =>
+            IsapiJsonStatus.GetErrorMessageIfFailed(c) is null && IsapiJsonStatus.HasExplicitSuccess(c);
+
+        const string pathRecord = "ISAPI/AccessControl/UserInfo/Record?format=json";
+        const string pathModify = "ISAPI/AccessControl/UserInfo/Modify?format=json";
+
+        var (success, content, error) = await client.PostJsonAsync(pathRecord, body, cancellationToken);
+        LogDeleteFingerprintExchange("UserInfo+FPInfo-delete", "POST", pathRecord, body, success, content, error);
+
+        if (success && OkContent(content))
+            return (true, null);
+
+        (success, content, error) = await client.PutJsonAsync(pathModify, body, cancellationToken);
+        LogDeleteFingerprintExchange("UserInfo+FPInfo-delete", "PUT", pathModify, body, success, content, error);
+
+        if (success && OkContent(content))
+            return (true, null);
+
+        var msg = IsapiJsonStatus.GetErrorMessageIfFailed(content)
+                  ?? error
+                  ?? "UserInfo Record/Modify: нет подтверждения ISAPI (statusCode=1).";
+        return (false, msg);
+    }
+
+    /// <summary>Ожидание завершения асинхронного удаления отпечатка (GET FingerPrint/DeleteProcess).</summary>
+    private async Task<string?> WaitFingerprintDeleteProcessAsync(IsapiClient client, CancellationToken cancellationToken)
+    {
+        const string progressPath = "ISAPI/AccessControl/FingerPrint/DeleteProcess?format=json";
+        const int maxAttempts = 35;
+
+        // Один раз: если API прогресса нет (404) — удаление считается синхронным, не помечаем успехом из-за сетевых сбоев.
+        var (probeOk, probeContent, probeErr) = await client.GetAsync(progressPath, cancellationToken);
+        LogDeleteFingerprintExchange("FingerPrint/DeleteProcess-probe", "GET", progressPath, "", probeOk, probeContent, probeErr);
+        if (!probeOk && probeErr != null && (probeErr.Contains("404", StringComparison.Ordinal) || probeErr.Contains("не найден", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        var loggedFirstPoll = false;
+        string? lastPollContent = null;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var (ok, content, pollErr) = await client.GetAsync(progressPath, cancellationToken);
+            if (ok && !string.IsNullOrWhiteSpace(content))
+                lastPollContent = content;
+            if (ok && !string.IsNullOrWhiteSpace(content) && !loggedFirstPoll)
+            {
+                LogDeleteFingerprintExchange("FingerPrint/DeleteProcess", "GET", progressPath, "", true, content, pollErr);
+                loggedFirstPoll = true;
+            }
+
+            if (!ok)
+            {
+                await Task.Delay(400, cancellationToken);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                await Task.Delay(400, cancellationToken);
+                continue;
+            }
+
+            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } rootFail)
+            {
+                LogDeleteFingerprintExchange("FingerPrint/DeleteProcess-fail", "GET", progressPath, "", true, content, rootFail);
+                return rootFail;
+            }
+
+            if (IsapiJsonStatus.HasExplicitSuccess(content))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                if (TryGetFingerprintDeleteProcess(root, out var proc))
+                {
+                    var status = GetJsonStringProperty(proc, "status", "Status");
+                    if (!string.IsNullOrEmpty(status))
+                    {
+                        if (status.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                            status.Contains("error", StringComparison.OrdinalIgnoreCase))
+                            return content.Length > 400 ? content[..400] : content;
+                        if (status.Contains("complete", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
+                            return null;
+                    }
+
+                    if (proc.TryGetProperty("percent", out var pctEl) && pctEl.TryGetInt32(out var pct) && pct >= 100)
+                        return null;
+                }
+            }
+            catch (JsonException)
+            {
+                /* не JSON */
+            }
+
+            await Task.Delay(450, cancellationToken);
+        }
+
+        LogDeleteFingerprintExchange(
+            "FingerPrint/DeleteProcess-timeout",
+            "GET",
+            progressPath,
+            "",
+            !string.IsNullOrEmpty(lastPollContent),
+            lastPollContent,
+            "Таймаут ожидания DeleteProcess");
+        return "Таймаут: нет подтверждения завершения удаления (FingerPrint/DeleteProcess).";
+    }
+
+    private static bool TryGetFingerprintDeleteProcess(JsonElement root, out JsonElement proc)
+    {
+        proc = default;
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+        ReadOnlySpan<string> names =
+        [
+            "FingerPrintDeleteProcess",
+            "fingerPrintDeleteProcess",
+        ];
+        foreach (var name in names)
+        {
+            if (root.TryGetProperty(name, out proc))
+                return true;
+        }
+        return false;
+    }
+
+    private static string? GetJsonStringProperty(JsonElement obj, params string[] propertyNames)
+    {
+        foreach (var n in propertyNames)
+        {
+            if (obj.TryGetProperty(n, out var el) && el.ValueKind == JsonValueKind.String)
+                return el.GetString();
+        }
+        return null;
     }
 
     public async Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default)
@@ -442,6 +892,37 @@ public sealed class DevicePersonSyncService(
         if (xmlSuccess) return new DeviceSyncResult(true, null);
 
         return new DeviceSyncResult(false, lastError ?? xmlError);
+    }
+
+    private async Task EnsureFDLibExistsAsync(IsapiClient client, CancellationToken ct)
+    {
+        try
+        {
+            var (ok, content, _) = await client.GetAsync("ISAPI/Intelligent/FDLib?format=json", ct);
+            if (ok && !string.IsNullOrEmpty(content))
+            {
+                logger.LogDebug("[EnsureFDLib] FDLib exists: {Content}", content.Length > 200 ? content[..200] : content);
+                return;
+            }
+
+            var createBody = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["faceLibType"] = "blackFD",
+                ["name"] = "FaceLib",
+                ["customInfo"] = ""
+            });
+            var (created, createContent, createErr) = await client.PostAsync(
+                "ISAPI/Intelligent/FDLib?format=json",
+                createBody,
+                "application/json",
+                ct);
+            logger.LogDebug("[EnsureFDLib] Create FDLib: ok={Ok} body={Body} err={Err}",
+                created, createContent ?? "-", createErr ?? "-");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[EnsureFDLib] Failed to ensure FDLib exists");
+        }
     }
 
     private static int[] GetDoorRightForDevice(IEnumerable<AccessLevel?> accessLevels, Guid deviceId)
@@ -638,4 +1119,5 @@ public sealed class DevicePersonSyncService(
             cred.Password ?? "",
             TimeSpan.FromSeconds(30));
     }
+
 }
