@@ -100,7 +100,16 @@ export function PeopleManagementPage() {
     importedCount: number
     skippedCount: number
     errorCount: number
-    items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+    items: {
+      employeeNo: string
+      name: string
+      deviceName: string
+      success: boolean
+      message?: string
+      cardsImported?: number
+      facesImported?: number
+      fingerprintsImported?: number
+    }[]
   } | null>(null)
 
   const loadEmployees = useCallback(async () => {
@@ -398,7 +407,16 @@ export function PeopleManagementPage() {
         importedCount: number
         skippedCount: number
         errorCount: number
-        items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+        items: {
+          employeeNo: string
+          name: string
+          deviceName: string
+          success: boolean
+          message?: string
+          cardsImported?: number
+          facesImported?: number
+          fingerprintsImported?: number
+        }[]
       }>('/api/people/import-from-devices', {
         method: 'POST',
         token,
@@ -672,6 +690,22 @@ export function PeopleManagementPage() {
                   <p className="text-xl font-black text-error-text">{importResult.errorCount}</p>
                 </div>
               </div>
+              {(() => {
+                const cred = importResult.items.reduce(
+                  (a, i) => ({
+                    cards: a.cards + (i.cardsImported ?? 0),
+                    faces: a.faces + (i.facesImported ?? 0),
+                    fps: a.fps + (i.fingerprintsImported ?? 0),
+                  }),
+                  { cards: 0, faces: 0, fps: 0 }
+                )
+                if (cred.cards + cred.faces + cred.fps === 0) return null
+                return (
+                  <p className="text-xs text-text-muted text-center">
+                    С устройств подтянуто: карт — {cred.cards}, лиц — {cred.faces}, отпечатков — {cred.fps}
+                  </p>
+                )
+              })()}
               <Button fullWidth variant="outline" onClick={closeImportModal}>Close</Button>
             </div>
           )}

@@ -102,6 +102,7 @@ interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+  isElevator?: boolean
 }
 
 interface Company {

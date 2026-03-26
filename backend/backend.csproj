@@ -35,6 +35,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update=".env" Condition="Exists('.env')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
     <None Include="winSDK\lib\*.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('winSDK\lib')" />
     <None Include="winSDK\lib\HCNetSDKCom\*.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('winSDK\lib\HCNetSDKCom')" />
   </ItemGroup>

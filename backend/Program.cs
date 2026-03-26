@@ -19,6 +19,30 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
 using Serilog;
 
+// Подхватить backend/.env в переменные окружения до загрузки конфигурации (Database__Password и т.д.).
+foreach (var baseDir in new[]
+         {
+             Directory.GetCurrentDirectory(),
+             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..")),
+             AppContext.BaseDirectory
+         })
+{
+    var envPath = Path.Combine(baseDir, ".env");
+    if (!File.Exists(envPath)) continue;
+    foreach (var rawLine in File.ReadAllLines(envPath))
+    {
+        var line = rawLine.Trim();
+        if (line.Length == 0 || line.StartsWith('#')) continue;
+        var eq = line.IndexOf('=');
+        if (eq <= 0) continue;
+        var key = line[..eq].Trim();
+        var value = line[(eq + 1)..].Trim();
+        if (value.StartsWith('"') && value.EndsWith('"') && value.Length >= 2) value = value[1..^1];
+        if (key.Length > 0) Environment.SetEnvironmentVariable(key, value);
+    }
+    break;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options =>
 {
@@ -456,12 +480,15 @@ app.MapPost("/api/devices/{deviceId:guid}/doors/{doorIndex:int}/control", async 
         "close" => DoorControlAction.Close,
         "alwaysopen" or "always_open" => DoorControlAction.AlwaysOpen,
         "alwaysclose" or "always_close" => DoorControlAction.AlwaysClose,
+        "visitorcallladder" or "visitor_call_ladder" => DoorControlAction.VisitorCallLadder,
+        "householdcallladder" or "household_call_ladder" or "residentcallladder" => DoorControlAction.HouseholdCallLadder,
         _ => (DoorControlAction?)null
     };
     if (action is null)
-        return Results.BadRequest(new { message = "Action must be one of: open, close, alwaysOpen, alwaysClose." });
+        return Results.BadRequest(new { message = "Action must be one of: open, close, alwaysOpen, alwaysClose, visitorCallLadder, householdCallLadder." });
 
-    var (success, message) = await doorControlService.ControlDoorAsync(deviceId, doorIndex, action.Value, cancellationToken);
+    var (success, message) = await doorControlService.ControlDoorAsync(
+        deviceId, doorIndex, action.Value, request.CallNumber, request.CallElevatorType, cancellationToken);
     return success ? Results.Ok(new { success = true }) : Results.BadRequest(new { message = message ?? "Command failed." });
 }).RequireAuthorization();
 
@@ -1003,7 +1030,7 @@ app.MapGet("/api/access-levels", async (AppDbContext dbContext, CancellationToke
         .ToListAsync(cancellationToken);
     var list = levels.Select(x => new AccessLevelResponse(
         x.Id, x.Name, x.Description, x.CreatedUtc, x.UpdatedUtc,
-        x.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList()));
+        x.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex, d.Device?.DeviceType == DeviceType.ElevatorController)).ToList()));
     return Results.Ok(list);
 }).RequireAuthorization();
 
@@ -1016,7 +1043,7 @@ app.MapGet("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbContex
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
-    var doors = entity.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList();
+    var doors = entity.Doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex, d.Device?.DeviceType == DeviceType.ElevatorController)).ToList();
     return Results.Ok(new AccessLevelResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc, doors));
 }).RequireAuthorization();
 
@@ -1092,7 +1119,7 @@ app.MapPut("/api/access-levels/{id:guid}", async (Guid id, UpdateAccessLevelRequ
 
     var doors = await dbContext.AccessLevelDoors.Where(x => x.AccessLevelId == id).Include(x => x.Device).ToListAsync(cancellationToken);
     return Results.Ok(new AccessLevelResponse(entity.Id, entity.Name, entity.Description, entity.CreatedUtc, entity.UpdatedUtc,
-        doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex)).ToList()));
+        doors.Select(d => new AccessLevelDoorDto(d.DeviceId, d.Device?.Name ?? "", d.DoorIndex, d.Device?.DeviceType == DeviceType.ElevatorController)).ToList()));
 }).RequireAuthorization();
 
 app.MapDelete("/api/access-levels/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -1987,7 +2014,10 @@ app.MapPost("/api/people/import-from-devices", async (ImportFromDevicesRequest r
             x.DeviceId,
             x.DeviceName,
             x.Success,
-            x.Message
+            x.Message,
+            x.CardsImported,
+            x.FacesImported,
+            x.FingerprintsImported
         })
     });
 }).RequireAuthorization();
@@ -3020,7 +3050,7 @@ public sealed record UpdateDepartmentRequest(string Name, string? Description, i
 public sealed record DepartmentResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int ChildrenCount, int EmployeesCount, int VisitorsCount);
 public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int EmployeesCount, int VisitorsCount);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
-public sealed record DoorControlRequest(string Action);
+public sealed record DoorControlRequest(string? Action, int? CallNumber = null, string? CallElevatorType = null);
 public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId);
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
@@ -3043,7 +3073,7 @@ public sealed record FingerprintRef(Guid Id, int FingerIndex);
 public sealed record CreateCardRequest(string CardNo, string? CardNumber, Guid? EmployeeId, Guid? VisitorId, Guid[]? DeviceIds);
 public sealed record UpdateCardRequest(string? CardNumber);
 public sealed record CreateFingerprintRequest(string TemplateData, int FingerIndex, Guid? EmployeeId, Guid? VisitorId, Guid[]? DeviceIds);
-public sealed record AccessLevelDoorDto(Guid DeviceId, string DeviceName, int DoorIndex);
+public sealed record AccessLevelDoorDto(Guid DeviceId, string DeviceName, int DoorIndex, bool IsElevator);
 public sealed record AccessLevelResponse(Guid Id, string Name, string? Description, DateTime CreatedUtc, DateTime? UpdatedUtc, IReadOnlyList<AccessLevelDoorDto> Doors);
 
 public sealed record SystemStatusResponse(

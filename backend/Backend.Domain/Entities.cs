@@ -11,7 +11,9 @@ public enum DeviceType
 {
     AccessController = 1,
     Intercom = 2,
-    AttendanceTerminal = 3
+    AttendanceTerminal = 3,
+    /// <summary>Контроллер лифта (этажи ISAPI = doorID, вызов — RemoteControl).</summary>
+    ElevatorController = 4
 }
 
 public sealed class DeviceStatus : BaseEntity

@@ -10,6 +10,8 @@ interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+  /** true — контроллер лифта (doorIndex = этаж, 0-based → ISAPI doorID = +1) */
+  isElevator?: boolean
 }
 
 interface AccessLevel {
@@ -25,6 +27,7 @@ interface Device {
   id: string
   name: string
   deviceIdentifier: string
+  deviceType?: string
 }
 
 interface DeviceDoor {
@@ -33,6 +36,7 @@ interface DeviceDoor {
   doorIndex: number
   doorName?: string | null
   status?: string | null
+  isElevator?: boolean
 }
 
 interface AccessLevelFormData {
@@ -43,6 +47,13 @@ interface AccessLevelFormData {
 const emptyForm: AccessLevelFormData = {
   name: '',
   description: '',
+}
+
+function floorOrDoorLabel(doorIndex: number, doorName: string | null | undefined, isElevator?: boolean) {
+  const n = doorName?.trim()
+  if (n) return n
+  const no = doorIndex + 1
+  return isElevator ? `Floor ${no}` : `Door ${no}`
 }
 
 const ACCESS_TABS = [
@@ -245,12 +256,13 @@ export function AccessLevelsPage() {
         body: JSON.stringify({ deviceId: addDoorDeviceId, doorIndex: addDoorIndex }),
       })
       const device = devices.find((d) => d.id === addDoorDeviceId)
+      const isElev = device?.deviceType === 'ElevatorController'
       setAccessLevels((prev) =>
         prev.map((x) =>
           x.id === doorsItem.id
             ? {
               ...x,
-              doors: [...(x.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
+              doors: [...(x.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex, isElevator: isElev }],
             }
             : x
         )
@@ -259,7 +271,7 @@ export function AccessLevelsPage() {
         prev
           ? {
             ...prev,
-            doors: [...(prev.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex }],
+            doors: [...(prev.doors ?? []), { deviceId: addDoorDeviceId, deviceName: device?.name ?? '', doorIndex: addDoorIndex, isElevator: isElev }],
           }
           : null
       )
@@ -408,7 +420,7 @@ export function AccessLevelsPage() {
                       </div>
                       <div>
                         <p className="text-sm font-black text-text-dark leading-tight">{door.deviceName}</p>
-                        <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{door.doorName || `Door #${door.doorIndex}`}</p>
+                        <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{floorOrDoorLabel(door.doorIndex, door.doorName, door.isElevator)}</p>
                       </div>
                     </div>
                     <Badge variant={door.status === 'Online' ? 'success' : 'neutral'}>{door.status || 'Offline'}</Badge>
@@ -419,10 +431,35 @@ export function AccessLevelsPage() {
           )}
 
           {tabFilter === 'floors' && (
-            <div className="p-12 text-center bg-surface rounded-2xl shadow-md">
-              <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
-              <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">Floors</p>
-              <p className="text-text-muted text-sm italic">Manage floors and building structure.</p>
+            <div className="grid gap-3">
+              {doorsLoading ? (
+                <div className="p-12 text-center text-sm font-bold text-text-light uppercase tracking-widest">Loading floors...</div>
+              ) : doorsError ? (
+                <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold shadow-sm">{doorsError}</div>
+              ) : doorsList.filter((d) => d.isElevator).length === 0 ? (
+                <div className="p-12 text-center bg-surface rounded-2xl shadow-md">
+                  <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
+                  <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">No elevator floors</p>
+                  <p className="text-text-muted text-sm">Mark a device as Elevator Controller in Devices, then floors appear here from the controller.</p>
+                </div>
+              ) : (
+                doorsList
+                  .filter((d) => d.isElevator)
+                  .map((door) => (
+                    <div key={`${door.deviceId}-${door.doorIndex}`} className="p-4 bg-surface rounded-2xl shadow-md flex justify-between items-center border-none">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-xl text-primary">
+                          <span className="material-symbols-outlined">layers</span>
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-text-dark leading-tight">{door.deviceName}</p>
+                          <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{floorOrDoorLabel(door.doorIndex, door.doorName, true)}</p>
+                        </div>
+                      </div>
+                      <Badge variant="primary">Elevator</Badge>
+                    </div>
+                  ))
+              )}
             </div>
           )}
         </div>
@@ -468,7 +505,7 @@ export function AccessLevelsPage() {
                 closeModals();
                 openDoorsModal(editingItem);
               }}>
-                Manage Doors
+                Doors / floors
               </Button>
             )}
             <Button type="button" variant="outline" onClick={closeModals} disabled={isSubmitting}>
@@ -510,19 +547,19 @@ export function AccessLevelsPage() {
         )}
       </Modal>
 
-      <Modal isOpen={modalMode === 'doors'} onClose={closeModals} title={doorsItem ? `Doors: ${doorsItem.name}` : 'Manage Doors'}>
+      <Modal isOpen={modalMode === 'doors'} onClose={closeModals} title={doorsItem ? `Access: ${doorsItem.name}` : 'Manage access points'}>
         {doorsItem && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-text-muted">Assigned doors</label>
+              <label className="block text-xs font-bold text-text-muted">Assigned doors / floors</label>
               {(doorsItem.doors ?? []).length === 0 ? (
-                <p className="text-sm text-text-light italic py-2">No doors assigned yet.</p>
+                <p className="text-sm text-text-light italic py-2">No doors or floors assigned yet.</p>
               ) : (
                 <ul className="space-y-1">
                   {(doorsItem.doors ?? []).map((d) => (
                     <li key={`${d.deviceId}-${d.doorIndex}`} className="flex items-center justify-between py-2 px-3 bg-slate-75 rounded-md">
                       <span className="text-sm font-medium text-text-dark">
-                        {d.deviceName} — Door #{d.doorIndex}
+                        {d.deviceName} — {floorOrDoorLabel(d.doorIndex, null, d.isElevator)}
                       </span>
                       <Button
                         variant="ghost"
@@ -538,7 +575,7 @@ export function AccessLevelsPage() {
               )}
             </div>
             <div className="border-t border-border-base pt-4 space-y-3">
-              <label className="block text-xs font-bold text-text-muted">Add door</label>
+              <label className="block text-xs font-bold text-text-muted">Add door or floor</label>
               <div className="flex gap-2">
                 <select
                   value={addDoorDeviceId ? `${addDoorDeviceId}:${addDoorIndex}` : ''}
@@ -555,10 +592,10 @@ export function AccessLevelsPage() {
                   }}
                   className="flex-1 h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
                 >
-                  <option value="">Select door</option>
+                  <option value="">Select door / floor</option>
                   {doorsList.map((d) => (
                     <option key={`${d.deviceId}-${d.doorIndex}`} value={`${d.deviceId}:${d.doorIndex}`}>
-                      {d.deviceName} — {d.doorName || `Door #${d.doorIndex}`}
+                      {d.deviceName} — {floorOrDoorLabel(d.doorIndex, d.doorName, d.isElevator)}
                     </option>
                   ))}
                 </select>

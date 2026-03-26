@@ -9,6 +9,7 @@ interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+  isElevator?: boolean
 }
 
 interface AccessLevel {
@@ -24,6 +25,13 @@ interface DeviceDoor {
   doorIndex: number
   doorName?: string | null
   status?: string | null
+  isElevator?: boolean
+}
+
+function floorOrDoorLine(d: AccessLevelDoor) {
+  const no = d.doorIndex + 1
+  if (d.isElevator) return `Floor ${no} (ISAPI door ${no})`
+  return `Door ${no}`
 }
 
 interface DeviceEvent {
@@ -118,6 +126,33 @@ export function MonitoringPage() {
     }
   }
 
+  async function handleElevatorControl(
+    deviceId: string,
+    doorIndex: number,
+    action: 'visitorCallLadder' | 'householdCallLadder',
+    callElevatorType?: 'up' | 'down'
+  ) {
+    if (!token) return
+    const key = `${deviceId}-${doorIndex}-${action}-${callElevatorType ?? ''}`
+    setDoorControlLoading(key)
+    setError(null)
+    try {
+      await apiRequest(`/api/devices/${deviceId}/doors/${doorIndex}/control`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          action,
+          ...(action === 'householdCallLadder' ? { callElevatorType: callElevatorType ?? 'up' } : {}),
+        }),
+      })
+      await loadOnlineDoors()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Elevator control failed')
+    } finally {
+      setDoorControlLoading(null)
+    }
+  }
+
   const filteredEvents = useMemo(() => {
     if (eventsFilter === 'all') return events
     if (eventsFilter === 'doors')
@@ -168,7 +203,7 @@ export function MonitoringPage() {
 
           {/* Access Levels Section */}
           <div className="space-y-4">
-            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Door Control Units</h2>
+            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Doors & elevators</h2>
             <div className="space-y-3">
               {accessLevels.length === 0 ? (
                 <div className="py-20 text-center bg-surface rounded-2xl border border-divider-light shadow-sm">
@@ -188,7 +223,7 @@ export function MonitoringPage() {
                           {level.description && <p className="text-[10px] font-bold text-text-light uppercase tracking-tight">{level.description}</p>}
                         </div>
                       </div>
-                      <Badge variant="neutral">{level.doors?.length || 0} Doors</Badge>
+                      <Badge variant="neutral">{level.doors?.length || 0} points</Badge>
                     </div>
                     <div className="p-2 space-y-1">
                       {(level.doors ?? []).map((d) => {
@@ -198,16 +233,45 @@ export function MonitoringPage() {
                           <div key={controlKey} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors">
                             <div>
                               <p className="text-xs font-bold text-text-dark">{d.deviceName}</p>
-                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Port {d.doorIndex}</p>
+                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{floorOrDoorLine(d)}</p>
                             </div>
                             <div className="flex items-center gap-2">
                               {online ? (
-                                <div className="flex gap-1">
-                                  <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
-                                </div>
+                                d.isElevator ? (
+                                  <div className="flex flex-wrap gap-1 justify-end max-w-[220px]">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="badge"
+                                      title="Call elevator (visitor)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'visitorCallLadder')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="north"
+                                      title="Call elevator (resident, up)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'up')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="south"
+                                      title="Call elevator (resident, down)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'down')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="flex gap-1">
+                                    <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+                                  </div>
+                                )
                               ) : (
                                 <span className="text-[8px] font-black text-error-text uppercase tracking-widest px-2 py-1 bg-error-bg/30 rounded-full">Offline</span>
                               )}

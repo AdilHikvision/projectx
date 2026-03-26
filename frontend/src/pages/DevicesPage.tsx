@@ -13,6 +13,7 @@ const DEVICE_TYPES = [
   { value: 'all', label: 'All' },
   { value: 'AccessController', label: 'Access Controllers' },
   { value: 'Intercom', label: 'Intercoms' },
+  { value: 'ElevatorController', label: 'Elevators' },
 ] as const
 
 interface Device {
@@ -101,6 +102,7 @@ function applyStatusUpdate(
 function getDeviceIcon(deviceType: string): string {
   if (deviceType === 'AccessController') return 'hub'
   if (deviceType === 'Intercom') return 'videocam'
+  if (deviceType === 'ElevatorController') return 'elevator'
   return 'devices'
 }
 
@@ -108,7 +110,23 @@ function getDeviceTypeLabel(deviceType: string): string {
   if (deviceType === 'AccessController') return 'Access Controller'
   if (deviceType === 'Intercom') return 'Intercom'
   if (deviceType === 'AttendanceTerminal') return 'Attendance Terminal'
+  if (deviceType === 'ElevatorController') return 'Elevator Controller'
   return deviceType
+}
+
+function deviceTypeStringToNumber(deviceType: string | null | undefined): number {
+  switch (deviceType) {
+    case 'AccessController':
+      return 1
+    case 'Intercom':
+      return 2
+    case 'AttendanceTerminal':
+      return 3
+    case 'ElevatorController':
+      return 4
+    default:
+      return 1
+  }
 }
 
 const DISCOVER_TYPE_TABS = [
@@ -359,7 +377,7 @@ export function DevicesPage() {
       ipAddress: device.ipAddress,
       port: device.port,
       location: device.location ?? '',
-      deviceType: device.deviceType === 'AccessController' ? 1 : device.deviceType === 'Intercom' ? 2 : 3,
+      deviceType: deviceTypeStringToNumber(device.deviceType),
       username: device.username ?? 'admin',
       password: '',
     })
@@ -424,7 +442,7 @@ export function DevicesPage() {
           ipAddress: formData.ipAddress.trim(),
           port: formData.port,
           location: formData.location.trim() || null,
-          deviceType: 1,
+          deviceType: formData.deviceType,
           username: formData.username.trim() || null,
           password: formData.password || null,
         }),
@@ -765,6 +783,20 @@ export function DevicesPage() {
                 placeholder="e.g. 1st Floor Lobby"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Device type</label>
+            <select
+              value={formData.deviceType}
+              onChange={(e) => setFormData((p) => ({ ...p, deviceType: parseInt(e.target.value, 10) }))}
+              className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
+            >
+              <option value={1}>Access Controller</option>
+              <option value={2}>Intercom</option>
+              <option value={3}>Attendance Terminal</option>
+              <option value={4}>Elevator Controller</option>
+            </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

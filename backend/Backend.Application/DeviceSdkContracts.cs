@@ -80,26 +80,36 @@ public interface IDeviceArpStatusService
     Task<IReadOnlyCollection<DeviceRealtimeStatus>> GetStatusesAsync(CancellationToken cancellationToken = default);
 }
 
-public sealed record DeviceDoor(Guid DeviceId, string DeviceName, int DoorIndex, string? DoorName, string? Status);
+public sealed record DeviceDoor(Guid DeviceId, string DeviceName, int DoorIndex, string? DoorName, string? Status, bool IsElevator);
 
 public interface IDeviceDoorService
 {
     Task<IReadOnlyCollection<DeviceDoor>> GetDoorsAsync(Guid? deviceId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Режим управления дверью: открыть, закрыть, всегда открыта, всегда закрыта.</summary>
+/// <summary>Режим управления дверью: открыть, закрыть, всегда открыта, всегда закрыта; вызов лифта (ISAPI Pro).</summary>
 public enum DoorControlAction
 {
     Open,
     Close,
     AlwaysOpen,
-    AlwaysClose
+    AlwaysClose,
+    /// <summary>visitorCallLadder — вызов лифта (посетитель).</summary>
+    VisitorCallLadder,
+    /// <summary>householdCallLadder — вызов лифта (жилец), нужны callNumber и callElevatorType.</summary>
+    HouseholdCallLadder
 }
 
 public interface IDeviceDoorControlService
 {
-    /// <summary>Выполняет действие над дверью (открыть/закрыть/всегда открыта/всегда закрыта).</summary>
-    Task<(bool Success, string? Message)> ControlDoorAsync(Guid deviceId, int doorIndex, DoorControlAction action, CancellationToken cancellationToken = default);
+    /// <summary>Выполняет действие над дверью или лифтом (см. <see cref="DoorControlAction"/>).</summary>
+    Task<(bool Success, string? Message)> ControlDoorAsync(
+        Guid deviceId,
+        int doorIndex,
+        DoorControlAction action,
+        int? callNumber = null,
+        string? callElevatorType = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Результат синхронизации Person/Card/Face/Fingerprint на устройство.</summary>
@@ -172,7 +182,9 @@ public sealed record ImportedUser(
     string? ValidEndTime,
     bool OnlyVerify,
     Guid SourceDeviceId,
-    string SourceDeviceName);
+    string SourceDeviceName,
+    /// <summary>Сырой JSON одной записи UserInfo из ответа списка (faceURL, numOfCard, FPInfo, cardNo и т.д.).</summary>
+    string? UserInfoSnapshotJson = null);
 
 /// <summary>Результат импорта пользователей с устройств.</summary>
 public sealed record PersonImportResult(
@@ -187,7 +199,13 @@ public sealed record PersonImportItem(
     Guid DeviceId,
     string DeviceName,
     bool Success,
-    string? Message);
+    string? Message,
+    /// <summary>Импортировано карт с устройства в БД (0, если не удалось или не было).</summary>
+    int CardsImported = 0,
+    /// <summary>Импортировано файлов лиц (0 или 1).</summary>
+    int FacesImported = 0,
+    /// <summary>Импортировано шаблонов отпечатков.</summary>
+    int FingerprintsImported = 0);
 
 public interface IDevicePersonImportService
 {
