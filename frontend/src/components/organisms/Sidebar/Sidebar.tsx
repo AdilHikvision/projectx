@@ -20,6 +20,7 @@ export function Sidebar() {
                 <NavItem to="/monitoring" icon="monitor_heart" label="Monitoring" />
                 <NavItem to="/access-levels" icon="admin_panel_settings" label="Access Levels" />
                 <NavItem to="/work-hours" icon="schedule" label="Work Hours" />
+                <NavItem to="/work-schedules" icon="calendar_month" label="Schedules" />
                 <NavItem to="/payroll" icon="payments" label="Payroll" />
             </nav>
 

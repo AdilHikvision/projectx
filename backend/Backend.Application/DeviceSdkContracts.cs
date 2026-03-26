@@ -172,7 +172,18 @@ public sealed record ImportedUser(
     string? ValidEndTime,
     bool OnlyVerify,
     Guid SourceDeviceId,
-    string SourceDeviceName);
+    string SourceDeviceName)
+{
+    public List<ImportedCard> Cards { get; init; } = [];
+    public List<ImportedFace> Faces { get; init; } = [];
+    public List<ImportedFingerprint> Fingerprints { get; init; } = [];
+    public List<ImportedIris> Irises { get; init; } = [];
+}
+
+public sealed record ImportedCard(string CardNo, string? CardType);
+public sealed record ImportedFace(byte[] ImageData, int FDID);
+public sealed record ImportedFingerprint(int FingerPrintID, byte[] TemplateData);
+public sealed record ImportedIris(int IrisID, byte[] TemplateData);
 
 /// <summary>Результат импорта пользователей с устройств.</summary>
 public sealed record PersonImportResult(

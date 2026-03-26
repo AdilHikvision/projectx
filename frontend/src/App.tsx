@@ -15,6 +15,7 @@ import { PersonDetailPage } from './pages/PersonDetailPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { SystemStatusPage } from './pages/SystemStatusPage'
 import { WorkHoursTrackingPage } from './pages/WorkHoursTrackingPage'
+import { WorkSchedulesPage } from './pages/WorkSchedulesPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SelfServicePage } from './pages/SelfServicePage'
 import './App.css'
@@ -50,6 +51,7 @@ function App() {
           <Route path="/access-levels" element={<AccessLevelsPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/work-hours" element={<WorkHoursTrackingPage />} />
+          <Route path="/work-schedules" element={<WorkSchedulesPage />} />
           <Route path="/payroll" element={<PayrollCalculationPage />} />
           <Route path="/settings" element={<SystemSettingsPage />} />
           <Route path="/status" element={<SystemStatusPage />} />

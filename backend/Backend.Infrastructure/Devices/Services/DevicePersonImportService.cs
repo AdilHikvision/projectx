@@ -63,6 +63,14 @@ public sealed class DevicePersonImportService(
                 break;
         }
 
+        foreach (var user in all)
+        {
+            await FetchCardsForUserAsync(client, user, cancellationToken);
+            await FetchFingerprintsForUserAsync(client, user, cancellationToken);
+            await FetchFacesForUserAsync(client, user, cancellationToken);
+            await FetchIrisesForUserAsync(client, user, cancellationToken);
+        }
+
         return all;
     }
 
@@ -159,6 +167,8 @@ public sealed class DevicePersonImportService(
                             dbContext.Entry(visitor).State = EntityState.Detached;
                             throw;
                         }
+
+                        await SaveBiometricDataAsync(user, employeeId: null, visitorId: visitor.Id, cancellationToken);
                     }
                     else
                     {
@@ -201,6 +211,8 @@ public sealed class DevicePersonImportService(
                             dbContext.Entry(employee).State = EntityState.Detached;
                             throw;
                         }
+
+                        await SaveBiometricDataAsync(user, employeeId: employee.Id, visitorId: null, cancellationToken);
                     }
 
                     seenEmployeeNo.Add(empNo);
@@ -303,6 +315,258 @@ public sealed class DevicePersonImportService(
 
         var onlyVerify = el.TryGetProperty("onlyVerify", out var ovEl) && ovEl.ValueKind == JsonValueKind.True;
         return new ImportedUser(employeeNo, name, givenName, familyName, type, userType, gender, validBegin, validEnd, onlyVerify, deviceId, deviceName);
+    }
+
+    private async Task SaveBiometricDataAsync(ImportedUser user, Guid? employeeId, Guid? visitorId, CancellationToken ct)
+    {
+        foreach (var card in user.Cards)
+        {
+            if (await dbContext.Cards.AnyAsync(c => c.CardNo == card.CardNo, ct))
+                continue;
+
+            dbContext.Cards.Add(new Card
+            {
+                Id = Guid.NewGuid(),
+                EmployeeId = employeeId,
+                VisitorId = visitorId,
+                CardNo = card.CardNo,
+                CreatedUtc = DateTime.UtcNow
+            });
+        }
+
+        foreach (var fp in user.Fingerprints)
+        {
+            dbContext.Fingerprints.Add(new Fingerprint
+            {
+                Id = Guid.NewGuid(),
+                EmployeeId = employeeId,
+                VisitorId = visitorId,
+                TemplateData = fp.TemplateData,
+                FingerIndex = fp.FingerPrintID,
+                CreatedUtc = DateTime.UtcNow
+            });
+        }
+
+        foreach (var face in user.Faces)
+        {
+            var facesDir = Path.Combine(AppContext.BaseDirectory, "faces");
+            Directory.CreateDirectory(facesDir);
+            var fileName = $"{Guid.NewGuid():N}.jpg";
+            var filePath = Path.Combine(facesDir, fileName);
+            await File.WriteAllBytesAsync(filePath, face.ImageData, ct);
+
+            dbContext.Faces.Add(new Face
+            {
+                Id = Guid.NewGuid(),
+                EmployeeId = employeeId,
+                VisitorId = visitorId,
+                FilePath = Path.Combine("faces", fileName),
+                FDID = face.FDID,
+                CreatedUtc = DateTime.UtcNow
+            });
+        }
+
+        if (user.Cards.Count > 0 || user.Fingerprints.Count > 0 || user.Faces.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "Imported biometrics for {EmployeeNo}: {Cards} cards, {FP} fingerprints, {Faces} faces, {Iris} irises",
+                user.EmployeeNo, user.Cards.Count, user.Fingerprints.Count, user.Faces.Count, user.Irises.Count);
+        }
+    }
+
+    private async Task FetchCardsForUserAsync(IsapiClient client, ImportedUser user, CancellationToken ct)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                CardInfoSearchCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    searchResultPosition = 0,
+                    maxResults = 50,
+                    EmployeeNoList = new[] { new { employeeNo = user.EmployeeNo } }
+                }
+            });
+
+            var (ok, content, _) = await client.PostJsonAsync("ISAPI/AccessControl/CardInfo/Search?format=json", body, ct);
+            if (!ok || string.IsNullOrWhiteSpace(content)) return;
+
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+
+            JsonElement cardList = default;
+            var found = false;
+            if (root.TryGetProperty("CardInfoSearch", out var cis) && cis.TryGetProperty("CardInfo", out var ci)) { cardList = ci; found = true; }
+            else if (root.TryGetProperty("CardInfoSearchResult", out var cisr) && cisr.TryGetProperty("CardInfo", out var ci2)) { cardList = ci2; found = true; }
+            if (!found) return;
+
+            if (cardList.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var card in cardList.EnumerateArray())
+                {
+                    var cardNo = card.TryGetProperty("cardNo", out var cn) ? cn.GetString()?.Trim() : null;
+                    if (string.IsNullOrWhiteSpace(cardNo)) continue;
+                    var cardType = card.TryGetProperty("cardType", out var ct2) ? ct2.GetString() : null;
+                    user.Cards.Add(new ImportedCard(cardNo, cardType));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "CardInfo/Search failed for {EmployeeNo}", user.EmployeeNo);
+        }
+    }
+
+    private async Task FetchFingerprintsForUserAsync(IsapiClient client, ImportedUser user, CancellationToken ct)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                FingerPrintCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    employeeNo = user.EmployeeNo
+                }
+            });
+
+            var (ok, content, _) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
+            if (!ok || string.IsNullOrWhiteSpace(content)) return;
+
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+
+            JsonElement fpList = default;
+            var found = false;
+            foreach (var propName in new[] { "FingerPrintList", "FingerPrintCfg" })
+            {
+                if (root.TryGetProperty(propName, out fpList)) { found = true; break; }
+            }
+
+            if (!found && root.TryGetProperty("FingerPrintInfo", out var fpi))
+            {
+                if (fpi.TryGetProperty("FingerPrintList", out fpList)) found = true;
+                else if (fpi.TryGetProperty("FingerPrintCfg", out fpList)) found = true;
+            }
+
+            if (!found) return;
+
+            var items = fpList.ValueKind == JsonValueKind.Array ? fpList.EnumerateArray().ToList() : [fpList];
+            foreach (var fp in items)
+            {
+                var fpId = fp.TryGetProperty("fingerPrintID", out var idEl) && idEl.TryGetInt32(out var id) ? id : 0;
+                if (fpId <= 0) continue;
+                var dataB64 = fp.TryGetProperty("fingerData", out var d) ? d.GetString() : null;
+                if (string.IsNullOrWhiteSpace(dataB64)) continue;
+                try
+                {
+                    user.Fingerprints.Add(new ImportedFingerprint(fpId, Convert.FromBase64String(dataB64)));
+                }
+                catch { /* invalid base64 */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "FingerPrint fetch failed for {EmployeeNo}", user.EmployeeNo);
+        }
+    }
+
+    private async Task FetchFacesForUserAsync(IsapiClient client, ImportedUser user, CancellationToken ct)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                searchResultPosition = 0,
+                maxResults = 10,
+                faceLibType = "blackFD",
+                FDID = "1",
+                FPID = user.EmployeeNo
+            });
+
+            var (ok, content, _) = await client.PostJsonAsync("ISAPI/Intelligent/FDLib/FDSearch?format=json", body, ct);
+            if (!ok || string.IsNullOrWhiteSpace(content)) return;
+
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+
+            JsonElement matchList = default;
+            var found = false;
+            if (root.TryGetProperty("MatchList", out matchList)) found = true;
+            else if (root.TryGetProperty("matchList", out matchList)) found = true;
+
+            if (!found) return;
+
+            var items = matchList.ValueKind == JsonValueKind.Array ? matchList.EnumerateArray().ToList() : [matchList];
+            foreach (var match in items)
+            {
+                var faceUrl = match.TryGetProperty("faceURL", out var u) ? u.GetString() : null;
+                if (string.IsNullOrWhiteSpace(faceUrl)) continue;
+
+                try
+                {
+                    var (imgOk, imgData, _) = await client.GetBytesAsync(faceUrl, ct);
+                    if (imgOk && imgData is { Length: > 0 })
+                    {
+                        var fdid = match.TryGetProperty("FDID", out var fdEl) && fdEl.TryGetInt32(out var fd) ? fd : 1;
+                        user.Faces.Add(new ImportedFace(imgData, fdid));
+                    }
+                }
+                catch { /* face download failed */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "FDLib/FDSearch failed for {EmployeeNo}", user.EmployeeNo);
+        }
+    }
+
+    private async Task FetchIrisesForUserAsync(IsapiClient client, ImportedUser user, CancellationToken ct)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                IrisInfoSearchCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    employeeNo = user.EmployeeNo
+                }
+            });
+
+            var (ok, content, _) = await client.PostJsonAsync("ISAPI/AccessControl/IrisInfo/Search?format=json", body, ct);
+            if (!ok || string.IsNullOrWhiteSpace(content)) return;
+
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+
+            JsonElement irisList = default;
+            var found = false;
+            if (root.TryGetProperty("IrisInfoList", out irisList)) found = true;
+            else if (root.TryGetProperty("IrisInfoSearch", out var iis) && iis.TryGetProperty("IrisInfo", out irisList)) found = true;
+
+            if (!found) return;
+
+            var items = irisList.ValueKind == JsonValueKind.Array ? irisList.EnumerateArray().ToList() : [irisList];
+            foreach (var iris in items)
+            {
+                var irisId = iris.TryGetProperty("irisID", out var idEl) && idEl.TryGetInt32(out var id) ? id : 0;
+                if (irisId <= 0) continue;
+                var dataB64 = iris.TryGetProperty("irisData", out var d) ? d.GetString() : null;
+                if (string.IsNullOrWhiteSpace(dataB64)) continue;
+                try
+                {
+                    user.Irises.Add(new ImportedIris(irisId, Convert.FromBase64String(dataB64)));
+                }
+                catch { /* invalid base64 */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "IrisInfo/Search failed for {EmployeeNo}", user.EmployeeNo);
+        }
     }
 
     private IsapiClient CreateClient(Device device)

@@ -57,38 +57,36 @@ public static class IsapiFingerPrintDownload
     }
 
     /// <summary>
-    /// Приоритетные тела для PUT FingerPrint/Delete: устройство явно требует корень FingerPrintDelete.
-    /// (MessageParametersLack: required node does not exist.FingerPrintDelete)
+    /// Тело для PUT /ISAPI/AccessControl/FingerPrint/Delete?format=json
+    /// по официальной спецификации Hikvision ISAPI.
+    /// mode=byEmployeeNo — удаление по номеру сотрудника.
     /// </summary>
-    public static IReadOnlyList<string> BuildPrimaryDeleteBodies(string employeeNo, int fingerPrintId)
+    public static string BuildDeleteBody(string employeeNo, int[]? fingerPrintIds = null, int[]? enableCardReader = null, string? deleteFingerPrintType = null)
     {
-        return
-        [
-            // Минимальный вариант — только employeeNo + fingerPrintID.
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?>
-                {
-                    ["FingerPrintDelete"] = new Dictionary<string, object?>
-                    {
-                        ["employeeNo"] = employeeNo,
-                        ["fingerPrintID"] = fingerPrintId,
-                    },
-                },
-                SerializerOptions),
+        var employeeNoDetail = new Dictionary<string, object?>
+        {
+            ["employeeNo"] = employeeNo,
+        };
 
-            // С enableCardReader — некоторые прошивки требуют указать считыватель.
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?>
+        if (enableCardReader is { Length: > 0 })
+            employeeNoDetail["enableCardReader"] = enableCardReader;
+
+        if (fingerPrintIds is { Length: > 0 })
+            employeeNoDetail["fingerPrintID"] = fingerPrintIds;
+
+        if (!string.IsNullOrWhiteSpace(deleteFingerPrintType))
+            employeeNoDetail["deleteFingerPrintType"] = deleteFingerPrintType;
+
+        return JsonSerializer.Serialize(
+            new Dictionary<string, object?>
+            {
+                ["FingerPrintDelete"] = new Dictionary<string, object?>
                 {
-                    ["FingerPrintDelete"] = new Dictionary<string, object?>
-                    {
-                        ["employeeNo"] = employeeNo,
-                        ["fingerPrintID"] = fingerPrintId,
-                        ["enableCardReader"] = new[] { 1 },
-                    },
+                    ["mode"] = "byEmployeeNo",
+                    ["EmployeeNoDetail"] = employeeNoDetail,
                 },
-                SerializerOptions),
-        ];
+            },
+            SerializerOptions);
     }
 
     /// <summary>
