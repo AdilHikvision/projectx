@@ -11,7 +11,9 @@ public enum DeviceType
 {
     AccessController = 1,
     Intercom = 2,
-    AttendanceTerminal = 3
+    AttendanceTerminal = 3,
+    /// <summary>Контроллер лифта (этажи ISAPI = doorID, вызов — RemoteControl).</summary>
+    ElevatorController = 4
 }
 
 public sealed class DeviceStatus : BaseEntity
@@ -134,6 +136,7 @@ public sealed class Employee : BaseEntity
     public ICollection<Card> Cards { get; set; } = new List<Card>();
     public ICollection<Face> Faces { get; set; } = new List<Face>();
     public ICollection<Fingerprint> Fingerprints { get; set; } = new List<Fingerprint>();
+    public ICollection<Iris> Irises { get; set; } = new List<Iris>();
     public ICollection<AttendanceRecord> AttendanceRecords { get; set; } = new List<AttendanceRecord>();
     public ICollection<AttendanceRequest> AttendanceRequests { get; set; } = new List<AttendanceRequest>();
 }
@@ -158,6 +161,7 @@ public sealed class Visitor : BaseEntity
     public ICollection<Card> Cards { get; set; } = new List<Card>();
     public ICollection<Face> Faces { get; set; } = new List<Face>();
     public ICollection<Fingerprint> Fingerprints { get; set; } = new List<Fingerprint>();
+    public ICollection<Iris> Irises { get; set; } = new List<Iris>();
 }
 
 /// <summary>Карта доступа, привязанная к сотруднику или посетителю.</summary>
@@ -203,6 +207,20 @@ public sealed class Fingerprint : BaseEntity
     public byte[] TemplateData { get; set; } = Array.Empty<byte>();
     /// <summary>Индекс пальца (1–10).</summary>
     public int FingerIndex { get; set; } = 1;
+}
+
+/// <summary>Шаблон радужной оболочки, привязанный к сотруднику или посетителю.</summary>
+public sealed class Iris : BaseEntity
+{
+    public Guid? EmployeeId { get; set; }
+    public Employee? Employee { get; set; }
+
+    public Guid? VisitorId { get; set; }
+    public Visitor? Visitor { get; set; }
+
+    public byte[] TemplateData { get; set; } = Array.Empty<byte>();
+    /// <summary>Идентификатор глаза на устройстве (irisID из ISAPI).</summary>
+    public int IrisIndex { get; set; } = 1;
 }
 
 public sealed class EmployeeAccessLevel

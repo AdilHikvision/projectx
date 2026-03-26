@@ -1,50 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-
-function FaceImage({ faceId, token, className }: { faceId: string; token: string | null; className?: string }) {
-  const [src, setSrc] = useState<string | null>(null)
-  const [missing, setMissing] = useState(false)
-  const urlRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!token) return
-    setMissing(false)
-    let cancelled = false
-    fetch(`${getApiBaseUrl()}/api/faces/${faceId}/image`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => {
-        if (!r.ok) {
-          if (r.status === 404 && !cancelled) setMissing(true)
-          return null
-        }
-        return r.blob()
-      })
-      .then((blob) => {
-        if (!cancelled && blob) {
-          if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-          urlRef.current = URL.createObjectURL(blob)
-          setSrc(urlRef.current)
-        }
-      })
-    return () => {
-      cancelled = true
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current)
-        urlRef.current = null
-      }
-      setSrc(null)
-      setMissing(false)
-    }
-  }, [faceId, token])
-  if (missing)
-    return (
-      <div className={`bg-background-light flex items-center justify-center text-text-light ${className ?? ''}`} title="Image unavailable">
-        <span className="material-symbols-outlined text-3xl">person</span>
-      </div>
-    )
-  if (!src) return <div className={className} />
-  return <img src={src} alt="Face" className={className} />
-}
+import { FaceThumbnail } from '../components/FaceThumbnail'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
@@ -74,6 +30,7 @@ interface PersonDetail {
   cards: { id: string; cardNo: string; cardNumber?: string | null }[]
   faces: { id: string; fdid: number }[]
   fingerprints: { id: string; fingerIndex: number }[]
+  irises: { id: string; irisIndex: number }[]
   selfServiceEnabled?: boolean
   selfServiceEmail?: string | null
   selfServiceTempPassword?: string | null
@@ -102,6 +59,7 @@ interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+  isElevator?: boolean
 }
 
 interface Company {
@@ -118,12 +76,13 @@ interface AccessLevel {
 }
 
 
-type CredentialTab = 'cards' | 'faces' | 'fingerprints'
+type CredentialTab = 'cards' | 'faces' | 'fingerprints' | 'irises'
 
 const CREDENTIAL_TABS: { value: CredentialTab; label: string }[] = [
   { value: 'cards', label: 'Cards' },
   { value: 'faces', label: 'Faces' },
   { value: 'fingerprints', label: 'Fingerprints' },
+  { value: 'irises', label: 'Iris' },
 ]
 
 /** Hikvision terminals support up to 10 fingerprint slots (fingerPrintID 1…10). Always send 1 = overwrite first finger each time. */
@@ -735,6 +694,24 @@ export function PersonDetailPage() {
     }
   }
 
+  async function handleDeleteIris(irisId: string) {
+    if (!token) return
+    setError(null)
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/irises/${irisId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { message?: string }).message || 'Delete failed')
+      }
+      await loadDetail()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    }
+  }
+
   async function handleSave() {
     if (!token || !id || !detail) return
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
@@ -860,7 +837,7 @@ export function PersonDetailPage() {
           <div className="flex flex-col md:flex-row items-start gap-6 animate-in slide-in-from-top-4 duration-500">
             <div className="w-24 h-24 md:w-32 md:h-32 rounded-[2rem] bg-primary/10 flex items-center justify-center text-primary text-3xl md:text-4xl font-black shadow-inner border-2 border-primary/5 flex-shrink-0">
               {detail.faces.length > 0 ? (
-                <FaceImage faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover rounded-[2rem]" />
+                <FaceThumbnail faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover rounded-[2rem]" />
               ) : initials}
             </div>
             <div className="flex-1 w-full space-y-4">
@@ -1018,7 +995,10 @@ export function PersonDetailPage() {
                   <Button
                     size="sm"
                     icon="add"
-                    onClick={() =>
+                    disabled={credentialTab === 'irises'}
+                    title={credentialTab === 'irises' ? 'Import irises from a device via People → Import' : undefined}
+                    onClick={() => {
+                      if (credentialTab === 'irises') return
                       setAddModal(
                         credentialTab === 'cards'
                           ? 'card'
@@ -1026,7 +1006,7 @@ export function PersonDetailPage() {
                             ? 'face'
                             : 'fingerprint'
                       )
-                    }
+                    }}
                   >
                     Enroll
                   </Button>
@@ -1069,7 +1049,7 @@ export function PersonDetailPage() {
                       ) : (
                         <div className="relative group">
                           <div className="w-48 h-48 rounded-2xl overflow-hidden shadow-md transition-transform group-hover:scale-105 border-none">
-                            <FaceImage faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover" />
+                            <FaceThumbnail faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover" />
                           </div>
                           <button
                             onClick={() => handleDeleteFace(detail.faces[0].id)}
@@ -1109,6 +1089,40 @@ export function PersonDetailPage() {
                               icon="delete"
                               className="text-error-text opacity-0 group-hover:opacity-100"
                               onClick={() => handleDeleteFingerprint(fp.id)}
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {credentialTab === 'irises' && (
+                    <div className="space-y-3">
+                      {(detail.irises ?? []).length === 0 ? (
+                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">
+                          No iris templates enrolled
+                        </div>
+                      ) : (
+                        (detail.irises ?? []).map((ir) => (
+                          <div
+                            key={ir.id}
+                            className="flex items-center justify-between p-4 bg-background-light rounded-2xl shadow-md group hover:shadow-xl transition-all border-none"
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 bg-white rounded-xl shadow-inner flex items-center justify-center text-primary">
+                                <span className="material-symbols-outlined text-2xl">visibility</span>
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-text-dark">Iris ID #{ir.irisIndex}</p>
+                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Iris template</p>
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              icon="delete"
+                              className="text-error-text opacity-0 group-hover:opacity-100"
+                              onClick={() => handleDeleteIris(ir.id)}
                             />
                           </div>
                         ))

@@ -14,7 +14,13 @@ public sealed class DeviceDoorControlService(
     IConfiguration configuration,
     ILogger<DeviceDoorControlService> logger) : IDeviceDoorControlService
 {
-    public async Task<(bool Success, string? Message)> ControlDoorAsync(Guid deviceId, int doorIndex, DoorControlAction action, CancellationToken cancellationToken = default)
+    public async Task<(bool Success, string? Message)> ControlDoorAsync(
+        Guid deviceId,
+        int doorIndex,
+        DoorControlAction action,
+        int? callNumber = null,
+        string? callElevatorType = null,
+        CancellationToken cancellationToken = default)
     {
         var device = await dbContext.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == deviceId, cancellationToken);
         if (device is null)
@@ -34,7 +40,7 @@ public sealed class DeviceDoorControlService(
         var ports = IsapiPortHelper.GetPortsToTry(device.Port);
         foreach (var port in ports)
         {
-            var (success, message) = await TryControlOnPortAsync(device.IpAddress, port, doorIndex, action, cred, cancellationToken);
+            var (success, message) = await TryControlOnPortAsync(device.IpAddress, port, doorIndex, action, callNumber, callElevatorType, cred, cancellationToken);
             if (success)
             {
                 logger.LogInformation("Door control {Action} for device {Device} door {Door} on port {Port} succeeded", action, device.Name, doorIndex, port);
@@ -52,6 +58,8 @@ public sealed class DeviceDoorControlService(
         int port,
         int doorIndex,
         DoorControlAction action,
+        int? callNumber,
+        string? callElevatorType,
         NetworkCredential cred,
         CancellationToken cancellationToken)
     {
@@ -74,6 +82,15 @@ public sealed class DeviceDoorControlService(
             Timeout = TimeSpan.FromSeconds(10)
         };
 
+        var proUri = new Uri($"{scheme}://{ipAddress}:{port}/ISAPI/AccessControl/RemoteControl/door/{doorId}");
+
+        // Лифт (Pro Series): visitorCallLadder / householdCallLadder — только PUT RemoteControl/door.
+        if (action is DoorControlAction.VisitorCallLadder or DoorControlAction.HouseholdCallLadder)
+        {
+            var elevatorXml = BuildElevatorXml(action, doorId, callNumber, callElevatorType);
+            return await SendControlRequestAsync(client, proUri, HttpMethod.Put, elevatorXml, cancellationToken);
+        }
+
         // Pro Series: PUT /ISAPI/AccessControl/RemoteControl/door/<doorID> с <cmd>open|close|alwaysOpen|alwaysClose</cmd>
         var proCmd = action switch
         {
@@ -87,7 +104,6 @@ public sealed class DeviceDoorControlService(
 <RemoteControlDoor version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema"">
   <cmd>{proCmd}</cmd>
 </RemoteControlDoor>";
-        var proUri = new Uri($"{scheme}://{ipAddress}:{port}/ISAPI/AccessControl/RemoteControl/door/{doorId}");
         var (proOk, proMsg) = await SendControlRequestAsync(client, proUri, HttpMethod.Put, proXml, cancellationToken);
         if (proOk) return (true, null);
         if (proMsg?.Contains("404") != true)
@@ -117,6 +133,35 @@ public sealed class DeviceDoorControlService(
         }
 
         return (false, "Устройство не поддерживает управление дверями.");
+    }
+
+    private static string BuildElevatorXml(DoorControlAction action, int doorId, int? callNumber, string? callElevatorType)
+    {
+        if (action == DoorControlAction.VisitorCallLadder)
+        {
+            return """
+<?xml version="1.0" encoding="UTF-8"?>
+<RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <cmd>visitorCallLadder</cmd>
+</RemoteControlDoor>
+""";
+        }
+
+        var num = callNumber ?? doorId;
+        var dir = string.IsNullOrWhiteSpace(callElevatorType) ? "up" : callElevatorType.Trim().ToLowerInvariant();
+        if (dir != "up" && dir != "down")
+            dir = "up";
+
+        return $"""
+<?xml version="1.0" encoding="UTF-8"?>
+<RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <cmd>householdCallLadder</cmd>
+  <callNumberList>
+    <callNumber>{num}</callNumber>
+  </callNumberList>
+  <callElevatorType>{dir}</callElevatorType>
+</RemoteControlDoor>
+""";
     }
 
     private static async Task<(bool Success, string? Message)> SendControlRequestAsync(

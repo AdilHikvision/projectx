@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { AppLayout } from '../components/templates'
-import { Button } from '../components/atoms'
+import { Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
@@ -54,7 +54,28 @@ function formatDT(iso: string) {
   return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-type PageTab = 'records' | 'requests'
+type PageTab = 'records' | 'requests' | 'schedules'
+
+interface WorkScheduleRow {
+  id: string
+  name: string
+  type: string
+  shiftStart: string | null
+  shiftEnd: string | null
+  requiredHoursPerDay: number
+  createdUtc: string
+}
+
+function timeToInput(isoOrSpan: string | null): string {
+  if (!isoOrSpan) return ''
+  const t = isoOrSpan.length >= 5 ? isoOrSpan.slice(0, 5) : isoOrSpan
+  return /^\d{2}:\d{2}$/.test(t) ? t : ''
+}
+
+function inputTimeToApi(value: string): string | null {
+  if (!value.trim()) return null
+  return value.length === 5 ? `${value}:00` : value
+}
 
 export function WorkHoursTrackingPage() {
   const { token } = useAuth()
@@ -79,14 +100,43 @@ export function WorkHoursTrackingPage() {
   const [reviewComment, setReviewComment] = useState('')
   const [reviewLoading, setReviewLoading] = useState(false)
 
+  const [schedules, setSchedules] = useState<WorkScheduleRow[]>([])
+  const [scheduleModal, setScheduleModal] = useState<'create' | 'edit' | 'delete' | null>(null)
+  const [editingSchedule, setEditingSchedule] = useState<WorkScheduleRow | null>(null)
+  const [scheduleForm, setScheduleForm] = useState({
+    name: '',
+    type: 'Standard' as 'Standard' | 'Shift' | 'Flexible',
+    shiftStart: '09:00',
+    shiftEnd: '18:00',
+    requiredHoursPerDay: '8',
+  })
+  const [scheduleSaving, setScheduleSaving] = useState(false)
+
   useEffect(() => {
     loadMeta()
   }, [])
 
   useEffect(() => {
     if (tab === 'records') loadRecords()
-    else loadRequests()
+    else if (tab === 'requests') loadRequests()
   }, [tab, filterEmployee, filterFrom, filterTo, filterStatus])
+
+  const loadSchedules = useCallback(async () => {
+    if (!token) return
+    setLoading(true)
+    try {
+      const data = await apiRequest<WorkScheduleRow[]>('/api/work-schedules', { token })
+      setSchedules(data)
+    } catch {
+      setSchedules([])
+    } finally {
+      setLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (tab === 'schedules') void loadSchedules()
+  }, [tab, loadSchedules])
 
   const authOpts = { token }
 
@@ -139,6 +189,70 @@ export function WorkHoursTrackingPage() {
     }
   }
 
+  function openCreateSchedule() {
+    setScheduleForm({
+      name: '',
+      type: 'Standard',
+      shiftStart: '09:00',
+      shiftEnd: '18:00',
+      requiredHoursPerDay: '8',
+    })
+    setEditingSchedule(null)
+    setScheduleModal('create')
+  }
+
+  function openEditSchedule(s: WorkScheduleRow) {
+    setEditingSchedule(s)
+    setScheduleForm({
+      name: s.name,
+      type: (['Standard', 'Shift', 'Flexible'].includes(s.type) ? s.type : 'Standard') as 'Standard' | 'Shift' | 'Flexible',
+      shiftStart: timeToInput(s.shiftStart) || '09:00',
+      shiftEnd: timeToInput(s.shiftEnd) || '18:00',
+      requiredHoursPerDay: String(s.requiredHoursPerDay ?? 8),
+    })
+    setScheduleModal('edit')
+  }
+
+  async function saveSchedule() {
+    if (!token) return
+    const name = scheduleForm.name.trim()
+    if (!name) return
+    setScheduleSaving(true)
+    try {
+      const isFlex = scheduleForm.type === 'Flexible'
+      const body = {
+        name,
+        type: scheduleForm.type,
+        shiftStart: isFlex ? null : inputTimeToApi(scheduleForm.shiftStart),
+        shiftEnd: isFlex ? null : inputTimeToApi(scheduleForm.shiftEnd),
+        requiredHoursPerDay: isFlex ? parseFloat(scheduleForm.requiredHoursPerDay) || 8 : parseFloat(scheduleForm.requiredHoursPerDay) || 8,
+      }
+      if (scheduleModal === 'create') {
+        await apiRequest('/api/work-schedules', { method: 'POST', token, body: JSON.stringify(body) })
+      } else if (scheduleModal === 'edit' && editingSchedule) {
+        await apiRequest(`/api/work-schedules/${editingSchedule.id}`, { method: 'PUT', token, body: JSON.stringify(body) })
+      }
+      setScheduleModal(null)
+      setEditingSchedule(null)
+      await loadSchedules()
+    } finally {
+      setScheduleSaving(false)
+    }
+  }
+
+  async function deleteSchedule() {
+    if (!token || !editingSchedule) return
+    setScheduleSaving(true)
+    try {
+      await apiRequest(`/api/work-schedules/${editingSchedule.id}`, { method: 'DELETE', token })
+      setScheduleModal(null)
+      setEditingSchedule(null)
+      await loadSchedules()
+    } finally {
+      setScheduleSaving(false)
+    }
+  }
+
   return (
     <AppLayout onAction={() => {}}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
@@ -148,27 +262,37 @@ export function WorkHoursTrackingPage() {
             <PageHeader
               className="p-0 border-none shadow-none bg-transparent"
               title="Time & attendance"
-              description="Clock-in/out records and employee requests."
+              description="Records, requests, and work schedules (assign a schedule to each employee in their profile)."
             />
           </div>
 
           {/* Tab Bar */}
-          <div className="flex rounded-2xl bg-surface p-1 gap-1 max-w-xs shadow-sm">
+          <div className="flex rounded-2xl bg-surface p-1 gap-1 max-w-md shadow-sm flex-wrap sm:flex-nowrap">
             <button
+              type="button"
               onClick={() => setTab('records')}
-              className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'records' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
+              className={`flex-1 min-w-[88px] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'records' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
             >
               Records
             </button>
             <button
+              type="button"
               onClick={() => setTab('requests')}
-              className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'requests' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
+              className={`flex-1 min-w-[88px] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'requests' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
             >
               Requests
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('schedules')}
+              className={`flex-1 min-w-[88px] py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'schedules' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
+            >
+              Schedules
             </button>
           </div>
 
           {/* Filters */}
+          {tab !== 'schedules' && (
           <div className="bg-surface rounded-2xl p-5 shadow-sm flex flex-wrap gap-4 items-end">
             <div className="space-y-1 flex-1 min-w-[160px]">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Employee</label>
@@ -223,6 +347,81 @@ export function WorkHoursTrackingPage() {
               </div>
             )}
           </div>
+          )}
+
+          {/* Schedules — company work time templates */}
+          {tab === 'schedules' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-xs text-text-light max-w-xl">
+                  Create templates (standard hours, shift, or flexible norm). Assign a schedule to an employee under{' '}
+                  <span className="font-bold text-text-dark">People → employee → Schedule &amp; self-service</span>.
+                </p>
+                <Button type="button" icon="add" onClick={openCreateSchedule}>
+                  New schedule
+                </Button>
+              </div>
+              <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+                  <p className="text-xs font-black text-text-light uppercase tracking-widest">{schedules.length} schedule{schedules.length === 1 ? '' : 's'}</p>
+                </div>
+                {loading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                  </div>
+                ) : schedules.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
+                    <span className="material-symbols-outlined text-4xl">calendar_month</span>
+                    <p className="text-sm">No work schedules yet. Create one to assign in employee profiles.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
+                          <th className="px-5 py-3 text-left">Name</th>
+                          <th className="px-5 py-3 text-left">Type</th>
+                          <th className="px-5 py-3 text-left">Hours</th>
+                          <th className="px-5 py-3 text-left">Norm / day</th>
+                          <th className="px-5 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schedules.map((s) => (
+                          <tr key={s.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
+                            <td className="px-5 py-3 font-bold text-text-dark">{s.name}</td>
+                            <td className="px-5 py-3 text-text-dark">{s.type}</td>
+                            <td className="px-5 py-3 text-text-light text-xs">
+                              {s.type === 'Flexible'
+                                ? '—'
+                                : `${timeToInput(s.shiftStart) || '—'} – ${timeToInput(s.shiftEnd) || '—'}`}
+                            </td>
+                            <td className="px-5 py-3 text-text-light">{s.requiredHoursPerDay} h</td>
+                            <td className="px-5 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => openEditSchedule(s)}
+                                className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline mr-3"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingSchedule(s); setScheduleModal('delete') }}
+                                className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Records Table */}
           {tab === 'records' && (
@@ -369,6 +568,94 @@ export function WorkHoursTrackingPage() {
               onClick={handleReview}
             >
               {reviewModal?.action === 'approve' ? 'Approve' : 'Reject'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={scheduleModal === 'create' || scheduleModal === 'edit'}
+        onClose={() => { setScheduleModal(null); setEditingSchedule(null) }}
+        title={scheduleModal === 'create' ? 'New work schedule' : 'Edit work schedule'}
+      >
+        <div className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Name</label>
+            <Input
+              value={scheduleForm.name}
+              onChange={(e) => setScheduleForm((p) => ({ ...p, name: e.target.value }))}
+              placeholder="e.g. Office 9–18"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Type</label>
+            <select
+              value={scheduleForm.type}
+              onChange={(e) => setScheduleForm((p) => ({ ...p, type: e.target.value as typeof p.type }))}
+              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            >
+              <option value="Standard">Standard (fixed shift)</option>
+              <option value="Shift">Shift</option>
+              <option value="Flexible">Flexible (hours per day)</option>
+            </select>
+          </div>
+          {scheduleForm.type !== 'Flexible' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Shift start</label>
+                <input
+                  type="time"
+                  value={scheduleForm.shiftStart}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, shiftStart: e.target.value }))}
+                  className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Shift end</label>
+                <input
+                  type="time"
+                  value={scheduleForm.shiftEnd}
+                  onChange={(e) => setScheduleForm((p) => ({ ...p, shiftEnd: e.target.value }))}
+                  className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                />
+              </div>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
+              {scheduleForm.type === 'Flexible' ? 'Required hours per day' : 'Norm (hours / day, for reports)'}
+            </label>
+            <Input
+              type="number"
+              min={0.5}
+              max={24}
+              step={0.5}
+              value={scheduleForm.requiredHoursPerDay}
+              onChange={(e) => setScheduleForm((p) => ({ ...p, requiredHoursPerDay: e.target.value }))}
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null) }}>Cancel</Button>
+            <Button fullWidth isLoading={scheduleSaving} onClick={saveSchedule} disabled={!scheduleForm.name.trim()}>
+              {scheduleModal === 'create' ? 'Create' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={scheduleModal === 'delete'}
+        onClose={() => { setScheduleModal(null); setEditingSchedule(null) }}
+        title="Delete schedule"
+      >
+        <div className="space-y-4 pt-2">
+          <p className="text-sm text-text-dark">
+            Delete <strong>{editingSchedule?.name}</strong>? Employees using this schedule will need another one assigned.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null) }}>Cancel</Button>
+            <Button variant="danger" fullWidth isLoading={scheduleSaving} onClick={deleteSchedule}>
+              Delete
             </Button>
           </div>
         </div>

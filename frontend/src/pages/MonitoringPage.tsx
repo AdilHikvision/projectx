@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button } from '../components/atoms'
 import { PageHeader } from '../components/organisms'
-import { apiRequest } from '../lib/api'
+import { apiRequest, getHubUrl } from '../lib/api'
 
 interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
+  isElevator?: boolean
 }
 
 interface AccessLevel {
@@ -24,6 +26,13 @@ interface DeviceDoor {
   doorIndex: number
   doorName?: string | null
   status?: string | null
+  isElevator?: boolean
+}
+
+function floorOrDoorLine(d: AccessLevelDoor) {
+  const no = d.doorIndex + 1
+  if (d.isElevator) return `Floor ${no} (ISAPI door ${no})`
+  return `Door ${no}`
 }
 
 interface DeviceEvent {
@@ -31,14 +40,55 @@ interface DeviceEvent {
   eventType: number
   occurredUtc: string
   payload: string
+  summary?: string | null
 }
 
 const EVENT_TYPES: Record<number, string> = {
   0: 'Unknown',
-  1: 'DoorOpened',
-  2: 'AccessGranted',
-  3: 'AccessDenied',
+  1: 'Door opened',
+  2: 'Access granted',
+  3: 'Access denied',
   4: 'Heartbeat',
+  5: 'Door closed',
+  6: 'Auth timeout',
+  7: 'Device operation',
+}
+
+const TIMELINE_PAGE_SIZE = 10
+
+function buildActivityPresentation(evt: DeviceEvent): {
+  headline: string
+  category: string
+  lines: { label: string; value: string }[]
+} {
+  const category = EVENT_TYPES[evt.eventType] ?? 'Event'
+  const headline = (evt.summary && evt.summary.trim()) || category
+  const lines: { label: string; value: string }[] = []
+  try {
+    const j = JSON.parse(evt.payload) as Record<string, unknown>
+    if (typeof j.dateTime === 'string' && j.dateTime)
+      lines.push({ label: 'Device time', value: j.dateTime })
+    if (typeof j.eventDescription === 'string' && j.eventDescription && j.eventDescription !== 'Access Controller Event')
+      lines.push({ label: 'Description', value: j.eventDescription })
+    const ac = j.AccessControllerEvent as Record<string, unknown> | undefined
+    if (ac && typeof ac === 'object') {
+      if (ac.majorEventType != null && ac.subEventType != null)
+        lines.push({ label: 'Major / minor', value: `${ac.majorEventType} / ${ac.subEventType}` })
+      if (typeof ac.deviceName === 'string' && ac.deviceName)
+        lines.push({ label: 'Controller', value: ac.deviceName })
+      if (typeof ac.remoteHostAddr === 'string' && ac.remoteHostAddr)
+        lines.push({ label: 'Remote host', value: ac.remoteHostAddr })
+      if (ac.serialNo != null)
+        lines.push({ label: 'Serial no.', value: String(ac.serialNo) })
+      if (typeof ac.label === 'string' && ac.label)
+        lines.push({ label: 'Label', value: ac.label })
+    }
+    if (typeof j.shortSerialNumber === 'string' && j.shortSerialNumber)
+      lines.push({ label: 'Unit S/N', value: j.shortSerialNumber })
+  } catch {
+    /* ignore */
+  }
+  return { headline, category, lines }
 }
 
 export function MonitoringPage() {
@@ -48,6 +98,7 @@ export function MonitoringPage() {
   const [events, setEvents] = useState<DeviceEvent[]>([])
   const [doorControlLoading, setDoorControlLoading] = useState<string | null>(null)
   const [eventsFilter, setEventsFilter] = useState<'all' | 'doors' | 'access'>('all')
+  const [eventsPage, setEventsPage] = useState(1)
   const [error, setError] = useState<string | null>(null)
 
   const loadAccessLevels = useCallback(async () => {
@@ -80,6 +131,9 @@ export function MonitoringPage() {
     }
   }, [token])
 
+  const loadEventsRef = useRef(loadEvents)
+  loadEventsRef.current = loadEvents
+
   useEffect(() => {
     loadAccessLevels()
     loadOnlineDoors()
@@ -87,9 +141,48 @@ export function MonitoringPage() {
 
   useEffect(() => {
     loadEvents()
-    const interval = setInterval(loadEvents, 3000)
+    const interval = setInterval(() => loadEventsRef.current(), 8000)
     return () => clearInterval(interval)
   }, [loadEvents])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    let hub: HubConnection | null = null
+
+    void (async () => {
+      try {
+        hub = new HubConnectionBuilder()
+          .withUrl(`${getHubUrl()}/hubs/devices`, {
+            accessTokenFactory: () => token,
+            skipNegotiation: true,
+            transport: HttpTransportType.WebSockets,
+          })
+          .withAutomaticReconnect({
+            nextRetryDelayInMilliseconds: (ctx) => Math.min(1000 * 2 ** ctx.previousRetryCount, 30000),
+          })
+          .configureLogging(LogLevel.Error)
+          .build()
+
+        hub.on('LiveDeviceEvent', (evt: DeviceEvent) => {
+          if (!evt?.deviceIdentifier || cancelled) return
+          setEvents((prev) => {
+            const next = [evt, ...prev]
+            return next.slice(0, 400)
+          })
+        })
+
+        await hub.start()
+      } catch {
+        /* polling remains */
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      void hub?.stop()
+    }
+  }, [token])
 
   const onlineDoorSet = useMemo(
     () => new Set(onlineDoors.map((d) => `${d.deviceId}:${d.doorIndex}`)),
@@ -118,14 +211,59 @@ export function MonitoringPage() {
     }
   }
 
+  async function handleElevatorControl(
+    deviceId: string,
+    doorIndex: number,
+    action: 'visitorCallLadder' | 'householdCallLadder',
+    callElevatorType?: 'up' | 'down'
+  ) {
+    if (!token) return
+    const key = `${deviceId}-${doorIndex}-${action}-${callElevatorType ?? ''}`
+    setDoorControlLoading(key)
+    setError(null)
+    try {
+      await apiRequest(`/api/devices/${deviceId}/doors/${doorIndex}/control`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          action,
+          ...(action === 'householdCallLadder' ? { callElevatorType: callElevatorType ?? 'up' } : {}),
+        }),
+      })
+      await loadOnlineDoors()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Elevator control failed')
+    } finally {
+      setDoorControlLoading(null)
+    }
+  }
+
   const filteredEvents = useMemo(() => {
     if (eventsFilter === 'all') return events
     if (eventsFilter === 'doors')
-      return events.filter((e) => e.eventType === 1) // DoorOpened
+      return events.filter((e) => e.eventType === 1 || e.eventType === 5)
     if (eventsFilter === 'access')
-      return events.filter((e) => e.eventType === 2 || e.eventType === 3) // AccessGranted, AccessDenied
+      return events.filter((e) => e.eventType === 2 || e.eventType === 3 || e.eventType === 6)
     return events
   }, [events, eventsFilter])
+
+  useEffect(() => {
+    setEventsPage(1)
+  }, [eventsFilter])
+
+  const timelinePage = useMemo(() => {
+    const reversed = [...filteredEvents].reverse()
+    const totalPages = Math.max(1, Math.ceil(reversed.length / TIMELINE_PAGE_SIZE))
+    const page = Math.min(eventsPage, totalPages)
+    const slice = reversed.slice((page - 1) * TIMELINE_PAGE_SIZE, page * TIMELINE_PAGE_SIZE)
+    return { reversed, totalPages, page, slice }
+  }, [filteredEvents, eventsPage])
+
+  useEffect(() => {
+    const reversed = [...filteredEvents].reverse()
+    const totalPages = Math.max(1, Math.ceil(reversed.length / TIMELINE_PAGE_SIZE))
+    setEventsPage((p) => Math.min(p, totalPages))
+  }, [filteredEvents])
 
   return (
     <AppLayout onAction={() => { loadAccessLevels(); loadOnlineDoors(); loadEvents(); }}>
@@ -168,7 +306,7 @@ export function MonitoringPage() {
 
           {/* Access Levels Section */}
           <div className="space-y-4">
-            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Door Control Units</h2>
+            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Doors & elevators</h2>
             <div className="space-y-3">
               {accessLevels.length === 0 ? (
                 <div className="py-20 text-center bg-surface rounded-2xl border border-divider-light shadow-sm">
@@ -188,7 +326,7 @@ export function MonitoringPage() {
                           {level.description && <p className="text-[10px] font-bold text-text-light uppercase tracking-tight">{level.description}</p>}
                         </div>
                       </div>
-                      <Badge variant="neutral">{level.doors?.length || 0} Doors</Badge>
+                      <Badge variant="neutral">{level.doors?.length || 0} points</Badge>
                     </div>
                     <div className="p-2 space-y-1">
                       {(level.doors ?? []).map((d) => {
@@ -198,16 +336,45 @@ export function MonitoringPage() {
                           <div key={controlKey} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors">
                             <div>
                               <p className="text-xs font-bold text-text-dark">{d.deviceName}</p>
-                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Port {d.doorIndex}</p>
+                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{floorOrDoorLine(d)}</p>
                             </div>
                             <div className="flex items-center gap-2">
                               {online ? (
-                                <div className="flex gap-1">
-                                  <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
-                                  <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
-                                </div>
+                                d.isElevator ? (
+                                  <div className="flex flex-wrap gap-1 justify-end max-w-[220px]">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="badge"
+                                      title="Call elevator (visitor)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'visitorCallLadder')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="north"
+                                      title="Call elevator (resident, up)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'up')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      icon="south"
+                                      title="Call elevator (resident, down)"
+                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'down')}
+                                      disabled={!!doorControlLoading}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="flex gap-1">
+                                    <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+                                    <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+                                  </div>
+                                )
                               ) : (
                                 <span className="text-[8px] font-black text-error-text uppercase tracking-widest px-2 py-1 bg-error-bg/30 rounded-full">Offline</span>
                               )}
@@ -244,41 +411,107 @@ export function MonitoringPage() {
               {filteredEvents.length === 0 ? (
                 <div className="py-20 text-center bg-surface/50 rounded-2xl border border-dashed border-divider-light">
                   <span className="material-symbols-outlined text-4xl text-text-light/50 mb-2">browse_activity</span>
-                  <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Awaiting system heartbeats...</p>
+                  <p className="text-[10px] font-black text-text-light uppercase tracking-widest">No activity yet — connect a device or wait for events.</p>
                 </div>
               ) : (
-                [...filteredEvents].reverse().slice(0, 50).map((evt, idx) => {
-                  const isGranted = evt.eventType === 2
-                  const isDenied = evt.eventType === 3
-                  const timeStr = new Date(evt.occurredUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                  const icon = isDenied ? 'block' : isGranted ? 'verified_user' : 'meeting_room'
+                <>
+                  {timelinePage.slice.map((evt, idx) => {
+                    const pres = buildActivityPresentation(evt)
+                    const isGranted = evt.eventType === 2
+                    const isDenied = evt.eventType === 3
+                    const isTimeout = evt.eventType === 6
+                    const isDoorClose = evt.eventType === 5
+                    const isHeartbeat = evt.eventType === 4
+                    const isDeviceOp = evt.eventType === 7
+                    const timeStr = new Date(evt.occurredUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    const icon =
+                      isDenied ? 'block'
+                        : isGranted ? 'verified_user'
+                          : isTimeout ? 'hourglass_disabled'
+                            : isDoorClose ? 'door_front'
+                              : isHeartbeat ? 'monitor_heart'
+                                : isDeviceOp ? 'settings_remote'
+                                  : evt.eventType === 1 ? 'door_open'
+                                    : 'sensors'
 
-                  return (
-                    <div key={`${evt.occurredUtc}-${idx}`} className="flex gap-4 group animate-in slide-in-from-left-2 duration-300">
-                      <div className="flex flex-col items-center shrink-0">
-                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm transition-transform group-hover:scale-110 ${isGranted ? 'bg-emerald-50 text-emerald-500' :
-                          isDenied ? 'bg-error-bg text-error-text' :
-                            'bg-surface text-primary'
-                          }`}>
-                          <span className="material-symbols-outlined text-xl">{icon}</span>
+                    return (
+                      <div
+                        key={`${evt.deviceIdentifier}-${evt.occurredUtc}-${evt.eventType}-p${timelinePage.page}-${idx}`}
+                        className="flex gap-4 group animate-in slide-in-from-left-2 duration-300"
+                      >
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm transition-transform group-hover:scale-110 ${isGranted ? 'bg-emerald-50 text-emerald-500' :
+                            isDenied || isTimeout ? 'bg-error-bg text-error-text' :
+                              isHeartbeat ? 'bg-slate-100 text-text-light' :
+                                isDeviceOp ? 'bg-amber-50 text-amber-700' :
+                                  'bg-surface text-primary'
+                            }`}>
+                            <span className="material-symbols-outlined text-xl">{icon}</span>
+                          </div>
+                          <div className="w-0.5 flex-1 bg-border-light group-last:bg-transparent mt-2" />
                         </div>
-                        <div className="w-0.5 flex-1 bg-border-light group-last:bg-transparent mt-2" />
+                        <div className="flex-1 pb-6">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-sm font-black leading-snug ${isDenied || isTimeout ? 'text-error-text' : 'text-text-dark'}`}>
+                                {pres.headline}
+                              </p>
+                              <p className="text-[9px] font-bold text-text-light uppercase tracking-widest mt-0.5">{pres.category}</p>
+                            </div>
+                            <p className="text-[10px] font-bold text-text-light font-mono shrink-0">{timeStr}</p>
+                          </div>
+                          <div className="bg-surface p-3 rounded-2xl shadow-md space-y-2">
+                            {pres.lines.length > 0 ? (
+                              <dl className="space-y-1.5">
+                                {pres.lines.map((row) => (
+                                  <div key={row.label} className="flex gap-2 text-[10px] leading-snug">
+                                    <dt className="text-text-light font-bold uppercase tracking-tighter shrink-0 w-[88px]">{row.label}</dt>
+                                    <dd className="text-text-dark font-medium break-words">{row.value}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            ) : null}
+                            <p className="text-[10px] font-black text-text-light uppercase tracking-tighter opacity-70 border-t border-divider-light/60 pt-2">
+                              Station: {evt.deviceIdentifier}
+                            </p>
+                            <details className="text-[9px] text-text-light">
+                              <summary className="cursor-pointer font-bold uppercase tracking-widest opacity-70 hover:opacity-100">Raw JSON</summary>
+                              <pre className="mt-2 p-2 bg-slate-50 rounded-lg overflow-x-auto max-h-40 text-[9px] font-mono whitespace-pre-wrap break-all">{evt.payload || '—'}</pre>
+                            </details>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 pb-6">
-                        <div className="flex items-center justify-between mb-1">
-                          <p className={`text-xs font-black uppercase tracking-widest ${isDenied ? 'text-error-text' : 'text-text-dark'}`}>
-                            {EVENT_TYPES[evt.eventType] || 'System Message'}
-                          </p>
-                          <p className="text-[10px] font-bold text-text-light font-mono">{timeStr}</p>
-                        </div>
-                        <div className="bg-surface p-3 rounded-2xl shadow-md">
-                          <p className="text-xs font-bold text-text-dark leading-tight mb-1">{evt.payload || 'Signal received from hub'}</p>
-                          <p className="text-[10px] font-black text-text-light uppercase tracking-tighter opacity-70">Station: {evt.deviceIdentifier}</p>
-                        </div>
-                      </div>
+                    )
+                  })}
+                  {timelinePage.totalPages > 1 ? (
+                    <div className="flex items-center justify-center gap-3 pt-2 pb-4">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        icon="chevron_left"
+                        title="Previous page"
+                        disabled={timelinePage.page <= 1}
+                        onClick={() => setEventsPage((p) => Math.max(1, p - 1))}
+                      />
+                      <span className="text-[10px] font-black text-text-light uppercase tracking-widest tabular-nums">
+                        Page {timelinePage.page} / {timelinePage.totalPages}
+                        <span className="text-text-muted font-bold normal-case"> ({filteredEvents.length} total)</span>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        icon="chevron_right"
+                        title="Next page"
+                        disabled={timelinePage.page >= timelinePage.totalPages}
+                        onClick={() => setEventsPage((p) => Math.min(timelinePage.totalPages, p + 1))}
+                      />
                     </div>
-                  )
-                })
+                  ) : (
+                    <p className="text-center text-[9px] font-bold text-text-light uppercase tracking-widest pb-2 opacity-60">
+                      {filteredEvents.length} event{filteredEvents.length === 1 ? '' : 's'}
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>

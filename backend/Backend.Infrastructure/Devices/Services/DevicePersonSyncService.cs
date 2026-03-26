@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure.Devices;
@@ -753,36 +754,34 @@ public sealed class DevicePersonSyncService(
         // doorRight — строка "1" или "1,2,3" (формат, ожидаемый Face Recognition Terminals и Controllers)
         var doorRightStr = string.Join(",", doorNoList);
 
-        // RightPlan — обязателен (MessageParametersLack без него). planTemplateNo: "1" или 1 в зависимости от прошивки.
+        // RightPlan — обязателен (MessageParametersLack без него). doorNo — число, planTemplateNo — "1" (как в ответе устройства).
         var rightPlan = doorNoList.Select(d => new { doorNo = d, planTemplateNo = "1" }).ToArray();
 
-        var userInfo = new
+        // userType: "blackList" (не "block list") — реальные устройства Hikvision возвращают blackList
+        var userTypeStr = userCategory.Equals("block list", StringComparison.OrdinalIgnoreCase) ? "blackList" : userCategory;
+
+        var userInfo = new Dictionary<string, object?>
         {
-            employeeNo,
-            no = employeeNo,
-            name,
-            type = userType,
-            userType = userCategory,
-            givenName,
-            familyName,
-            gender = genderValue,
-            doorRight = doorRightStr,
-            RightPlan = rightPlan,
-            onlyVerify,
-            localUIRight = false,
-            maxOpenDoorTime = 0,
-            userVerifyMode = "",
-            password = "",
-            telNo = "",
-            email = "",
-            Valid = new { enable = true, beginTime, endTime, timeType = "local" }
+            ["employeeNo"] = employeeNo,
+            ["name"] = name,
+            ["type"] = userType,
+            ["userType"] = userTypeStr,
+            ["givenName"] = givenName,
+            ["familyName"] = familyName,
+            ["gender"] = genderValue,
+            ["doorRight"] = doorRightStr,
+            ["RightPlan"] = rightPlan,
+            ["onlyVerify"] = onlyVerify,
+            ["localUIRight"] = false,
+            ["maxOpenDoorTime"] = 0,
+            ["Valid"] = new Dictionary<string, object> { ["enable"] = true, ["beginTime"] = beginTime, ["endTime"] = endTime, ["timeType"] = "local" }
         };
 
-        // Пробуем camelCase (rightPlan) — некоторые прошивки ожидают его
-        var body = JsonSerializer.Serialize(new { UserInfo = userInfo }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = null, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+        var recordBody = JsonSerializer.Serialize(new Dictionary<string, object> { ["UserInfo"] = userInfo }, jsonOpts);
 
         var client = CreateClient(device);
-        var (success, error) = await TrySyncUserInfoWithRetryAsync(client, employeeNo, body, cancellationToken);
+        var (success, error) = await TrySyncUserInfoWithRetryAsync(client, employeeNo, recordBody, userInfo, jsonOpts, cancellationToken);
 
         if (!success)
         {
@@ -792,12 +791,17 @@ public sealed class DevicePersonSyncService(
         return new DeviceSyncResult(true, null);
     }
 
-    private async Task<(bool Success, string? Error)> TrySyncUserInfoWithRetryAsync(IsapiClient client, string employeeNo, string body, CancellationToken cancellationToken)
+    private async Task<(bool Success, string? Error)> TrySyncUserInfoWithRetryAsync(
+        IsapiClient client,
+        string employeeNo,
+        string recordBody,
+        Dictionary<string, object?> userInfo,
+        JsonSerializerOptions jsonOpts,
+        CancellationToken cancellationToken)
     {
-        // Record (POST) + Modify (PUT) — стандартная схема. SetUp даёт MessageParametersLack (другая структура).
         var (success, _, error) = await client.PostJsonAsync(
             "ISAPI/AccessControl/UserInfo/Record?format=json",
-            body,
+            recordBody,
             cancellationToken);
 
         if (success) return (true, null);
@@ -806,10 +810,7 @@ public sealed class DevicePersonSyncService(
             || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase)))
         {
             logger.LogDebug("UserInfo Record: employeeNoAlreadyExist for {EmployeeNo}, retrying with Modify", employeeNo);
-            (success, _, error) = await client.PutJsonAsync(
-                "ISAPI/AccessControl/UserInfo/Modify?format=json",
-                body,
-                cancellationToken);
+            (success, _, error) = await TryModifyAsync(client, employeeNo, userInfo, jsonOpts, cancellationToken);
             if (success) return (true, null);
         }
 
@@ -818,19 +819,47 @@ public sealed class DevicePersonSyncService(
             await Task.Delay(1500, cancellationToken);
             (success, _, error) = await client.PostJsonAsync(
                 "ISAPI/AccessControl/UserInfo/Record?format=json",
-                body,
+                recordBody,
                 cancellationToken);
             if (success) return (true, null);
             if (error != null && (error.Contains("employeeNoAlreadyExist", StringComparison.OrdinalIgnoreCase) || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase)))
             {
-                (success, _, error) = await client.PutJsonAsync(
-                    "ISAPI/AccessControl/UserInfo/Modify?format=json",
-                    body,
-                    cancellationToken);
+                (success, _, error) = await TryModifyAsync(client, employeeNo, userInfo, jsonOpts, cancellationToken);
             }
         }
 
         return (success, error);
+    }
+
+    private async Task<(bool Success, string? Content, string? Error)> TryModifyAsync(
+        IsapiClient client,
+        string employeeNo,
+        Dictionary<string, object?> userInfo,
+        JsonSerializerOptions jsonOpts,
+        CancellationToken cancellationToken)
+    {
+        var plainBody = JsonSerializer.Serialize(new Dictionary<string, object> { ["UserInfo"] = userInfo }, jsonOpts);
+        var (success, content, error) = await client.PutJsonAsync(
+            "ISAPI/AccessControl/UserInfo/Modify?format=json",
+            plainBody,
+            cancellationToken);
+
+        if (success) return (true, content, null);
+        if (error != null && error.Contains("Invalid Content", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogDebug("UserInfo Modify plain failed, retrying with UserInfoDetail wrapper");
+            var modifyBody = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["UserInfoDetail"] = new Dictionary<string, object>
+                {
+                    ["mode"] = "byEmployeeNo",
+                    ["EmployeeNoList"] = new Dictionary<string, object> { ["EmployeeNo"] = new[] { employeeNo } }
+                },
+                ["UserInfo"] = userInfo
+            }, jsonOpts);
+            return await client.PutJsonAsync("ISAPI/AccessControl/UserInfo/Modify?format=json", modifyBody, cancellationToken);
+        }
+        return (success, content, error);
     }
 
     private static bool IsConnectionError(string? error) =>

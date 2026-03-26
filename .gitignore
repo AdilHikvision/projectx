@@ -5,6 +5,7 @@ frontend/dist/
 artifacts/
 backend/wwwroot/
 backend/uploads/
+backend/SdkLog/
 .DS_Store
 Thumbs.db
 linuxSDK

@@ -151,7 +151,7 @@ public sealed class DeviceDoorService(
                 var doorCount = await TryGetDoorCountViaSdkAsync(device, cred, cancellationToken);
                 var count = doorCount ?? 1;
                 var doors = Enumerable.Range(0, count)
-                    .Select(i => new DeviceDoor(device.Id, device.Name, i, null, "—"))
+                    .Select(i => new DeviceDoor(device.Id, device.Name, i, null, "—", device.DeviceType == DeviceType.ElevatorController))
                     .ToList();
                 logger.LogInformation("GateStatus {Device}: 404 — ISAPI не поддерживается, SDK вернул {Count} дверей", device.Name, doorCount.HasValue ? doorCount.Value.ToString() : "fallback 1");
                 return (doors, null);
@@ -296,7 +296,7 @@ public sealed class DeviceDoorService(
                 var doorName = hasDoorNames && idx < doorNameList.GetArrayLength()
                     ? doorNameList[idx].GetString()
                     : null;
-                result.Add(new DeviceDoor(device.Id, device.Name, idx, doorName, statusStr));
+                result.Add(new DeviceDoor(device.Id, device.Name, idx, doorName, statusStr, device.DeviceType == DeviceType.ElevatorController));
                 idx++;
             }
         }
@@ -381,7 +381,8 @@ public sealed class DeviceDoorService(
                     device.Name,
                     doorIndex,
                     string.IsNullOrWhiteSpace(doorName) ? null : doorName,
-                    string.IsNullOrWhiteSpace(status) ? null : status));
+                    string.IsNullOrWhiteSpace(status) ? null : status,
+                    device.DeviceType == DeviceType.ElevatorController));
             }
 
             if (result.Count == 0)
@@ -396,7 +397,7 @@ public sealed class DeviceDoorService(
                     {
                         var status = children[i].Descendants()
                             .FirstOrDefault(x => string.Equals(x.Name.LocalName, "status", StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
-                        result.Add(new DeviceDoor(device.Id, device.Name, i, null, status));
+                        result.Add(new DeviceDoor(device.Id, device.Name, i, null, status, device.DeviceType == DeviceType.ElevatorController));
                     }
                 }
             }
@@ -411,7 +412,7 @@ public sealed class DeviceDoorService(
                 {
                     var doorNo = noEl != null && int.TryParse(noEl.Value?.Trim(), out var n) ? n : 1;
                     var doorIndex = doorNo > 0 ? doorNo - 1 : 0;
-                    result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, null, statusEl?.Value?.Trim()));
+                    result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, null, statusEl?.Value?.Trim(), device.DeviceType == DeviceType.ElevatorController));
                 }
             }
         }
@@ -443,7 +444,7 @@ public sealed class DeviceDoorService(
                     var name = item.TryGetProperty("gateName", out var n) ? n.GetString() : item.TryGetProperty("name", out var n2) ? n2.GetString() : null;
                     var no = item.TryGetProperty("gateNo", out var g) ? g.GetInt32() : item.TryGetProperty("gateIndex", out var g2) ? g2.GetInt32() : idx;
                     var doorIndex = no > 0 ? no - 1 : idx;
-                    result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, name, status));
+                    result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, name, status, device.DeviceType == DeviceType.ElevatorController));
                     idx++;
                 }
             }
@@ -458,7 +459,7 @@ public sealed class DeviceDoorService(
                         var name = item.TryGetProperty("gateName", out var n) ? n.GetString() : null;
                         var no = item.TryGetProperty("gateNo", out var g) ? g.GetInt32() : idx;
                         var doorIndex = no > 0 ? no - 1 : idx;
-                        result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, name, status));
+                        result.Add(new DeviceDoor(device.Id, device.Name, doorIndex, name, status, device.DeviceType == DeviceType.ElevatorController));
                         idx++;
                     }
                 }

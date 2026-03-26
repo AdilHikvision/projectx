@@ -51,8 +51,7 @@ public sealed class DeviceFaceCaptureService(
         }
 
         var client = CreateClient(device);
-
-        logger.LogInformation("[CaptureFace] Start device={Device} employeeNo={EmployeeNo}", device.Name, employeeNo);
+        logger.LogInformation("[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}", device.Name, device.IpAddress, device.Port, employeeNo, personType);
 
         await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
 
@@ -81,6 +80,8 @@ public sealed class DeviceFaceCaptureService(
 
         if (ParseStatusCodeError(content) is { } errMsg)
             return new DeviceSyncResult(false, errMsg);
+
+        logger.LogInformation("[CaptureFace] CaptureFaceData OK for {Device}. Response: {Content}", device.Name, (content?.Length ?? 0) > 200 ? content![..200] + "..." : content ?? "(empty)");
 
         Sessions[deviceId] = new CaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
         return new DeviceSyncResult(true, null);

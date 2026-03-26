@@ -6,6 +6,7 @@ import { Badge, Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
+import { FaceThumbnail } from '../components/FaceThumbnail'
 
 interface EmployeeResponse {
   id: string
@@ -18,9 +19,11 @@ interface EmployeeResponse {
   isActive: boolean
   onlyVerify?: boolean
   accessLevelNames: string[]
+  primaryFaceId?: string | null
   cardsCount: number
   facesCount: number
   fingerprintsCount: number
+  irisesCount: number
 }
 
 interface VisitorResponse {
@@ -32,9 +35,11 @@ interface VisitorResponse {
   validToUtc?: string | null
   isActive: boolean
   accessLevelNames: string[]
+  primaryFaceId?: string | null
   cardsCount: number
   facesCount: number
   fingerprintsCount: number
+  irisesCount: number
 }
 
 interface AccessLevel {
@@ -100,7 +105,17 @@ export function PeopleManagementPage() {
     importedCount: number
     skippedCount: number
     errorCount: number
-    items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+    items: {
+      employeeNo: string
+      name: string
+      deviceName: string
+      success: boolean
+      message?: string
+      cardsImported?: number
+      facesImported?: number
+      fingerprintsImported?: number
+      irisesImported?: number
+    }[]
   } | null>(null)
 
   const loadEmployees = useCallback(async () => {
@@ -398,7 +413,17 @@ export function PeopleManagementPage() {
         importedCount: number
         skippedCount: number
         errorCount: number
-        items: { employeeNo: string; name: string; deviceName: string; success: boolean; message?: string }[]
+        items: {
+          employeeNo: string
+          name: string
+          deviceName: string
+          success: boolean
+          message?: string
+          cardsImported?: number
+          facesImported?: number
+          fingerprintsImported?: number
+          irisesImported?: number
+        }[]
       }>('/api/people/import-from-devices', {
         method: 'POST',
         token,
@@ -567,9 +592,11 @@ export function PeopleManagementPage() {
             ) : (
               list.map((item) => {
                 const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '')
-                const subtitle = item.type === 'employee'
-                  ? `${item.cardsCount} Cards • ${item.facesCount} Faces`
-                  : `Valid: ${item.validFromUtc?.slice(0, 10) || 'N/A'} - ${item.validToUtc?.slice(0, 10) || 'N/A'} • ${item.cardsCount} Cards`
+                const credLine = `${item.cardsCount} cards • ${item.facesCount} faces • ${item.fingerprintsCount} fingerprints • ${item.irisesCount ?? 0} irises`
+                const subtitle =
+                  item.type === 'employee'
+                    ? credLine
+                    : `Valid: ${item.validFromUtc?.slice(0, 10) || '—'} – ${item.validToUtc?.slice(0, 10) || '—'} • ${credLine}`
 
                 return (
                   <div
@@ -578,8 +605,12 @@ export function PeopleManagementPage() {
                     className="flex items-center justify-between p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl active:scale-[0.99] transition-all cursor-pointer group"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 flex items-center justify-center bg-primary/10 rounded-2xl text-primary font-black text-sm uppercase">
-                        {initials || '?'}
+                      <div className="w-12 h-12 shrink-0 rounded-2xl overflow-hidden bg-primary/10 flex items-center justify-center">
+                        {item.primaryFaceId ? (
+                          <FaceThumbnail faceId={item.primaryFaceId} token={token} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-primary font-black text-sm uppercase">{initials || '?'}</span>
+                        )}
                       </div>
                       <div>
                         <h4 className="text-base font-black text-text-dark leading-tight">{item.firstName} {item.lastName}</h4>
@@ -672,6 +703,23 @@ export function PeopleManagementPage() {
                   <p className="text-xl font-black text-error-text">{importResult.errorCount}</p>
                 </div>
               </div>
+              {(() => {
+                const cred = importResult.items.reduce(
+                  (a, i) => ({
+                    cards: a.cards + (i.cardsImported ?? 0),
+                    faces: a.faces + (i.facesImported ?? 0),
+                    fps: a.fps + (i.fingerprintsImported ?? 0),
+                    ir: a.ir + (i.irisesImported ?? 0),
+                  }),
+                  { cards: 0, faces: 0, fps: 0, ir: 0 }
+                )
+                if (cred.cards + cred.faces + cred.fps + cred.ir === 0) return null
+                return (
+                  <p className="text-xs text-text-muted text-center">
+                    Pulled from devices: cards — {cred.cards}, faces — {cred.faces}, fingerprints — {cred.fps}, irises — {cred.ir}
+                  </p>
+                )
+              })()}
               <Button fullWidth variant="outline" onClick={closeImportModal}>Close</Button>
             </div>
           )}

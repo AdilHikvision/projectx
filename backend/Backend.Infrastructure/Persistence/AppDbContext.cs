@@ -30,6 +30,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Card> Cards => Set<Card>();
     public DbSet<Face> Faces => Set<Face>();
     public DbSet<Fingerprint> Fingerprints => Set<Fingerprint>();
+    public DbSet<Iris> Irises => Set<Iris>();
     public DbSet<WorkSchedule> WorkSchedules => Set<WorkSchedule>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
@@ -186,6 +187,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Employee).WithMany(x => x.Fingerprints).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Fingerprints).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
             entity.HasCheckConstraint("CK_Fingerprints_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+        });
+
+        builder.Entity<Iris>(entity =>
+        {
+            entity.ToTable("irises");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TemplateData).IsRequired();
+            entity.HasOne(x => x.Employee).WithMany(x => x.Irises).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Visitor).WithMany(x => x.Irises).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasCheckConstraint("CK_Irises_Owner", "(\"EmployeeId\" IS NOT NULL AND \"VisitorId\" IS NULL) OR (\"EmployeeId\" IS NULL AND \"VisitorId\" IS NOT NULL)");
         });
 
         builder.Entity<WorkSchedule>(entity =>
