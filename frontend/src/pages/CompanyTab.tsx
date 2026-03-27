@@ -548,34 +548,35 @@ export function CompanyTab() {
               
               return (
                 <div key={company.id} className="bg-surface rounded-3xl p-8 shadow-md border-none overflow-hidden">
-                  <div className="flex items-center justify-between mb-6">
-                    <div>
-                      <h4 className="text-lg font-black text-text-dark">{company.name}</h4>
+                  <div className="flex items-center justify-between mb-6 gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-lg font-black text-text-dark truncate">{company.name}</h4>
                       {company.description && <p className="text-xs text-text-light">{company.description}</p>}
                     </div>
-                    {mode === 'Multiple' && (
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          onClick={() => {
-                            setCompanyForm({ name: company.name, description: company.description ?? '' })
-                            setEditingId(company.id)
-                            setModal('edit-company')
-                          }}
-                        >
-                          ✎
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon="edit"
+                        onClick={() => {
+                          setCompanyForm({ name: company.name, description: company.description ?? '' })
+                          setEditingId(company.id)
+                          setModal('edit-company')
+                        }}
+                      >
+                        {mode === 'Single' ? 'Название' : 'Изменить'}
+                      </Button>
+                      {mode === 'Multiple' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           className="text-red-500 hover:bg-red-50"
                           onClick={() => handleDelete('company', company)}
                         >
                           ×
                         </Button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
                   {rootDepts.length === 0 ? (
@@ -764,16 +765,23 @@ export function CompanyTab() {
           onClose={() => setModal(null)}
         >
           <div className="space-y-4">
-            <Input 
-              value={companyForm.name} 
-              onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
-              placeholder="Company name"
-            />
-            <Input 
-              value={companyForm.description} 
-              onChange={e => setCompanyForm({ ...companyForm, description: e.target.value })}
-              placeholder="Description (optional)"
-            />
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Name</label>
+              <Input 
+                value={companyForm.name} 
+                onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
+                placeholder="Company name"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Description</label>
+              <Input 
+                value={companyForm.description} 
+                onChange={e => setCompanyForm({ ...companyForm, description: e.target.value })}
+                placeholder="Optional"
+              />
+            </div>
             <Button fullWidth onClick={handleSubmitCompany} isLoading={isSubmitting} disabled={!companyForm.name.trim()}>
               {modal === 'add-company' ? 'Add' : 'Save'}
             </Button>

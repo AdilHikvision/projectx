@@ -38,23 +38,34 @@ public sealed class DeviceCardCaptureService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
+        var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+
         string employeeNo;
         if (personType == "employee")
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
             if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
-            var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
-            if (!syncRes.Success) return syncRes;
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
         }
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
             if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
-            var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
-            if (!syncRes.Success) return syncRes;
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
         }
+
+        if (isEnroller)
+            logger.LogInformation("[CaptureCard] Enroller station: skip UserInfo sync");
 
         // ISAPI doc: Card Capture is GET /ISAPI/AccessControl/CaptureCardInfo?format=json
         // It puts device into "waiting for card swipe" mode.
@@ -63,22 +74,48 @@ public sealed class DeviceCardCaptureService(
 
         logger.LogInformation("[CaptureCard] Start device={Device} employeeNo={EmpNo}", device.Name, employeeNo);
 
-        // Try GET first (documented for terminals)
+        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
+        // Enroller / accessories: в доке только GET …&readerID= (без timeout). Сначала простой запрос — иначе 400.
         var (ok, content, err) = await client.GetAsync(
-            "ISAPI/AccessControl/CaptureCardInfo?format=json", cancellationToken);
+            $"ISAPI/AccessControl/CaptureCardInfo?format=json&readerID={readerId}", cancellationToken);
 
         if (!ok)
         {
-            // Fallback: POST CaptureCardInfo (some older devices)
-            var postBody = JsonSerializer.Serialize(new { CaptureCardInfo = new { employeeNo } });
+            // Pro Series: GET с readerID и timeout.
+            (ok, content, err) = await client.GetAsync(
+                $"ISAPI/AccessControl/CaptureCardInfo?format=json&readerID={readerId}&timeout=60", cancellationToken);
+        }
+
+        if (!ok)
+        {
+            (ok, content, err) = await client.GetAsync(
+                $"ISAPI/AccessControl/CaptureCardInfo?format=json&readerID={readerId}&timeout=30", cancellationToken);
+        }
+
+        if (!ok)
+        {
+            (ok, content, err) = await client.GetAsync(
+                "ISAPI/AccessControl/CaptureCardInfo?format=json", cancellationToken);
+        }
+
+        if (!ok)
+        {
+            var postBody = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["CaptureCardInfo"] = new Dictionary<string, object>
+                {
+                    ["employeeNo"] = employeeNo,
+                    ["readerID"] = readerId,
+                    ["timeout"] = 60,
+                },
+            });
             (ok, content, err) = await client.PostJsonAsync(
                 "ISAPI/AccessControl/CaptureCardInfo?format=json", postBody, cancellationToken);
         }
 
         if (!ok)
         {
-            // Fallback: POST CaptureCardData (legacy name)
-            var postBody2 = JsonSerializer.Serialize(new { CaptureCardData = new { employeeNo } });
+            var postBody2 = JsonSerializer.Serialize(new { CaptureCardData = new { employeeNo, readerID = readerId } });
             (ok, content, err) = await client.PostJsonAsync(
                 "ISAPI/AccessControl/CaptureCardData?format=json", postBody2, cancellationToken);
         }
@@ -129,11 +166,14 @@ public sealed class DeviceCardCaptureService(
         }
 
         var client = CreateClient(device);
+        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
 
-        // Poll various possible progress/capture endpoints
+        // Poll various possible progress/capture endpoints (энроллер: сначала без timeout)
         string? content = null;
         foreach (var path in new[]
         {
+            $"ISAPI/AccessControl/CaptureCardInfo?format=json&readerID={readerId}",
+            $"ISAPI/AccessControl/CaptureCardInfo?format=json&readerID={readerId}&timeout=60",
             "ISAPI/AccessControl/CaptureCardInfo?format=json",
             "ISAPI/AccessControl/CaptureCardData/Progress?format=json",
         })

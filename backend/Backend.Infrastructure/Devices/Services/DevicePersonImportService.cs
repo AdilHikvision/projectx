@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure.Devices;
@@ -18,6 +20,15 @@ public sealed class DevicePersonImportService(
     IConfiguration configuration,
     ILogger<DevicePersonImportService> logger) : IDevicePersonImportService
 {
+    /// <summary>ISAPI JSON: узлы в PascalCase, как в документации Hikvision (не camelCase по умолчанию).</summary>
+    private static readonly JsonSerializerOptions IsapiPascalJson = new()
+    {
+        PropertyNamingPolicy = null,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private static readonly ConcurrentDictionary<string, byte> IrisNotSupportLogged = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyCollection<ImportedUser>> FetchUsersFromDeviceAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
@@ -61,17 +72,62 @@ public sealed class DevicePersonImportService(
             }
 
             var users = ParseUserInfoSearchResponse(content, deviceId, device.Name);
-            if (users.Count == 0)
+            TryParseUserInfoSearchMeta(content, out var numInPage, out var totalMatches, out var responseStatusStrg);
+
+            if (users.Count == 0 && numInPage == 0)
                 break;
+
+            if (users.Count == 0 && numInPage > 0)
+            {
+                logger.LogWarning(
+                    "UserInfo/Search {Device}: в ответе numOfMatches={Num}, но не удалось разобрать ни одной записи (проверьте регистр полей JSON).",
+                    device.Name,
+                    numInPage);
+                searchPosition += numInPage;
+                if (numInPage < maxResults)
+                    break;
+                if (totalMatches.HasValue && searchPosition >= totalMatches.Value)
+                    break;
+                continue;
+            }
+
+            if (numInPage > 0 && users.Count < numInPage)
+            {
+                logger.LogWarning(
+                    "UserInfo/Search {Device}: распарсено {Parsed} из {Num} (часть записей отброшена — проверьте формат UserInfo).",
+                    device.Name,
+                    users.Count,
+                    numInPage);
+            }
 
             all.AddRange(users);
-            if (users.Count < maxResults)
+
+            var advance = numInPage > 0 ? numInPage : users.Count;
+            searchPosition += advance;
+
+            // totalMatches: пока не выгрузили все записи — продолжаем (иначе при numOfMatches=30 и maxResults=100
+            // ошибочно выходили после первой страницы, хотя responseStatusStrg=MORE и totalMatches=49).
+            if (totalMatches.HasValue && searchPosition >= totalMatches.Value)
                 break;
 
-            searchPosition += users.Count;
-            if (searchPosition >= 1000)
+            if (!totalMatches.HasValue)
+            {
+                if (string.Equals(responseStatusStrg, "OK", StringComparison.OrdinalIgnoreCase))
+                    break;
+                if (advance < maxResults && !string.Equals(responseStatusStrg, "MORE", StringComparison.OrdinalIgnoreCase))
+                    break;
+            }
+
+            const int maxSearchPosition = 100_000;
+            if (searchPosition >= maxSearchPosition)
+            {
+                logger.LogWarning("UserInfo/Search {Device}: достигнут лимит смещения {Max}.", device.Name, maxSearchPosition);
                 break;
+            }
         }
+
+        // Карты/биометрия не подгружаются здесь: тот же объём запросов выполняется один раз в ImportCredentialsFromDeviceAsync
+        // (снимок UserInfo из списка + при необходимости fallback’и), иначе получался двойной трафик на устройство.
 
         return all;
     }
@@ -149,7 +205,7 @@ public sealed class DevicePersonImportService(
                             var clientV = CreateClient(device);
                             var credV = await ImportCredentialsFromDeviceAsync(
                                 clientV, device, empNo, employeeId: null, visitorId: visitorExisting.Id, user.UserInfoSnapshotJson, cancellationToken, replaceExistingBiometrics: true);
-                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства", credV.Cards, credV.Faces, credV.Fingerprints));
+                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства", credV.Cards, credV.Faces, credV.Fingerprints, credV.Irises));
                             seenEmployeeNo.Add(empNo);
                             imported++;
                             continue;
@@ -162,7 +218,7 @@ public sealed class DevicePersonImportService(
                             var clientV = CreateClient(device);
                             var credV = await ImportCredentialsFromDeviceAsync(
                                 clientV, device, empNo, employeeId: employeeExisting.Id, visitorId: null, user.UserInfoSnapshotJson, cancellationToken, replaceExistingBiometrics: true);
-                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства (как сотрудник)", credV.Cards, credV.Faces, credV.Fingerprints));
+                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства (как сотрудник)", credV.Cards, credV.Faces, credV.Fingerprints, credV.Irises));
                             seenEmployeeNo.Add(empNo);
                             imported++;
                             continue;
@@ -193,7 +249,7 @@ public sealed class DevicePersonImportService(
                         var clientV2 = CreateClient(device);
                         var credV2 = await ImportCredentialsFromDeviceAsync(
                             clientV2, device, empNo, employeeId: null, visitorId: visitor.Id, user.UserInfoSnapshotJson, cancellationToken);
-                        items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, null, credV2.Cards, credV2.Faces, credV2.Fingerprints));
+                        items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, null, credV2.Cards, credV2.Faces, credV2.Fingerprints, credV2.Irises));
                         seenEmployeeNo.Add(empNo);
                         imported++;
                         continue;
@@ -212,7 +268,7 @@ public sealed class DevicePersonImportService(
                             var clientE = CreateClient(device);
                             var credE = await ImportCredentialsFromDeviceAsync(
                                 clientE, device, empNo, employeeId: employeeExisting.Id, visitorId: null, user.UserInfoSnapshotJson, cancellationToken, replaceExistingBiometrics: true);
-                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства", credE.Cards, credE.Faces, credE.Fingerprints));
+                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства", credE.Cards, credE.Faces, credE.Fingerprints, credE.Irises));
                             seenEmployeeNo.Add(empNo);
                             imported++;
                             continue;
@@ -225,7 +281,7 @@ public sealed class DevicePersonImportService(
                             var clientE = CreateClient(device);
                             var credE = await ImportCredentialsFromDeviceAsync(
                                 clientE, device, empNo, employeeId: null, visitorId: visitorExisting.Id, user.UserInfoSnapshotJson, cancellationToken, replaceExistingBiometrics: true);
-                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства (как посетитель)", credE.Cards, credE.Faces, credE.Fingerprints));
+                            items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, "Обновлено с устройства (как посетитель)", credE.Cards, credE.Faces, credE.Fingerprints, credE.Irises));
                             seenEmployeeNo.Add(empNo);
                             imported++;
                             continue;
@@ -263,7 +319,7 @@ public sealed class DevicePersonImportService(
                         var clientE2 = CreateClient(device);
                         var credE2 = await ImportCredentialsFromDeviceAsync(
                             clientE2, device, empNo, employeeId: employee.Id, visitorId: null, user.UserInfoSnapshotJson, cancellationToken);
-                        items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, null, credE2.Cards, credE2.Faces, credE2.Fingerprints));
+                        items.Add(new PersonImportItem(empNo, user.Name, deviceId, device.Name, true, null, credE2.Cards, credE2.Faces, credE2.Fingerprints, credE2.Irises));
                         seenEmployeeNo.Add(empNo);
                         imported++;
                     }
@@ -307,6 +363,47 @@ public sealed class DevicePersonImportService(
             v.ValidToUtc = vTo.Kind == DateTimeKind.Utc ? vTo : DateTime.SpecifyKind(vTo, DateTimeKind.Utc);
     }
 
+    /// <summary>Смещение пагинации должно совпадать с numOfMatches из ответа, а не с числом успешно распарсенных записей.</summary>
+    private static bool TryParseUserInfoSearchMeta(string json, out int numOfMatches, out int? totalMatches, out string? responseStatusStrg)
+    {
+        numOfMatches = 0;
+        totalMatches = null;
+        responseStatusStrg = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!TryGetPropertyInsensitive(root, "UserInfoSearch", out var search) &&
+                !TryGetPropertyInsensitive(root, "UserInfoSearchResult", out search))
+                return false;
+
+            if (TryGetPropertyInsensitive(search, "numOfMatches", out var nm))
+            {
+                if (nm.TryGetInt32(out var n))
+                    numOfMatches = n;
+                else if (nm.ValueKind == JsonValueKind.String && int.TryParse(nm.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var ns))
+                    numOfMatches = ns;
+            }
+
+            if (TryGetPropertyInsensitive(search, "totalMatches", out var tm))
+            {
+                if (tm.TryGetInt32(out var t))
+                    totalMatches = t;
+                else if (tm.ValueKind == JsonValueKind.String && int.TryParse(tm.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var ts))
+                    totalMatches = ts;
+            }
+
+            if (TryGetPropertyInsensitive(search, "responseStatusStrg", out var rss) && rss.ValueKind == JsonValueKind.String)
+                responseStatusStrg = rss.GetString();
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static List<ImportedUser> ParseUserInfoSearchResponse(string json, Guid deviceId, string deviceName)
     {
         var result = new List<ImportedUser>();
@@ -317,17 +414,14 @@ public sealed class DevicePersonImportService(
 
             JsonElement userList = default;
             var found = false;
-            if (root.TryGetProperty("UserInfoSearch", out var search))
+            JsonElement search;
+            if (TryGetPropertyInsensitive(root, "UserInfoSearch", out search) ||
+                TryGetPropertyInsensitive(root, "UserInfoSearchResult", out search))
             {
-                if (search.TryGetProperty("UserInfo", out var ui)) { userList = ui; found = true; }
-                else if (search.TryGetProperty("UserInfoList", out var uil)) { userList = uil; found = true; }
+                if (TryGetPropertyInsensitive(search, "UserInfo", out var ui)) { userList = ui; found = true; }
+                else if (TryGetPropertyInsensitive(search, "UserInfoList", out var uil)) { userList = uil; found = true; }
             }
-            else if (root.TryGetProperty("UserInfoSearchResult", out var searchResult))
-            {
-                if (searchResult.TryGetProperty("UserInfo", out var ui)) { userList = ui; found = true; }
-                else if (searchResult.TryGetProperty("UserInfoList", out var uil)) { userList = uil; found = true; }
-            }
-            else if (root.TryGetProperty("UserInfo", out var directUi))
+            else if (TryGetPropertyInsensitive(root, "UserInfo", out var directUi))
             {
                 userList = directUi;
                 found = true;
@@ -361,25 +455,21 @@ public sealed class DevicePersonImportService(
 
     private static ImportedUser? ParseUserInfoElement(JsonElement el, Guid deviceId, string deviceName)
     {
-        if (!el.TryGetProperty("employeeNo", out var empNoEl))
+        if (!TryGetEmployeeNoFromUserInfoElement(el, out var employeeNo))
             return null;
 
-        var employeeNo = empNoEl.GetString()?.Trim() ?? "";
-        if (string.IsNullOrEmpty(employeeNo))
-            return null;
-
-        var name = el.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-        var givenName = el.TryGetProperty("givenName", out var gn) ? gn.GetString() : null;
-        var familyName = el.TryGetProperty("familyName", out var fn) ? fn.GetString() : null;
-        var type = el.TryGetProperty("type", out var typeEl) && typeEl.TryGetInt32(out var t) ? t : 1;
-        var userType = el.TryGetProperty("userType", out var utEl) ? utEl.GetString() : null;
-        var gender = el.TryGetProperty("gender", out var g) ? g.GetString() : null;
+        var name = TryGetPropertyInsensitive(el, "name", out var nameEl) ? GetJsonStringOrNumber(nameEl) ?? "" : "";
+        var givenName = TryGetPropertyInsensitive(el, "givenName", out var gn) ? GetJsonStringOrNumber(gn) : null;
+        var familyName = TryGetPropertyInsensitive(el, "familyName", out var fn) ? GetJsonStringOrNumber(fn) : null;
+        var type = TryFindIntCaseInsensitive(el, "type", out var t) ? t : 1;
+        var userType = TryGetPropertyInsensitive(el, "userType", out var utEl) ? GetJsonStringOrNumber(utEl) : null;
+        var gender = TryGetPropertyInsensitive(el, "gender", out var g) ? GetJsonStringOrNumber(g) : null;
 
         string? validBegin = null, validEnd = null;
-        if (el.TryGetProperty("Valid", out var validEl))
+        if (TryGetPropertyInsensitive(el, "Valid", out var validEl))
         {
-            if (validEl.TryGetProperty("beginTime", out var bt)) validBegin = bt.GetString();
-            if (validEl.TryGetProperty("endTime", out var et)) validEnd = et.GetString();
+            if (TryGetPropertyInsensitive(validEl, "beginTime", out var bt)) validBegin = GetJsonStringOrNumber(bt);
+            if (TryGetPropertyInsensitive(validEl, "endTime", out var et)) validEnd = GetJsonStringOrNumber(et);
         }
 
         if (string.IsNullOrWhiteSpace(name) && (givenName != null || familyName != null))
@@ -388,9 +478,69 @@ public sealed class DevicePersonImportService(
         if (string.IsNullOrWhiteSpace(name))
             name = employeeNo;
 
-        var onlyVerify = el.TryGetProperty("onlyVerify", out var ovEl) && ovEl.ValueKind == JsonValueKind.True;
+        var onlyVerify = TryGetPropertyInsensitive(el, "onlyVerify", out var ovEl) && ovEl.ValueKind == JsonValueKind.True;
         return new ImportedUser(employeeNo, name, givenName, familyName, type, userType, gender, validBegin, validEnd, onlyVerify, deviceId, deviceName, el.GetRawText());
     }
+
+    /// <summary>
+    /// Номер сотрудника в ответах UserInfo/Search бывает в employeeNo, employeeNoString или внутри EmployeeNoDetail (Pro/Value Series).
+    /// </summary>
+    private static bool TryGetEmployeeNoFromUserInfoElement(JsonElement el, out string employeeNo)
+    {
+        employeeNo = "";
+        if (TryGetPropertyInsensitive(el, "employeeNo", out var empNoEl))
+        {
+            var s = GetJsonStringOrNumber(empNoEl)?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(s))
+            {
+                employeeNo = s;
+                return true;
+            }
+        }
+
+        if (TryGetPropertyInsensitive(el, "employeeNoString", out var empStrEl))
+        {
+            var s = GetJsonStringOrNumber(empStrEl)?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(s))
+            {
+                employeeNo = s;
+                return true;
+            }
+        }
+
+        if (TryGetPropertyInsensitive(el, "EmployeeNoDetail", out var detail) && detail.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetPropertyInsensitive(detail, "employeeNo", out var d1))
+            {
+                var s = GetJsonStringOrNumber(d1)?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(s))
+                {
+                    employeeNo = s;
+                    return true;
+                }
+            }
+
+            if (TryGetPropertyInsensitive(detail, "employeeNoString", out var d2))
+            {
+                var s = GetJsonStringOrNumber(d2)?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(s))
+                {
+                    employeeNo = s;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string? GetJsonStringOrNumber(JsonElement el) =>
+        el.ValueKind switch
+        {
+            JsonValueKind.String => el.GetString(),
+            JsonValueKind.Number when el.TryGetInt64(out var n) => n.ToString(CultureInfo.InvariantCulture),
+            _ => null
+        };
 
     private IsapiClient CreateClient(Device device)
     {
@@ -466,11 +616,17 @@ public sealed class DevicePersonImportService(
         var fps = await fpQuery.ToListAsync(cancellationToken);
         dbContext.Fingerprints.RemoveRange(fps);
 
-        if (faces.Count > 0 || fps.Count > 0)
+        var irisQuery = employeeId.HasValue
+            ? dbContext.Irises.Where(x => x.EmployeeId == employeeId)
+            : dbContext.Irises.Where(x => x.VisitorId == visitorId);
+        var irises = await irisQuery.ToListAsync(cancellationToken);
+        dbContext.Irises.RemoveRange(irises);
+
+        if (faces.Count > 0 || fps.Count > 0 || irises.Count > 0)
             await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<(int Cards, int Faces, int Fingerprints)> ImportCredentialsFromDeviceAsync(
+    private async Task<(int Cards, int Faces, int Fingerprints, int Irises)> ImportCredentialsFromDeviceAsync(
         IsapiClient client,
         Device device,
         string employeeNo,
@@ -480,8 +636,8 @@ public sealed class DevicePersonImportService(
         CancellationToken cancellationToken,
         bool replaceExistingBiometrics = false)
     {
-        if (employeeId is null && visitorId is null) return (0, 0, 0);
-        if (employeeId is not null && visitorId is not null) return (0, 0, 0);
+        if (employeeId is null && visitorId is null) return (0, 0, 0, 0);
+        if (employeeId is not null && visitorId is not null) return (0, 0, 0, 0);
 
         try
         {
@@ -609,13 +765,109 @@ public sealed class DevicePersonImportService(
             if (fpsAdded > 0)
                 await dbContext.SaveChangesAsync(cancellationToken);
 
-            return (cardsAdded, facesAdded, fpsAdded);
+            var irisRows = await FetchIrisesFromIrisInfoSearchAsync(client, device.Name, employeeNo, cancellationToken);
+            irisRows = irisRows
+                .GroupBy(x => x.IrisId)
+                .Select(g => g.OrderByDescending(x => x.Data.Length).First())
+                .ToList();
+
+            var irisesAdded = 0;
+            foreach (var (irisIdx, data) in irisRows)
+            {
+                if (data.Length == 0) continue;
+                var idx = irisIdx > 0 ? irisIdx : 1;
+                var exists = employeeId.HasValue
+                    ? await dbContext.Irises.AsNoTracking().AnyAsync(i => i.EmployeeId == employeeId && i.IrisIndex == idx, cancellationToken)
+                    : await dbContext.Irises.AsNoTracking().AnyAsync(i => i.VisitorId == visitorId && i.IrisIndex == idx, cancellationToken);
+                if (exists) continue;
+
+                dbContext.Irises.Add(new Iris
+                {
+                    Id = Guid.NewGuid(),
+                    EmployeeId = employeeId,
+                    VisitorId = visitorId,
+                    IrisIndex = idx,
+                    TemplateData = data,
+                    CreatedUtc = DateTime.UtcNow
+                });
+                irisesAdded++;
+            }
+
+            if (irisesAdded > 0)
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+            return (cardsAdded, facesAdded, fpsAdded, irisesAdded);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Импорт учётных данных не выполнен для {EmployeeNo} ({Device})", employeeNo, device.Name);
-            return (0, 0, 0);
+            return (0, 0, 0, 0);
         }
+    }
+
+    private async Task<List<(int IrisId, byte[] Data)>> FetchIrisesFromIrisInfoSearchAsync(
+        IsapiClient client,
+        string deviceName,
+        string employeeNo,
+        CancellationToken ct)
+    {
+        var result = new List<(int IrisId, byte[] Data)>();
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                IrisInfoSearchCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    employeeNo
+                }
+            });
+
+            var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/IrisInfo/Search?format=json", body, ct);
+            if (!string.IsNullOrWhiteSpace(content) &&
+                content.Contains("\"notSupport\"", StringComparison.OrdinalIgnoreCase))
+            {
+                if (IrisNotSupportLogged.TryAdd(deviceName, 0))
+                    logger.LogDebug("IrisInfo/Search: устройство не поддерживает радужку (notSupport), {Device}", deviceName);
+                return result;
+            }
+
+            LogImportIsapiResponse(deviceName, employeeNo, "POST IrisInfo/Search", ok, err, content);
+            if (!ok || string.IsNullOrWhiteSpace(content)) return result;
+
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+
+            JsonElement irisList = default;
+            var found = false;
+            if (root.TryGetProperty("IrisInfoList", out irisList)) found = true;
+            else if (root.TryGetProperty("IrisInfoSearch", out var iis) && iis.TryGetProperty("IrisInfo", out irisList)) found = true;
+
+            if (!found) return result;
+
+            var items = irisList.ValueKind == JsonValueKind.Array ? irisList.EnumerateArray().ToList() : [irisList];
+            foreach (var iris in items)
+            {
+                var irisId = iris.TryGetProperty("irisID", out var idEl) && idEl.TryGetInt32(out var id) ? id : 0;
+                if (irisId <= 0) continue;
+                var dataB64 = iris.TryGetProperty("irisData", out var d) ? d.GetString() : null;
+                if (string.IsNullOrWhiteSpace(dataB64)) continue;
+                try
+                {
+                    result.Add((irisId, Convert.FromBase64String(dataB64)));
+                }
+                catch
+                {
+                    /* invalid base64 */
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "IrisInfo/Search failed for {EmployeeNo}", employeeNo);
+        }
+
+        return result;
     }
 
     /// <summary>Ultra/Pro: условие поиска по списку employeeNo — форматы <c>EmployeeNoList</c> на прошивках различаются.</summary>
@@ -1017,6 +1269,27 @@ public sealed class DevicePersonImportService(
         if (hasFace) return 0;
 
         var emp = employeeNo.Trim();
+
+        // Один минимальный FDSearch (часто хватает) — до полного перебора FDID/типов библиотек не трогаем GET Intelligent/FDLib.
+        var quickBody = JsonSerializer.Serialize(new
+        {
+            searchResultPosition = 0,
+            maxResults = 10,
+            faceLibType = "blackFD",
+            FDID = "1",
+            FPID = emp
+        });
+        var (okQuick, contentQuick, errQuick) = await client.PostJsonAsync("ISAPI/Intelligent/FDLib/FDSearch?format=json", quickBody, cancellationToken);
+        LogImportIsapiResponse(device.Name, emp, "POST Intelligent/FDLib/FDSearch (quick)", okQuick, errQuick, contentQuick);
+        if (okQuick && !string.IsNullOrWhiteSpace(contentQuick))
+        {
+            var quickMatches = ExtractMatchListItems(contentQuick);
+            var quickFiltered = FilterFdMatchesForEmployee(quickMatches, emp);
+            var savedQuick = await TrySaveFirstFaceFromFilteredMatchesAsync(
+                client, employeeId, visitorId, quickFiltered, cancellationToken);
+            if (savedQuick > 0) return savedQuick;
+        }
+
         var bodies = await BuildFdSearchRequestBodiesAsync(client, device.Name, emp, cancellationToken);
         for (var bi = 0; bi < bodies.Count; bi++)
         {
@@ -1046,29 +1319,43 @@ public sealed class DevicePersonImportService(
             var filtered = FilterFdMatchesForEmployee(matches, emp);
             if (filtered.Count == 0) continue;
 
-            foreach (var match in filtered)
+            var saved = await TrySaveFirstFaceFromFilteredMatchesAsync(
+                client, employeeId, visitorId, filtered, cancellationToken);
+            if (saved > 0) return saved;
+        }
+
+        return 0;
+    }
+
+    private async Task<int> TrySaveFirstFaceFromFilteredMatchesAsync(
+        IsapiClient client,
+        Guid? employeeId,
+        Guid? visitorId,
+        IReadOnlyList<JsonElement> filtered,
+        CancellationToken cancellationToken)
+    {
+        foreach (var match in filtered)
+        {
+            var bytes = await TryGetFaceImageBytesFromMatchAsync(client, match, cancellationToken);
+            if (bytes is null || bytes.Length == 0 || !IsLikelyRasterImage(bytes))
+                continue;
+
+            var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+            Directory.CreateDirectory(facesPath);
+            var fileName = $"{Guid.NewGuid():N}.jpg";
+            await File.WriteAllBytesAsync(Path.Combine(facesPath, fileName), bytes, cancellationToken);
+
+            dbContext.Faces.Add(new Face
             {
-                var bytes = await TryGetFaceImageBytesFromMatchAsync(client, match, cancellationToken);
-                if (bytes is null || bytes.Length == 0 || !IsLikelyRasterImage(bytes))
-                    continue;
-
-                var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
-                Directory.CreateDirectory(facesPath);
-                var fileName = $"{Guid.NewGuid():N}.jpg";
-                await File.WriteAllBytesAsync(Path.Combine(facesPath, fileName), bytes, cancellationToken);
-
-                dbContext.Faces.Add(new Face
-                {
-                    Id = Guid.NewGuid(),
-                    EmployeeId = employeeId,
-                    VisitorId = visitorId,
-                    FilePath = fileName,
-                    FDID = 1,
-                    CreatedUtc = DateTime.UtcNow
-                });
-                await dbContext.SaveChangesAsync(cancellationToken);
-                return 1;
-            }
+                Id = Guid.NewGuid(),
+                EmployeeId = employeeId,
+                VisitorId = visitorId,
+                FilePath = fileName,
+                FDID = 1,
+                CreatedUtc = DateTime.UtcNow
+            });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return 1;
         }
 
         return 0;
@@ -1326,6 +1613,18 @@ public sealed class DevicePersonImportService(
         var enc = Uri.EscapeDataString(employeeNo);
         var (ok, content, err) = await client.GetAsync($"ISAPI/AccessControl/FingerPrint/Count?format=json&employeeNo={enc}", ct);
         LogImportIsapiResponse(deviceName, employeeNo, "GET FingerPrint/Count", ok, err, content);
+        if (!ok && err?.Contains("404", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var postBody = JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["FingerPrintCond"] = new Dictionary<string, object?> { ["employeeNo"] = employeeNo },
+                },
+                IsapiPascalJson);
+            (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrint/Count?format=json", postBody, ct);
+            LogImportIsapiResponse(deviceName, employeeNo, "POST FingerPrint/Count", ok, err, content);
+        }
+
         if (!ok || string.IsNullOrWhiteSpace(content)) return 0;
         try
         {
@@ -1364,8 +1663,68 @@ public sealed class DevicePersonImportService(
         string employeeNo,
         CancellationToken ct)
     {
+        // Прошивки Value/Pro ожидают узел FingerPrintCond (ошибка MessageParametersLack / FingerPrintCond).
+        // Часть терминалов — плоский employeeNo в FingerPrintCond; часть — EmployeeNoList или mode=byEmployeeNo.
+        var condFlat = new Dictionary<string, object?>
+        {
+            ["employeeNo"] = employeeNo,
+            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+            ["searchResultPosition"] = 0,
+            ["maxResults"] = 10,
+            ["enableCardReader"] = new[] { 1 },
+        };
+        var condFlatNoReader = new Dictionary<string, object?>
+        {
+            ["employeeNo"] = employeeNo,
+            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+            ["searchResultPosition"] = 0,
+            ["maxResults"] = 10,
+        };
+        var condByEmployeeNoMode = new Dictionary<string, object?>
+        {
+            ["mode"] = "byEmployeeNo",
+            ["EmployeeNoDetail"] = new Dictionary<string, object?>
+            {
+                ["employeeNo"] = employeeNo,
+                ["enableCardReader"] = new[] { 1 },
+            },
+        };
+        var condBase = new Dictionary<string, object?>
+        {
+            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+            ["searchResultPosition"] = 0,
+            ["maxResults"] = 10,
+            ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+            ["enableCardReader"] = new[] { 1 },
+        };
+        var condNoReader = new Dictionary<string, object?>
+        {
+            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+            ["searchResultPosition"] = 0,
+            ["maxResults"] = 10,
+            ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+        };
+
         var bodies = new[]
         {
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlat } },
+                IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlatNoReader } },
+                IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condByEmployeeNoMode } },
+                IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condBase } },
+                IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintCond"] = condBase },
+                IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condNoReader } },
+                IsapiPascalJson),
             JsonSerializer.Serialize(new
             {
                 FingerPrintUploadCond = new
@@ -1373,9 +1732,9 @@ public sealed class DevicePersonImportService(
                     searchID = Guid.NewGuid().ToString("N")[..20],
                     searchResultPosition = 0,
                     maxResults = 10,
-                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } }
-                }
-            }),
+                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
+                },
+            }, IsapiPascalJson),
             JsonSerializer.Serialize(new
             {
                 FingerPrintSearchCond = new
@@ -1383,29 +1742,9 @@ public sealed class DevicePersonImportService(
                     searchID = Guid.NewGuid().ToString("N")[..20],
                     searchResultPosition = 0,
                     maxResults = 10,
-                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } }
-                }
-            }),
-            JsonSerializer.Serialize(new
-            {
-                FingerPrintUploadCond = new
-                {
-                    searchID = Guid.NewGuid().ToString("N")[..20],
-                    searchResultPosition = 0,
-                    maxResults = 10,
-                    EmployeeNoList = new[] { new { employeeNo } }
-                }
-            }),
-            JsonSerializer.Serialize(new
-            {
-                FingerPrintUploadCond = new
-                {
-                    searchID = Guid.NewGuid().ToString("N")[..20],
-                    searchResultPosition = 0,
-                    maxResults = 10,
-                    employeeNo
-                }
-            }),
+                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
+                },
+            }, IsapiPascalJson),
         };
 
         for (var i = 0; i < bodies.Length; i++)

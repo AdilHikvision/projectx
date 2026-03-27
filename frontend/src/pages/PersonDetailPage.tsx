@@ -1,50 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-
-function FaceImage({ faceId, token, className }: { faceId: string; token: string | null; className?: string }) {
-  const [src, setSrc] = useState<string | null>(null)
-  const [missing, setMissing] = useState(false)
-  const urlRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!token) return
-    setMissing(false)
-    let cancelled = false
-    fetch(`${getApiBaseUrl()}/api/faces/${faceId}/image`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => {
-        if (!r.ok) {
-          if (r.status === 404 && !cancelled) setMissing(true)
-          return null
-        }
-        return r.blob()
-      })
-      .then((blob) => {
-        if (!cancelled && blob) {
-          if (urlRef.current) URL.revokeObjectURL(urlRef.current)
-          urlRef.current = URL.createObjectURL(blob)
-          setSrc(urlRef.current)
-        }
-      })
-    return () => {
-      cancelled = true
-      if (urlRef.current) {
-        URL.revokeObjectURL(urlRef.current)
-        urlRef.current = null
-      }
-      setSrc(null)
-      setMissing(false)
-    }
-  }, [faceId, token])
-  if (missing)
-    return (
-      <div className={`bg-background-light flex items-center justify-center text-text-light ${className ?? ''}`} title="Image unavailable">
-        <span className="material-symbols-outlined text-3xl">person</span>
-      </div>
-    )
-  if (!src) return <div className={className} />
-  return <img src={src} alt="Face" className={className} />
-}
+import { FaceThumbnail } from '../components/FaceThumbnail'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
@@ -74,6 +30,7 @@ interface PersonDetail {
   cards: { id: string; cardNo: string; cardNumber?: string | null }[]
   faces: { id: string; fdid: number }[]
   fingerprints: { id: string; fingerIndex: number }[]
+  irises: { id: string; irisIndex: number }[]
   selfServiceEnabled?: boolean
   selfServiceEmail?: string | null
   selfServiceTempPassword?: string | null
@@ -119,12 +76,13 @@ interface AccessLevel {
 }
 
 
-type CredentialTab = 'cards' | 'faces' | 'fingerprints'
+type CredentialTab = 'cards' | 'faces' | 'fingerprints' | 'irises'
 
 const CREDENTIAL_TABS: { value: CredentialTab; label: string }[] = [
   { value: 'cards', label: 'Cards' },
   { value: 'faces', label: 'Faces' },
   { value: 'fingerprints', label: 'Fingerprints' },
+  { value: 'irises', label: 'Iris' },
 ]
 
 /** Hikvision terminals support up to 10 fingerprint slots (fingerPrintID 1…10). Always send 1 = overwrite first finger each time. */
@@ -136,9 +94,25 @@ function nextFingerprintSlot(fingerprints: { fingerIndex: number }[]): number | 
   return null
 }
 
+/** Как backend DeviceEnrollmentProfile: энроллер DS-K1F… по типу БД или по серийнику/имени. */
+function looksLikeHikvisionEnroller(deviceIdentifier: string, name: string): boolean {
+  const s = `${deviceIdentifier} ${name}`.toUpperCase()
+  return (
+    s.includes('DS-K1F') ||
+    s.includes('K1F600') ||
+    s.includes('K1F510') ||
+    s.includes('K1F800')
+  )
+}
+
+function isEnrollerRegistryEntry(d: { deviceType: string; deviceIdentifier: string; name: string }): boolean {
+  return d.deviceType === 'EnrollerStation' || looksLikeHikvisionEnroller(d.deviceIdentifier, d.name)
+}
+
 export interface DeviceCapabilities {
   isSupportFingerPrintCfg: boolean
   isSupportFDLib: boolean
+  isSupportCaptureFace?: boolean
   isSupportIrisInfo: boolean
   isSupportEventCardLinkageCfg: boolean
   isSupportCardInfo?: boolean
@@ -175,7 +149,7 @@ export function PersonDetailPage() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [addModal, setAddModal] = useState<'card' | 'face' | 'fingerprint' | null>(null)
-  const [faceSourceMode, setFaceSourceMode] = useState<'device' | 'computer' | 'webcam'>('computer')
+  const [faceSourceMode, setFaceSourceMode] = useState<'device' | 'enroller' | 'computer' | 'webcam'>('computer')
   const [cardForm, setCardForm] = useState({ cardNo: '' })
   const [faceFile, setFaceFile] = useState<File | null>(null)
   const [faceCaptureDeviceId, setFaceCaptureDeviceId] = useState<string>('')
@@ -184,7 +158,8 @@ export function PersonDetailPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [cardSourceMode, setCardSourceMode] = useState<'manual' | 'device'>('manual')
+  const [cardSourceMode, setCardSourceMode] = useState<'manual' | 'device' | 'enroller'>('manual')
+  const [fingerprintSourceMode, setFingerprintSourceMode] = useState<'device' | 'enroller'>('device')
   const [cardCaptureDeviceId, setCardCaptureDeviceId] = useState<string>('')
   const [cardCaptureProgress, setCardCaptureProgress] = useState<{ status: string; message?: string } | null>(null)
   
@@ -193,6 +168,10 @@ export function PersonDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deviceCapabilities, setDeviceCapabilities] = useState<Record<string, DeviceCapabilities>>({})
+  /** Все устройства из /api/devices (для выбора контроллера доступа при энролле, не только из access level). */
+  const [registryDevices, setRegistryDevices] = useState<
+    { id: string; name: string; deviceType: string; deviceIdentifier: string }[]
+  >([])
 
   const apiPath = type === 'employee' ? '/api/employees' : '/api/visitors'
 
@@ -282,31 +261,79 @@ export function PersonDetailPage() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
   }, [accessLevels, formData.accessLevelIds])
 
-  // Show device if capabilities not loaded yet (cap == null) or device supports the feature
-  const devicesSupportingCard = useMemo(() =>
-    devicesFromAccessLevels.filter((d) => {
-      const cap = deviceCapabilities[d.id]
-      return cap == null || cap.isSupportEventCardLinkageCfg
-    }),
-  [devicesFromAccessLevels, deviceCapabilities])
-  const devicesSupportingFace = useMemo(() =>
-    devicesFromAccessLevels.filter((d) => {
-      const cap = deviceCapabilities[d.id]
-      return cap == null || cap.isSupportFDLib
-    }),
-  [devicesFromAccessLevels, deviceCapabilities])
+  /** Терминалы: без энроллеров (тип EnrollerStation или серийник DS-K1F… — см. isEnrollerRegistryEntry). */
+  const terminalEnrollmentCandidates = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const d of devicesFromAccessLevels) {
+      const rd = registryDevices.find((r) => r.id === d.id)
+      if (rd && isEnrollerRegistryEntry(rd)) continue
+      map.set(d.id, d.name)
+    }
+    const terminalTypes = new Set(['AccessController', 'AttendanceTerminal'])
+    for (const d of registryDevices) {
+      if (!terminalTypes.has(d.deviceType)) continue
+      if (isEnrollerRegistryEntry(d)) continue
+      if (!map.has(d.id)) map.set(d.id, d.name)
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [devicesFromAccessLevels, registryDevices])
+
+  /** Энроллер: тип EnrollerStation в БД или эвристика DS-K1F… по серийнику/имени (как на бэкенде). */
+  const enrollerEnrollmentDevices = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const d of registryDevices) {
+      if (!isEnrollerRegistryEntry(d)) continue
+      map.set(d.id, d.name)
+    }
+    for (const d of devicesFromAccessLevels) {
+      const rd = registryDevices.find((r) => r.id === d.id)
+      if (rd && isEnrollerRegistryEntry(rd) && !map.has(d.id)) map.set(d.id, d.name)
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [registryDevices, devicesFromAccessLevels])
+
+  const devicesSupportingCardTerminal = useMemo(
+    () =>
+      terminalEnrollmentCandidates.filter((d) => {
+        const cap = deviceCapabilities[d.id]
+        return cap == null || cap.isSupportEventCardLinkageCfg
+      }),
+    [terminalEnrollmentCandidates, deviceCapabilities],
+  )
+  /** From enroller: не фильтруем по capabilities — на энроллерах ISAPI часто отдаёт все флаги false. */
+  const enrollerCaptureDeviceList = useMemo(
+    () => enrollerEnrollmentDevices,
+    [enrollerEnrollmentDevices],
+  )
+  const isEnrollerDeviceId = useCallback(
+    (deviceId: string) => {
+      const rd = registryDevices.find((r) => r.id === deviceId)
+      return rd != null && isEnrollerRegistryEntry(rd)
+    },
+    [registryDevices],
+  )
+
+  const devicesSupportingFaceTerminal = useMemo(
+    () =>
+      terminalEnrollmentCandidates.filter((d) => {
+        const cap = deviceCapabilities[d.id]
+        return cap == null || cap.isSupportFDLib || Boolean(cap.isSupportCaptureFace)
+      }),
+    [terminalEnrollmentCandidates, deviceCapabilities],
+  )
   const nextFreeFingerprintSlot = useMemo(() => {
     if (!detail) return null
     return nextFingerprintSlot(detail.fingerprints)
   }, [detail])
 
-  const devicesSupportingFingerprint = useMemo(() =>
-    devicesFromAccessLevels.filter((d) => {
-      const cap = deviceCapabilities[d.id]
-      return cap == null || cap.isSupportFingerPrintCfg
-    }),
-  [devicesFromAccessLevels, deviceCapabilities])
-
+  const devicesSupportingFingerprintTerminal = useMemo(
+    () =>
+      terminalEnrollmentCandidates.filter((d) => {
+        const cap = deviceCapabilities[d.id]
+        return cap == null || cap.isSupportFingerPrintCfg
+      }),
+    [terminalEnrollmentCandidates, deviceCapabilities],
+  )
   useEffect(() => {
     loadDetail()
     loadAccessLevels()
@@ -336,6 +363,36 @@ export function PersonDetailPage() {
     }
   }, [addModal, faceSourceMode])
 
+  useEffect(() => {
+    if (addModal !== 'card') return
+    if (cardSourceMode !== 'device' && cardSourceMode !== 'enroller') return
+    if (!cardCaptureDeviceId) return
+    const list = cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal
+    if (!list.some((d) => d.id === cardCaptureDeviceId)) setCardCaptureDeviceId('')
+  }, [addModal, cardSourceMode, cardCaptureDeviceId, enrollerCaptureDeviceList, devicesSupportingCardTerminal])
+
+  useEffect(() => {
+    if (addModal !== 'face') return
+    if (faceSourceMode !== 'device' && faceSourceMode !== 'enroller') return
+    if (!faceCaptureDeviceId) return
+    const list = faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal
+    if (!list.some((d) => d.id === faceCaptureDeviceId)) setFaceCaptureDeviceId('')
+  }, [addModal, faceSourceMode, faceCaptureDeviceId, enrollerCaptureDeviceList, devicesSupportingFaceTerminal])
+
+  useEffect(() => {
+    if (addModal !== 'fingerprint') return
+    if (!fingerprintCaptureDeviceId) return
+    const list =
+      fingerprintSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFingerprintTerminal
+    if (!list.some((d) => d.id === fingerprintCaptureDeviceId)) setFingerprintCaptureDeviceId('')
+  }, [
+    addModal,
+    fingerprintSourceMode,
+    fingerprintCaptureDeviceId,
+    enrollerCaptureDeviceList,
+    devicesSupportingFingerprintTerminal,
+  ])
+
   // On load: GET /ISAPI/AccessControl/capabilities per device, store in state, log to console
   useEffect(() => {
     if (!id || !token) return
@@ -349,7 +406,16 @@ export function PersonDetailPage() {
           signal: controller.signal,
         })
         if (!devicesRes.ok) return
-        const devices: { id: string; name?: string }[] = await devicesRes.json()
+        const devices: { id: string; name?: string; deviceType?: string; deviceIdentifier?: string }[] =
+          await devicesRes.json()
+        setRegistryDevices(
+          devices.map((d) => ({
+            id: d.id,
+            name: d.name?.trim() || d.id,
+            deviceType: d.deviceType ?? 'AccessController',
+            deviceIdentifier: (d.deviceIdentifier ?? '').trim(),
+          })),
+        )
         for (const dev of devices) {
           try {
             const capRes = await fetch(`${base}/api/devices/${dev.id}/access-control/capabilities`, {
@@ -364,6 +430,7 @@ export function PersonDetailPage() {
               next[dev.id] = {
                 isSupportFingerPrintCfg: Boolean(data.isSupportFingerPrintCfg),
                 isSupportFDLib: Boolean(data.isSupportFDLib),
+                isSupportCaptureFace: Boolean(data.isSupportCaptureFace),
                 isSupportIrisInfo: Boolean(data.isSupportIrisInfo),
                 isSupportEventCardLinkageCfg: Boolean(data.isSupportEventCardLinkageCfg),
                 isSupportCardInfo: Boolean(data.isSupportCardInfo),
@@ -421,7 +488,12 @@ export function PersonDetailPage() {
   async function handleAddCardFromDevice() {
     if (!token || !detail || !cardCaptureDeviceId) return
     const cap = deviceCapabilities[cardCaptureDeviceId]
-    if (cap != null && !cap.isSupportEventCardLinkageCfg) {
+    if (
+      !isEnrollerDeviceId(cardCaptureDeviceId) &&
+      cap != null &&
+      !cap.isSupportEventCardLinkageCfg &&
+      !cap.isSupportCardInfo
+    ) {
       setError('This device does not support card enrollment.')
       return
     }
@@ -467,7 +539,7 @@ export function PersonDetailPage() {
 
   async function handleAddCard() {
     if (!token || !detail) return
-    if (cardSourceMode === 'device') {
+    if (cardSourceMode === 'device' || cardSourceMode === 'enroller') {
       await handleAddCardFromDevice()
       return
     }
@@ -522,7 +594,7 @@ export function PersonDetailPage() {
 
   async function handleAddFace() {
     if (!token || !detail) return
-    if (faceSourceMode === 'device') {
+    if (faceSourceMode === 'device' || faceSourceMode === 'enroller') {
       await handleAddFaceFromDevice()
       return
     }
@@ -545,7 +617,12 @@ export function PersonDetailPage() {
   async function handleAddFaceFromDevice() {
     if (!token || !detail || !faceCaptureDeviceId) return
     const cap = deviceCapabilities[faceCaptureDeviceId]
-    if (cap != null && !cap.isSupportFDLib) {
+    if (
+      !isEnrollerDeviceId(faceCaptureDeviceId) &&
+      cap != null &&
+      !cap.isSupportFDLib &&
+      !cap.isSupportCaptureFace
+    ) {
       setError('This device does not support face enrollment.')
       return
     }
@@ -624,7 +701,7 @@ export function PersonDetailPage() {
       return
     }
     const cap = deviceCapabilities[fingerprintCaptureDeviceId]
-    if (cap != null && !cap.isSupportFingerPrintCfg) {
+    if (!isEnrollerDeviceId(fingerprintCaptureDeviceId) && cap != null && !cap.isSupportFingerPrintCfg) {
       setError('This device does not support fingerprint enrollment.')
       return
     }
@@ -730,6 +807,24 @@ export function PersonDetailPage() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error((data as { message?: string }).message || 'Delete failed')
       showSyncWarnings(data as { syncWarnings?: string[] | null })
+      await loadDetail()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed')
+    }
+  }
+
+  async function handleDeleteIris(irisId: string) {
+    if (!token) return
+    setError(null)
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/irises/${irisId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { message?: string }).message || 'Delete failed')
+      }
       await loadDetail()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed')
@@ -861,7 +956,7 @@ export function PersonDetailPage() {
           <div className="flex flex-col md:flex-row items-start gap-6 animate-in slide-in-from-top-4 duration-500">
             <div className="w-24 h-24 md:w-32 md:h-32 rounded-[2rem] bg-primary/10 flex items-center justify-center text-primary text-3xl md:text-4xl font-black shadow-inner border-2 border-primary/5 flex-shrink-0">
               {detail.faces.length > 0 ? (
-                <FaceImage faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover rounded-[2rem]" />
+                <FaceThumbnail faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover rounded-[2rem]" />
               ) : initials}
             </div>
             <div className="flex-1 w-full space-y-4">
@@ -1019,7 +1114,11 @@ export function PersonDetailPage() {
                   <Button
                     size="sm"
                     icon="add"
-                    onClick={() =>
+                    disabled={credentialTab === 'irises'}
+                    title={credentialTab === 'irises' ? 'Import irises from a device via People → Import' : undefined}
+                    onClick={() => {
+                      if (credentialTab === 'irises') return
+                      if (credentialTab === 'fingerprints') setFingerprintSourceMode('device')
                       setAddModal(
                         credentialTab === 'cards'
                           ? 'card'
@@ -1027,7 +1126,7 @@ export function PersonDetailPage() {
                             ? 'face'
                             : 'fingerprint'
                       )
-                    }
+                    }}
                   >
                     Enroll
                   </Button>
@@ -1070,7 +1169,7 @@ export function PersonDetailPage() {
                       ) : (
                         <div className="relative group">
                           <div className="w-48 h-48 rounded-2xl overflow-hidden shadow-md transition-transform group-hover:scale-105 border-none">
-                            <FaceImage faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover" />
+                            <FaceThumbnail faceId={detail.faces[0].id} token={token} className="w-full h-full object-cover" />
                           </div>
                           <button
                             onClick={() => handleDeleteFace(detail.faces[0].id)}
@@ -1110,6 +1209,40 @@ export function PersonDetailPage() {
                               icon="delete"
                               className="text-error-text opacity-0 group-hover:opacity-100"
                               onClick={() => handleDeleteFingerprint(fp.id)}
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {credentialTab === 'irises' && (
+                    <div className="space-y-3">
+                      {(detail.irises ?? []).length === 0 ? (
+                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">
+                          No iris templates enrolled
+                        </div>
+                      ) : (
+                        (detail.irises ?? []).map((ir) => (
+                          <div
+                            key={ir.id}
+                            className="flex items-center justify-between p-4 bg-background-light rounded-2xl shadow-md group hover:shadow-xl transition-all border-none"
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 bg-white rounded-xl shadow-inner flex items-center justify-center text-primary">
+                                <span className="material-symbols-outlined text-2xl">visibility</span>
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-text-dark">Iris ID #{ir.irisIndex}</p>
+                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Iris template</p>
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              icon="delete"
+                              className="text-error-text opacity-0 group-hover:opacity-100"
+                              onClick={() => handleDeleteIris(ir.id)}
                             />
                           </div>
                         ))
@@ -1240,38 +1373,55 @@ export function PersonDetailPage() {
             setAddModal(null)
             setCardCaptureProgress(null)
             setCardCaptureDeviceId('')
+            setCardSourceMode('manual')
           }}
         >
           <div className="space-y-5">
-            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
-              {(['manual', 'device'] as const).map((mode) => (
+            <div className="flex gap-1 p-1 bg-slate-100 rounded-xl flex-wrap">
+              {(['manual', 'device', 'enroller'] as const).map((mode) => (
                 <button
                   key={mode}
-                  onClick={() => setCardSourceMode(mode)}
-                  className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
+                  type="button"
+                  onClick={() => {
+                    setCardSourceMode(mode)
+                    setCardCaptureDeviceId('')
+                  }}
+                  className={`flex-1 min-w-[88px] py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                     cardSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
                   }`}
                 >
-                  {mode === 'device' ? 'From device' : 'Manual'}
+                  {mode === 'device' ? 'From device' : mode === 'enroller' ? 'From enroller' : 'Manual'}
                 </button>
               ))}
             </div>
-            {cardSourceMode === 'device' && (
+            {(cardSourceMode === 'device' || cardSourceMode === 'enroller') && (
               <>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Device</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
+                    {cardSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+                  </label>
                   <select
-                    value={devicesSupportingCard.some((d) => d.id === cardCaptureDeviceId) ? cardCaptureDeviceId : ''}
+                    value={
+                      (cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).some((d) => d.id === cardCaptureDeviceId)
+                        ? cardCaptureDeviceId
+                        : ''
+                    }
                     onChange={(e) => setCardCaptureDeviceId(e.target.value)}
                     className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
                   >
                     <option value="">Select device</option>
-                    {devicesSupportingCard.map((d) => (
+                    {(cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
-                  {devicesFromAccessLevels.length > 0 && devicesSupportingCard.length === 0 && (
-                    <p className="text-xs text-error-text mt-1.5">No devices support card enrollment</p>
+                  {cardSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
+                    <p className="text-xs text-text-light mt-1.5">
+                      Enroller list uses device type &quot;Enroller station&quot; or a Hikvision DS-K1F… serial/model in the name or identifier. Add the device in Devices or edit its name to include the model.
+                    </p>
+                  )}
+                  {(cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).length === 0 &&
+                    (cardSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length > 0 && (
+                    <p className="text-xs text-error-text mt-1.5">No compatible devices for this capture mode (check ISAPI capabilities).</p>
                   )}
                 </div>
                 {cardCaptureProgress && (
@@ -1299,9 +1449,14 @@ export function PersonDetailPage() {
                 fullWidth
                 onClick={handleAddCard}
                 isLoading={isSubmitting}
-                disabled={cardSourceMode === 'device' ? !cardCaptureDeviceId || devicesSupportingCard.length === 0 || !devicesSupportingCard.some((d) => d.id === cardCaptureDeviceId) : !cardForm.cardNo.trim()}
+                disabled={
+                  cardSourceMode === 'manual'
+                    ? !cardForm.cardNo.trim()
+                    : !(cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).some((d) => d.id === cardCaptureDeviceId) ||
+                      !cardCaptureDeviceId
+                }
               >
-                {cardSourceMode === 'device' ? 'Start capture' : 'Enroll Token'}
+                {cardSourceMode === 'manual' ? 'Enroll Token' : 'Start capture'}
               </Button>
               <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Cancel</Button>
             </div>
@@ -1317,39 +1472,64 @@ export function PersonDetailPage() {
             setAddModal(null)
             setFaceCaptureProgress(null)
             setFaceCaptureDeviceId('')
+            setFaceSourceMode('computer')
           }}
         >
           <div className="space-y-5">
-            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
-              {(['device', 'computer', 'webcam'] as const).map((mode) => (
+            <div className="flex gap-1 p-1 bg-slate-100 rounded-xl flex-wrap">
+              {(['device', 'enroller', 'computer', 'webcam'] as const).map((mode) => (
                 <button
                   key={mode}
-                  onClick={() => setFaceSourceMode(mode)}
-                  className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
+                  type="button"
+                  onClick={() => {
+                    setFaceSourceMode(mode)
+                    setFaceCaptureDeviceId('')
+                  }}
+                  className={`flex-1 min-w-[72px] py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
                     faceSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
                   }`}
                 >
-                  {mode === 'device' ? 'From device' : mode === 'computer' ? 'From computer' : 'From webcam'}
+                  {mode === 'device'
+                    ? 'From device'
+                    : mode === 'enroller'
+                      ? 'From enroller'
+                      : mode === 'computer'
+                        ? 'From computer'
+                        : 'From webcam'}
                 </button>
               ))}
             </div>
 
-            {faceSourceMode === 'device' && (
+            {(faceSourceMode === 'device' || faceSourceMode === 'enroller') && (
               <>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Device</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
+                    {faceSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+                  </label>
                   <select
-                    value={devicesSupportingFace.some((d) => d.id === faceCaptureDeviceId) ? faceCaptureDeviceId : ''}
+                    value={
+                      (faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).some(
+                        (d) => d.id === faceCaptureDeviceId,
+                      )
+                        ? faceCaptureDeviceId
+                        : ''
+                    }
                     onChange={(e) => setFaceCaptureDeviceId(e.target.value)}
                     className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
                   >
                     <option value="">Select device</option>
-                    {devicesSupportingFace.map((d) => (
+                    {(faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
-                  {devicesFromAccessLevels.length > 0 && devicesSupportingFace.length === 0 && (
-                    <p className="text-xs text-error-text mt-1.5">No devices support face enrollment</p>
+                  {faceSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
+                    <p className="text-xs text-text-light mt-1.5">
+                      Set type &quot;Enroller station&quot; or put DS-K1F… in the device name/identifier (see Devices).
+                    </p>
+                  )}
+                  {(faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).length === 0 &&
+                    (faceSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length > 0 && (
+                    <p className="text-xs text-error-text mt-1.5">No devices support face enrollment for this mode.</p>
                   )}
                 </div>
                 {faceCaptureProgress && (
@@ -1410,12 +1590,20 @@ export function PersonDetailPage() {
                 onClick={handleAddFace}
                 isLoading={isSubmitting}
                 disabled={
-                  faceSourceMode === 'computer' ? !faceFile :
-                  faceSourceMode === 'device' ? !faceCaptureDeviceId || devicesSupportingFace.length === 0 || !devicesSupportingFace.some((d) => d.id === faceCaptureDeviceId) :
-                  faceSourceMode === 'webcam' ? !!webcamError : true
+                  faceSourceMode === 'computer'
+                    ? !faceFile
+                    : faceSourceMode === 'webcam'
+                      ? !!webcamError
+                      : !(faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).some(
+                            (d) => d.id === faceCaptureDeviceId,
+                          ) || !faceCaptureDeviceId
                 }
               >
-                {faceSourceMode === 'device' ? 'Start capture' : faceSourceMode === 'webcam' ? 'Take photo' : 'Upload'}
+                {faceSourceMode === 'device' || faceSourceMode === 'enroller'
+                  ? 'Start capture'
+                  : faceSourceMode === 'webcam'
+                    ? 'Take photo'
+                    : 'Upload'}
               </Button>
               <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Cancel</Button>
             </div>
@@ -1431,24 +1619,64 @@ export function PersonDetailPage() {
             setAddModal(null)
             setFingerprintCaptureProgress(null)
             setFingerprintCaptureDeviceId('')
+            setFingerprintSourceMode('device')
           }}
         >
           <div className="space-y-5">
+            <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+              {(['device', 'enroller'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setFingerprintSourceMode(mode)
+                    setFingerprintCaptureDeviceId('')
+                  }}
+                  className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
+                    fingerprintSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
+                  }`}
+                >
+                  {mode === 'device' ? 'From device' : 'From enroller'}
+                </button>
+              ))}
+            </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Device</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
+                {fingerprintSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+              </label>
               <select
-                value={devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId) ? fingerprintCaptureDeviceId : ''}
+                value={
+                  (fingerprintSourceMode === 'enroller'
+                    ? enrollerCaptureDeviceList
+                    : devicesSupportingFingerprintTerminal
+                  ).some((d) => d.id === fingerprintCaptureDeviceId)
+                    ? fingerprintCaptureDeviceId
+                    : ''
+                }
                 onChange={(e) => setFingerprintCaptureDeviceId(e.target.value)}
                 className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
               >
                 <option value="">Select device</option>
-                {devicesSupportingFingerprint.map((d) => (
+                {(fingerprintSourceMode === 'enroller'
+                  ? enrollerCaptureDeviceList
+                  : devicesSupportingFingerprintTerminal
+                ).map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
-              {devicesFromAccessLevels.length > 0 && devicesSupportingFingerprint.length === 0 && (
-                <p className="text-xs text-error-text mt-1.5">No devices support fingerprint enrollment</p>
+              {fingerprintSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
+                <p className="text-xs text-text-light mt-1.5">
+                  Set type &quot;Enroller station&quot; or DS-K1F… in name/identifier (see Devices).
+                </p>
               )}
+              {(fingerprintSourceMode === 'enroller'
+                ? enrollerCaptureDeviceList
+                : devicesSupportingFingerprintTerminal
+              ).length === 0 &&
+                (fingerprintSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length >
+                  0 && (
+                  <p className="text-xs text-error-text mt-1.5">No devices support fingerprint enrollment for this mode.</p>
+                )}
               {nextFreeFingerprintSlot != null && (
                 <p className="text-xs text-text-light mt-1.5">
                   Next free slot on device: <span className="font-black text-text-dark">#{nextFreeFingerprintSlot}</span> (max 10)
@@ -1470,8 +1698,10 @@ export function PersonDetailPage() {
                 isLoading={isSubmitting}
                 disabled={
                   !fingerprintCaptureDeviceId ||
-                  devicesSupportingFingerprint.length === 0 ||
-                  !devicesSupportingFingerprint.some((d) => d.id === fingerprintCaptureDeviceId) ||
+                  !(fingerprintSourceMode === 'enroller'
+                    ? enrollerCaptureDeviceList
+                    : devicesSupportingFingerprintTerminal
+                  ).some((d) => d.id === fingerprintCaptureDeviceId) ||
                   nextFreeFingerprintSlot === null
                 }
               >

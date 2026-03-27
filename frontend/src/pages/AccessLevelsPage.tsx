@@ -10,7 +10,7 @@ interface AccessLevelDoor {
   deviceId: string
   deviceName: string
   doorIndex: number
-  /** true — контроллер лифта (doorIndex = этаж, 0-based → ISAPI doorID = +1) */
+  /** true — elevator controller (doorIndex = floor, 0-based → ISAPI doorID = +1) */
   isElevator?: boolean
 }
 

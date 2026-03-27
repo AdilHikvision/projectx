@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
@@ -9,13 +9,19 @@ import { useAuth } from '../auth/AuthContext'
 import { apiRequest } from '../lib/api'
 import { useLoading } from '../context/LoadingContext'
 
+function formatLocalDate(d: Date): string {
+    const pad = (n: number) => n.toString().padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 export function SystemSettingsPage() {
     const location = useLocation()
     const queryParams = new URLSearchParams(location.search)
     const tabParam = queryParams.get('tab')
-    const initialTab = tabParam === 'devices' ? 'devices' : tabParam === 'company' ? 'company' : 'global'
+    const initialTab: 'global' | 'devices' | 'company' | 'logSync' =
+        tabParam === 'devices' ? 'devices' : tabParam === 'company' ? 'company' : tabParam === 'log-sync' ? 'logSync' : 'global'
 
-    const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company'>(initialTab)
+    const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company' | 'logSync'>(initialTab)
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
     const { token } = useAuth()
     const { startLoading, stopLoading } = useLoading()
@@ -29,8 +35,93 @@ export function SystemSettingsPage() {
         const tab = new URLSearchParams(location.search).get('tab')
         if (tab === 'devices') setActiveTab('devices')
         else if (tab === 'company') setActiveTab('company')
+        else if (tab === 'log-sync') setActiveTab('logSync')
         else if (tab === 'global') setActiveTab('global')
     }, [location.search])
+
+    const [logSyncSettings, setLogSyncSettings] = useState<{
+        autoEnabled: boolean
+        dailyTimeLocal: string
+        lastRunUtc?: string | null
+        lastRecordsAdded?: number | null
+        lastRunKind?: string | null
+    } | null>(null)
+    const [logSyncManualFrom, setLogSyncManualFrom] = useState(() => formatLocalDate(new Date()))
+    const [logSyncManualTo, setLogSyncManualTo] = useState(() => formatLocalDate(new Date()))
+    const [logSyncDraftAuto, setLogSyncDraftAuto] = useState(false)
+    const [logSyncDraftTime, setLogSyncDraftTime] = useState('03:00')
+    const [logSyncLoading, setLogSyncLoading] = useState(false)
+    const [logSyncSaving, setLogSyncSaving] = useState(false)
+    const [logSyncManualRunning, setLogSyncManualRunning] = useState(false)
+
+    const loadLogSyncSettings = useCallback(async () => {
+        if (!token) return
+        setLogSyncLoading(true)
+        try {
+            const s = await apiRequest<{
+                autoEnabled: boolean
+                dailyTimeLocal: string
+                lastRunUtc?: string | null
+                lastRecordsAdded?: number | null
+                lastRunKind?: string | null
+            }>('/api/attendance/log-sync-settings', { token })
+            setLogSyncSettings(s)
+            setLogSyncDraftAuto(s.autoEnabled)
+            setLogSyncDraftTime(s.dailyTimeLocal || '03:00')
+            const today = formatLocalDate(new Date())
+            setLogSyncManualFrom((prev) => (prev || today))
+            setLogSyncManualTo((prev) => (prev || today))
+        } catch (e) {
+            console.error(e)
+        } finally {
+            setLogSyncLoading(false)
+        }
+    }, [token])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'logSync') return
+        void loadLogSyncSettings()
+    }, [token, activeTab, loadLogSyncSettings])
+
+    const saveLogSyncSchedule = async () => {
+        if (!token) return
+        setLogSyncSaving(true)
+        try {
+            await apiRequest('/api/attendance/log-sync-settings', {
+                method: 'POST',
+                token,
+                body: JSON.stringify({ autoEnabled: logSyncDraftAuto, dailyTimeLocal: logSyncDraftTime }),
+            })
+            await loadLogSyncSettings()
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Не удалось сохранить')
+        } finally {
+            setLogSyncSaving(false)
+        }
+    }
+
+    const runManualLogSync = async () => {
+        if (!token || !logSyncManualFrom || !logSyncManualTo) return
+        setLogSyncManualRunning(true)
+        try {
+            const res = await apiRequest<{
+                recordsAdded: number
+                devicesProcessed: number
+                warnings: string[]
+            }>('/api/attendance/sync-logs', {
+                method: 'POST',
+                token,
+                body: JSON.stringify({ fromDate: logSyncManualFrom, toDate: logSyncManualTo }),
+            })
+            const w = res.warnings?.length ? `\n${res.warnings.join('\n')}` : ''
+            alert(`Добавлено записей: ${res.recordsAdded}. Устройств: ${res.devicesProcessed}.${w}`)
+            await loadLogSyncSettings()
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Ошибка синхронизации')
+        } finally {
+            setLogSyncManualRunning(false)
+        }
+    }
 
     useEffect(() => {
         if (!token || activeTab !== 'global') return
@@ -133,6 +224,13 @@ export function SystemSettingsPage() {
                                 }`}
                         >
                             Devices
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('logSync')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'logSync' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            Log sync
                         </button>
                     </div>
 
@@ -260,9 +358,108 @@ export function SystemSettingsPage() {
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <CompanyTab />
                         </div>
-                    ) : (
+                    ) : activeTab === 'devices' ? (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <DevicesTab ref={devicesRef} />
+                        </div>
+                    ) : (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-4xl space-y-8">
+                            <div className="flex items-center gap-3 px-2">
+                                <div className="w-8 h-8 rounded-xl bg-violet-500/10 flex items-center justify-center text-violet-600">
+                                    <span className="material-symbols-outlined text-lg">sync</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Синхронизация логов устройств</h3>
+                                    <p className="text-xs text-text-muted mt-1">
+                                        События проходов (ACS) с панелей Hikvision в учёт посещаемости. Время автозапуска — локальное время сервера.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {logSyncLoading && !logSyncSettings ? (
+                                <p className="text-sm text-text-light px-2">Загрузка…</p>
+                            ) : (
+                                <>
+                                    <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none">
+                                        <p className="text-xs font-black text-text-dark">Ручная синхронизация</p>
+                                        <p className="text-[11px] text-text-light">Выберите период (календарные даты, границы дня в локальной зоне сервера).</p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black text-text-light uppercase tracking-widest">С даты</label>
+                                                <input
+                                                    type="date"
+                                                    value={logSyncManualFrom}
+                                                    onChange={(e) => setLogSyncManualFrom(e.target.value)}
+                                                    className="w-full bg-slate-50 border border-border-light rounded-2xl px-4 py-3 text-sm font-bold text-text-dark"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black text-text-light uppercase tracking-widest">По дату</label>
+                                                <input
+                                                    type="date"
+                                                    value={logSyncManualTo}
+                                                    onChange={(e) => setLogSyncManualTo(e.target.value)}
+                                                    className="w-full bg-slate-50 border border-border-light rounded-2xl px-4 py-3 text-sm font-bold text-text-dark"
+                                                />
+                                            </div>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            icon="sync"
+                                            onClick={() => void runManualLogSync()}
+                                            isLoading={logSyncManualRunning}
+                                            disabled={!logSyncManualFrom || !logSyncManualTo}
+                                        >
+                                            Синхронизировать
+                                        </Button>
+                                    </div>
+
+                                    <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none">
+                                        <p className="text-xs font-black text-text-dark">Автоматическая синхронизация</p>
+                                        <p className="text-[11px] text-text-light">
+                                            Каждый день в указанное время выполняется загрузка событий за последние 24 часа со всех устройств.
+                                        </p>
+                                        <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={logSyncDraftAuto}
+                                                onChange={(e) => setLogSyncDraftAuto(e.target.checked)}
+                                                className="w-4 h-4 rounded border-border-light text-primary focus:ring-primary/30"
+                                            />
+                                            <span className="text-sm font-bold text-text-dark">Включить ежедневный запуск</span>
+                                        </label>
+                                        <div className="space-y-2 max-w-xs">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Время (локально)</label>
+                                            <input
+                                                type="time"
+                                                value={logSyncDraftTime}
+                                                onChange={(e) => setLogSyncDraftTime(e.target.value)}
+                                                className="w-full bg-slate-50 border border-border-light rounded-2xl px-4 py-3 text-sm font-bold text-text-dark"
+                                            />
+                                        </div>
+                                        <Button type="button" icon="save" onClick={() => void saveLogSyncSchedule()} isLoading={logSyncSaving}>
+                                            Сохранить расписание
+                                        </Button>
+                                    </div>
+
+                                    {logSyncSettings && (
+                                        <div className="rounded-2xl border border-border-light bg-slate-50/80 px-4 py-3 text-[11px] text-text-light">
+                                            <p className="font-black text-text-dark text-[10px] uppercase tracking-widest mb-2">Последний запуск</p>
+                                            {logSyncSettings.lastRunUtc ? (
+                                                <>
+                                                    <p>
+                                                        {new Date(logSyncSettings.lastRunUtc).toLocaleString()} — записей:{' '}
+                                                        {logSyncSettings.lastRecordsAdded ?? '—'}
+                                                        {logSyncSettings.lastRunKind ? ` (${logSyncSettings.lastRunKind === 'auto' ? 'авто' : 'вручную'})` : ''}
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p>Ещё не выполнялся</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     )}
                 </div>

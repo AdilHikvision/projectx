@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Backend.Application.Devices;
+using Backend.Infrastructure.Devices;
 using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ public sealed class EventListenerService(
     IDeviceConnectionManager connectionManager,
     IHikvisionSdkClient sdkClient,
     IServiceScopeFactory scopeFactory,
+    IDeviceActivityBroadcaster activityBroadcaster,
     ILogger<EventListenerService> logger) : BackgroundService, IEventListenerService
 {
     private readonly ConcurrentQueue<DeviceEvent> _buffer = new();
@@ -33,6 +35,8 @@ public sealed class EventListenerService(
         var snapshot = _buffer.Reverse().Take(take).Reverse().ToArray();
         return Task.FromResult<IReadOnlyCollection<DeviceEvent>>(snapshot);
     }
+
+    public void Publish(DeviceEvent deviceEvent) => _ = IngestAsync(deviceEvent, CancellationToken.None);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -56,7 +60,7 @@ public sealed class EventListenerService(
                     }
                     foreach (var rawEvent in result.Events)
                     {
-                        Enqueue(MapEvent(rawEvent));
+                        await IngestAsync(MapEvent(rawEvent), stoppingToken);
                     }
                     foreach (var unreachableId in result.UnreachableDeviceIds)
                     {
@@ -83,13 +87,48 @@ public sealed class EventListenerService(
                 logger.LogError(ex, "Failed to pull device events from SDK.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+        }
+    }
+
+    private async Task IngestAsync(DeviceEvent mapped, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            mapped = await DeviceEventPersonEnricher.EnrichAsync(mapped, db, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Device event enrich failed for {Identifier}", mapped.DeviceIdentifier);
+        }
+
+        Enqueue(mapped);
+        await EmitBroadcastAsync(mapped, cancellationToken);
+    }
+
+    private async Task EmitBroadcastAsync(DeviceEvent mapped, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await activityBroadcaster.NotifyLiveEventAsync(mapped, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "LiveDeviceEvent broadcast failed for {Identifier}", mapped.DeviceIdentifier);
         }
     }
 
     private static DeviceEvent MapEvent(SdkDeviceEvent sdkEvent)
     {
-        var type = sdkEvent.EventCode.ToUpperInvariant() switch
+        if (AcsEventMapper.TryParseAcsCode(sdkEvent.EventCode, out var major, out var minor))
+        {
+            var (type, summary) = AcsEventMapper.Classify(major, minor);
+            return new DeviceEvent(sdkEvent.DeviceIdentifier, type, sdkEvent.OccurredUtc, sdkEvent.Payload, summary);
+        }
+
+        var legacyType = sdkEvent.EventCode.ToUpperInvariant() switch
         {
             "DOOR_OPENED" => DeviceEventType.DoorOpened,
             "ACCESS_GRANTED" => DeviceEventType.AccessGranted,
@@ -98,7 +137,7 @@ public sealed class EventListenerService(
             _ => DeviceEventType.Unknown
         };
 
-        return new DeviceEvent(sdkEvent.DeviceIdentifier, type, sdkEvent.OccurredUtc, sdkEvent.Payload);
+        return new DeviceEvent(sdkEvent.DeviceIdentifier, legacyType, sdkEvent.OccurredUtc, sdkEvent.Payload, null);
     }
 
     private void Enqueue(DeviceEvent deviceEvent)

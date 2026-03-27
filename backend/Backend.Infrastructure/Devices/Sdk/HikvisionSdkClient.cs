@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Reflection;
 using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
@@ -114,8 +115,9 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         EnsureSdkReady();
 
-        var fromUtc = DateTime.UtcNow.AddSeconds(-10);
-        var toUtc = DateTime.UtcNow;
+        // Окно поиска в логе ACS: слишком узкое окно + рассинхрон времени с терминалом даёт пустой результат.
+        var fromUtc = DateTime.UtcNow.AddMinutes(-20);
+        var toUtc = DateTime.UtcNow.AddMinutes(2);
         var output = new List<SdkDeviceEvent>();
         var unreachable = new List<string>();
 
@@ -940,7 +942,7 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         };
 
         var idleWaits = 0;
-        while (idleWaits < 6)
+        while (idleWaits < 24)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var status = Native.NET_DVR_GetNextRemoteConfig(handle, ref cfg, Marshal.SizeOf<Native.NET_DVR_ACS_EVENT_CFG>());
@@ -972,7 +974,17 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
     {
         var cardNo = SafeAscii(cfg.struAcsEventInfo.byCardNo);
         var employeeNo = SafeAscii(cfg.struAcsEventInfo.byEmployeeNo);
-        return $$"""{"major":{{cfg.dwMajor}},"minor":{{cfg.dwMinor}},"cardNo":"{{cardNo}}","employeeNo":"{{employeeNo}}"}""";
+        var payload = new
+        {
+            major = cfg.dwMajor,
+            minor = cfg.dwMinor,
+            cardNo,
+            employeeNo,
+            doorNo = cfg.struAcsEventInfo.dwDoorNo,
+            cardReaderNo = cfg.struAcsEventInfo.dwCardReaderNo,
+            verifyMode = cfg.struAcsEventInfo.byCurrentVerifyMode
+        };
+        return JsonSerializer.Serialize(payload);
     }
 
     private static string SafeAscii(byte[]? bytes)

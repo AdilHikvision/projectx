@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -11,98 +11,50 @@ namespace Backend.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<Guid>(
-                name: "CompanyId",
-                table: "visitors",
-                type: "uuid",
-                nullable: true);
+            // Идемпотентно: схема БД могла быть изменена вручную или миграция применялась частично.
+            migrationBuilder.Sql("""
+                ALTER TABLE visitors ADD COLUMN IF NOT EXISTS "CompanyId" uuid;
+                ALTER TABLE employees ADD COLUMN IF NOT EXISTS "CompanyId" uuid;
+                ALTER TABLE departments ADD COLUMN IF NOT EXISTS "CompanyId" uuid;
+                CREATE INDEX IF NOT EXISTS "IX_visitors_CompanyId" ON visitors ("CompanyId");
+                CREATE INDEX IF NOT EXISTS "IX_employees_CompanyId" ON employees ("CompanyId");
+                CREATE INDEX IF NOT EXISTS "IX_departments_CompanyId" ON departments ("CompanyId");
+                """);
 
-            migrationBuilder.AddColumn<Guid>(
-                name: "CompanyId",
-                table: "employees",
-                type: "uuid",
-                nullable: true);
+            migrationBuilder.Sql("""
+                CREATE TABLE IF NOT EXISTS companies (
+                    "Id" uuid NOT NULL,
+                    "Name" character varying(255) NOT NULL,
+                    "Description" character varying(500),
+                    "CreatedUtc" timestamp with time zone NOT NULL,
+                    "UpdatedUtc" timestamp with time zone,
+                    CONSTRAINT "PK_companies" PRIMARY KEY ("Id")
+                );
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    "Id" uuid NOT NULL,
+                    "Key" character varying(120) NOT NULL,
+                    "Value" text,
+                    "CreatedUtc" timestamp with time zone NOT NULL,
+                    "UpdatedUtc" timestamp with time zone,
+                    CONSTRAINT "PK_system_settings" PRIMARY KEY ("Id")
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS "IX_system_settings_Key" ON system_settings ("Key");
+                """);
 
-            migrationBuilder.AddColumn<Guid>(
-                name: "CompanyId",
-                table: "departments",
-                type: "uuid",
-                nullable: true);
-
-            migrationBuilder.CreateTable(
-                name: "companies",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    Name = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
-                    Description = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    CreatedUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_companies", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "system_settings",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    Key = table.Column<string>(type: "character varying(120)", maxLength: 120, nullable: false),
-                    Value = table.Column<string>(type: "text", nullable: true),
-                    CreatedUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_system_settings", x => x.Id);
-                });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_visitors_CompanyId",
-                table: "visitors",
-                column: "CompanyId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_employees_CompanyId",
-                table: "employees",
-                column: "CompanyId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_departments_CompanyId",
-                table: "departments",
-                column: "CompanyId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_system_settings_Key",
-                table: "system_settings",
-                column: "Key",
-                unique: true);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_departments_companies_CompanyId",
-                table: "departments",
-                column: "CompanyId",
-                principalTable: "companies",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_employees_companies_CompanyId",
-                table: "employees",
-                column: "CompanyId",
-                principalTable: "companies",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_visitors_companies_CompanyId",
-                table: "visitors",
-                column: "CompanyId",
-                principalTable: "companies",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_departments_companies_CompanyId') THEN
+                    ALTER TABLE departments ADD CONSTRAINT "FK_departments_companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES companies ("Id") ON DELETE SET NULL;
+                  END IF;
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_employees_companies_CompanyId') THEN
+                    ALTER TABLE employees ADD CONSTRAINT "FK_employees_companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES companies ("Id") ON DELETE SET NULL;
+                  END IF;
+                  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_visitors_companies_CompanyId') THEN
+                    ALTER TABLE visitors ADD CONSTRAINT "FK_visitors_companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES companies ("Id") ON DELETE SET NULL;
+                  END IF;
+                END $$;
+                """);
         }
 
         /// <inheritdoc />

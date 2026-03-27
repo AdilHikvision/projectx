@@ -99,6 +99,7 @@ function getDeviceIcon(deviceType: string): string {
   if (deviceType === 'AccessController') return 'hub'
   if (deviceType === 'Intercom') return 'videocam'
   if (deviceType === 'ElevatorController') return 'elevator'
+  if (deviceType === 'EnrollerStation') return 'how_to_reg'
   return 'devices'
 }
 
@@ -107,6 +108,7 @@ function getDeviceTypeLabel(deviceType: string): string {
   if (deviceType === 'Intercom') return 'Intercom'
   if (deviceType === 'AttendanceTerminal') return 'Attendance Terminal'
   if (deviceType === 'ElevatorController') return 'Elevator Controller'
+  if (deviceType === 'EnrollerStation') return 'Enroller station'
   return deviceType
 }
 
@@ -120,6 +122,8 @@ function deviceTypeStringToNumber(deviceType: string | null | undefined): number
       return 3
     case 'ElevatorController':
       return 4
+    case 'EnrollerStation':
+      return 5
     default:
       return 1
   }
@@ -790,6 +794,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
               <option value={2}>Intercom</option>
               <option value={3}>Attendance Terminal</option>
               <option value={4}>Elevator Controller</option>
+              <option value={5}>Enroller station</option>
             </select>
           </div>
 

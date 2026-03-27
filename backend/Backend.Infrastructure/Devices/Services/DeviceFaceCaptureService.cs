@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
@@ -32,33 +34,48 @@ public sealed class DeviceFaceCaptureService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
+        var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+
         string employeeNo;
         if (personType == "employee")
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
             if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
-            var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
-            if (!syncRes.Success) return syncRes;
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
         }
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
             if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
-            var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
-            if (!syncRes.Success) return syncRes;
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
         }
 
         var client = CreateClient(device);
-        logger.LogInformation("[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}", device.Name, device.IpAddress, device.Port, employeeNo, personType);
+        logger.LogInformation(
+            "[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}, Enroller={Enr}",
+            device.Name, device.IpAddress, device.Port, employeeNo, personType, isEnroller);
+        if (isEnroller)
+            logger.LogInformation("[CaptureFace] Enroller station: skip UserInfo sync (ISAPI notSupport on online UserInfo).");
 
-        await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
+        if (!isEnroller)
+            await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
 
         // Cancel any previous capture first to avoid "Device Busy"
         await CancelCaptureAsync(client, cancellationToken);
 
-        var (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+        var (success, content, error) = isEnroller
+            ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
+            : await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
 
         // If "Device Busy" — cancel and retry once
         if (!success && error != null && error.Contains("deviceBusy", StringComparison.OrdinalIgnoreCase))
@@ -66,7 +83,9 @@ public sealed class DeviceFaceCaptureService(
             logger.LogInformation("[CaptureFace] Device busy, cancelling and retrying...");
             await CancelCaptureAsync(client, cancellationToken);
             await Task.Delay(1500, cancellationToken);
-            (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+            (success, content, error) = isEnroller
+                ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
+                : await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
         }
 
         logger.LogInformation("[CaptureFace] POST result: success={S} error={E} len={L}",
@@ -106,21 +125,27 @@ public sealed class DeviceFaceCaptureService(
         }
 
         var client = CreateClient(device);
+        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
 
-        // Try JSON first, then XML (without ?format=json)
+        // ISAPI: GET .../CaptureFaceData/Progress?readerID=<id> (интеллектуальные хосты / часть прошивок).
         string? content = null;
-        var (success, c, _) = await client.GetAsync(
-            "ISAPI/AccessControl/CaptureFaceData/Progress?format=json", cancellationToken);
-        if (success && !string.IsNullOrWhiteSpace(c)) content = c;
-
-        if (string.IsNullOrWhiteSpace(content))
+        foreach (var path in new[]
+                 {
+                     $"ISAPI/AccessControl/CaptureFaceData/Progress?format=json&readerID={readerId}",
+                     $"ISAPI/AccessControl/CaptureFaceData/Progress?readerID={readerId}",
+                     "ISAPI/AccessControl/CaptureFaceData/Progress?format=json",
+                     "ISAPI/AccessControl/CaptureFaceData/Progress",
+                 })
         {
-            (success, c, _) = await client.GetAsync(
-                "ISAPI/AccessControl/CaptureFaceData/Progress", cancellationToken);
-            if (success && !string.IsNullOrWhiteSpace(c)) content = c;
+            var (ok, c, _) = await client.GetAsync(path, cancellationToken);
+            if (ok && !string.IsNullOrWhiteSpace(c))
+            {
+                content = c;
+                break;
+            }
         }
 
-        if (!success || string.IsNullOrWhiteSpace(content))
+        if (string.IsNullOrWhiteSpace(content))
             return new FaceCaptureProgressResult("capturing", null, null, null);
 
         logger.LogDebug("[CaptureFace] Progress raw (first 500): {Raw}",
@@ -311,6 +336,11 @@ public sealed class DeviceFaceCaptureService(
             logger.LogDebug("FDLib create (optional) failed for {Device}: {Error}", device.Name, err);
     }
 
+    /// <summary>Ссылка или Base64 лица в ответе Progress (разные имена в ISAPI).</summary>
+    private static string? TryFaceImageRef(JsonElement el) =>
+        TryStr(el, "faceData", "FaceData", "faceDataUrl", "FaceDataUrl", "faceURL", "FaceURL", "visibleLightURL",
+            "VisibleLightURL", "faceMattingURL", "FaceMattingURL");
+
     private static int? TryInt(JsonElement el, params string[] names)
     {
         foreach (var n in names)
@@ -354,23 +384,176 @@ public sealed class DeviceFaceCaptureService(
         }
     }
 
+    /// <summary>
+    /// Энроллер (ISAPI Accessories Enrollers): сначала multipart, часть CaptureFace + XML; при неудаче — полная цепочка как у терминала.
+    /// </summary>
+    private async Task<(bool Success, string? Content, string? Error)> StartEnrollerCaptureFaceAsync(
+        IsapiClient client, string employeeNo, CancellationToken ct)
+    {
+        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
+        var fdid = configuration["Hikvision:CaptureFaceFDID"]?.Trim();
+        if (string.IsNullOrEmpty(fdid)) fdid = "1";
+        var esc = global::System.Security.SecurityElement.Escape(employeeNo);
+        var escFdid = global::System.Security.SecurityElement.Escape(fdid);
+        var ns = "http://www.isapi.org/ver20/XMLSchema";
+        var mpMinimalUrl =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+        var mpMinimalBinary =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>binary</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+        var mpWithPersonUrl =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+
+        var success = false;
+        string? content = null;
+        string? error = null;
+
+        async Task TryMultipart(string label, string path, string xml)
+        {
+            if (success) return;
+            var (ok, c, e) = await client.PostMultipartAsync(path, () => new Dictionary<string, (HttpContent, string?)>
+            {
+                ["CaptureFace"] = (new StringContent(xml, Encoding.UTF8, "application/xml"), null),
+            }, ct);
+            logger.LogInformation("[CaptureFace] Enroller {Label}: success={S} error={E}", label, ok, e ?? "-");
+            if (!ok) return;
+            success = true;
+            content = c;
+            error = e;
+        }
+
+        await TryMultipart("MP minimal url", "ISAPI/AccessControl/CaptureFaceData", mpMinimalUrl);
+        await TryMultipart("MP minimal binary", "ISAPI/AccessControl/CaptureFaceData", mpMinimalBinary);
+        await TryMultipart("MP CaptureFace+person url", "ISAPI/AccessControl/CaptureFaceData", mpWithPersonUrl);
+        await TryMultipart("MP minimal url ?format=xml", "ISAPI/AccessControl/CaptureFaceData?format=xml", mpMinimalUrl);
+
+        if (success)
+            return (true, content, error);
+
+        logger.LogInformation("[CaptureFace] Enroller: multipart не удался, fallback на полную цепочку CaptureFaceData.");
+        return await StartCaptureFaceAsync(client, employeeNo, ct);
+    }
+
     private async Task<(bool Success, string? Content, string? Error)> StartCaptureFaceAsync(
         IsapiClient client, string employeeNo, CancellationToken ct)
     {
-        // DS-K1T342MFX rejects JSON with badXmlFormat — try JSON then XML
-        var jsonBody = JsonSerializer.Serialize(new { CaptureFaceData = new { employeeNo, FDID = 1 } });
-        var (success, content, error) = await client.PostJsonAsync(
-            "ISAPI/AccessControl/CaptureFaceData?format=json", jsonBody, ct);
-        logger.LogInformation("[CaptureFace] JSON attempt: success={S} error={E}", success, error ?? "-");
+        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
+        var fdid = configuration["Hikvision:CaptureFaceFDID"]?.Trim();
+        if (string.IsNullOrEmpty(fdid)) fdid = "1";
 
-        if (!success)
+        const string pathJson = "ISAPI/AccessControl/CaptureFaceData?format=json";
+        var esc = global::System.Security.SecurityElement.Escape(employeeNo);
+        var escFdid = global::System.Security.SecurityElement.Escape(fdid);
+
+        var success = false;
+        string? content = null;
+        string? error = null;
+
+        async Task TryJson(string label, Dictionary<string, object> root)
         {
-            var esc = global::System.Security.SecurityElement.Escape(employeeNo);
-            var xmlBody = $@"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><employeeNo>{esc}</employeeNo><FDID>1</FDID></CaptureFaceDataCond>";
-            (success, content, error) = await client.PostAsync(
-                "ISAPI/AccessControl/CaptureFaceData", xmlBody, "application/xml", ct);
-            logger.LogInformation("[CaptureFace] XML attempt: success={S} error={E}", success, error ?? "-");
+            if (success) return;
+            var body = JsonSerializer.Serialize(root);
+            var (ok, c, e) = await client.PostJsonAsync(pathJson, body, ct);
+            logger.LogInformation("[CaptureFace] {Label}: success={S} error={E}", label, ok, e ?? "-");
+            if (!ok) return;
+            success = true;
+            content = c;
+            error = e;
         }
+
+        async Task TryXml(string label, string xml)
+        {
+            if (success) return;
+            var (ok, c, e) = await client.PostAsync("ISAPI/AccessControl/CaptureFaceData", xml, "application/xml", ct);
+            logger.LogInformation("[CaptureFace] {Label}: success={S} error={E}", label, ok, e ?? "-");
+            if (!ok) return;
+            success = true;
+            content = c;
+            error = e;
+        }
+
+        Dictionary<string, object> PersonFields(string dataTypeValue) => new()
+        {
+            ["employeeNo"] = employeeNo,
+            ["FDID"] = fdid,
+            ["dataType"] = dataTypeValue,
+            ["readerID"] = readerId,
+            ["captureInfrared"] = false,
+        };
+
+        Dictionary<string, object> PersonFieldsNoDataType() => new()
+        {
+            ["employeeNo"] = employeeNo,
+            ["FDID"] = fdid,
+            ["readerID"] = readerId,
+            ["captureInfrared"] = false,
+        };
+
+        Dictionary<string, object> MinimalFields(string? dataTypeValue)
+        {
+            var d = new Dictionary<string, object>
+            {
+                ["readerID"] = readerId,
+                ["captureInfrared"] = false,
+            };
+            if (dataTypeValue != null)
+                d["dataType"] = dataTypeValue;
+            return d;
+        }
+
+        await TryJson("JSON CaptureFaceData+person url", new Dictionary<string, object> { ["CaptureFaceData"] = PersonFields("url") });
+        await TryJson("JSON CaptureFaceDataCond+person url", new Dictionary<string, object> { ["CaptureFaceDataCond"] = PersonFields("url") });
+        await TryJson("JSON CaptureFaceData+person omit dataType", new Dictionary<string, object> { ["CaptureFaceData"] = PersonFieldsNoDataType() });
+        await TryJson("JSON CaptureFaceDataCond+person omit dataType", new Dictionary<string, object> { ["CaptureFaceDataCond"] = PersonFieldsNoDataType() });
+        await TryJson("JSON CaptureFaceData+person binary", new Dictionary<string, object> { ["CaptureFaceData"] = PersonFields("binary") });
+        await TryJson("JSON CaptureFaceDataCond+person binary", new Dictionary<string, object> { ["CaptureFaceDataCond"] = PersonFields("binary") });
+        await TryJson("JSON minimal Cond url", new Dictionary<string, object> { ["CaptureFaceDataCond"] = MinimalFields("url") });
+        await TryJson("JSON minimal CaptureFaceData url", new Dictionary<string, object> { ["CaptureFaceData"] = MinimalFields("url") });
+        await TryJson("JSON minimal Cond binary", new Dictionary<string, object> { ["CaptureFaceDataCond"] = MinimalFields("binary") });
+        await TryJson("JSON minimal CaptureFaceData binary", new Dictionary<string, object> { ["CaptureFaceData"] = MinimalFields("binary") });
+        await TryJson("JSON minimal Cond omit dataType", new Dictionary<string, object> { ["CaptureFaceDataCond"] = MinimalFields(null) });
+        await TryJson("JSON minimal root omit dataType", new Dictionary<string, object> { ["CaptureFaceData"] = MinimalFields(null) });
+
+        await TryXml("XML+person url",
+            $@"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><dataType>url</dataType><readerID>{readerId}</readerID><captureInfrared>false</captureInfrared></CaptureFaceDataCond>");
+        await TryXml("XML+person omit dataType",
+            $@"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><readerID>{readerId}</readerID><captureInfrared>false</captureInfrared></CaptureFaceDataCond>");
+        await TryXml("XML+person binary",
+            $@"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><dataType>binary</dataType><readerID>{readerId}</readerID><captureInfrared>false</captureInfrared></CaptureFaceDataCond>");
+        await TryXml("XML minimal url",
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""");
+        await TryXml("XML minimal binary",
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><captureInfrared>false</captureInfrared><dataType>binary</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""");
+        await TryXml("XML minimal omit dataType",
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><captureInfrared>false</captureInfrared><readerID>{readerId}</readerID></CaptureFaceDataCond>""");
+
+        // Enroller / accessories (ISAPI_Access Control Accessories_Enrollers): запуск захвата — multipart/form-data,
+        // часть CaptureFace с XML (см. таблицу Parameter Name в доке), не сырой POST application/xml.
+        async Task TryMultipart(string label, string path, string xml)
+        {
+            if (success) return;
+            var (ok, c, e) = await client.PostMultipartAsync(path, () => new Dictionary<string, (HttpContent, string?)>
+            {
+                ["CaptureFace"] = (new StringContent(xml, Encoding.UTF8, "application/xml"), null),
+            }, ct);
+            logger.LogInformation("[CaptureFace] {Label}: success={S} error={E}", label, ok, e ?? "-");
+            if (!ok) return;
+            success = true;
+            content = c;
+            error = e;
+        }
+
+        var ns = "http://www.isapi.org/ver20/XMLSchema";
+        var mpMinimalUrl =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+        var mpMinimalBinary =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>binary</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+        var mpWithPersonUrl =
+            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
+
+        await TryMultipart("MP CaptureFace minimal url", "ISAPI/AccessControl/CaptureFaceData", mpMinimalUrl);
+        await TryMultipart("MP CaptureFace minimal binary", "ISAPI/AccessControl/CaptureFaceData", mpMinimalBinary);
+        await TryMultipart("MP CaptureFace+person url", "ISAPI/AccessControl/CaptureFaceData", mpWithPersonUrl);
+        await TryMultipart("MP CaptureFace minimal url ?format=xml", "ISAPI/AccessControl/CaptureFaceData?format=xml", mpMinimalUrl);
 
         return (success, content, error);
     }

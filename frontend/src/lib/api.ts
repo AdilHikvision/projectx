@@ -31,10 +31,17 @@ export function consumeSessionExpiredFlag(): boolean {
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { token, headers, ...rest } = options
+  const method = (rest.method ?? 'GET').toString().toUpperCase()
+  const hasBody = rest.body !== undefined && rest.body !== null
+  const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData
+  // GET/HEAD не должны иметь Content-Type: application/json без тела (часто 405 на прокси).
+  // POST/PUT/PATCH с JSON-телом — всегда задаём application/json (нужно для ASP.NET minimal APIs).
+  const useJsonContentType =
+    hasBody && !isFormData && method !== 'GET' && method !== 'HEAD'
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...rest,
     headers: {
-      'Content-Type': 'application/json',
+      ...(useJsonContentType ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers ?? {}),
     },

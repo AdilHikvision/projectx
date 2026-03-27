@@ -12,7 +12,11 @@ public enum DeviceEventType
     DoorOpened = 1,
     AccessGranted = 2,
     AccessDenied = 3,
-    Heartbeat = 4
+    Heartbeat = 4,
+    DoorClosed = 5,
+    AuthenticationTimeout = 6,
+    /// <summary>Операции на устройстве (ISAPI major 0x3: постановка на охрану, удалённая конфигурация и т.д.).</summary>
+    DeviceOperation = 7
 }
 
 public sealed record DiscoveredDevice(
@@ -44,7 +48,14 @@ public sealed record DeviceEvent(
     string DeviceIdentifier,
     DeviceEventType EventType,
     DateTime OccurredUtc,
-    string Payload);
+    string Payload,
+    string? Summary = null,
+    /// <summary>Номер сотрудника на устройстве (employeeNo), если известен из payload или ISAPI.</summary>
+    string? EmployeeNo = null,
+    /// <summary>Отображаемое имя: из БД или из события устройства.</summary>
+    string? PersonName = null,
+    /// <summary>Лицо для миниатюры в мониторинге (первое по дате создания у сотрудника).</summary>
+    Guid? PrimaryFaceId = null);
 
 public interface IDeviceDiscoveryService
 {
@@ -67,11 +78,18 @@ public interface IDeviceConnectionManager
 public interface IEventListenerService
 {
     Task<IReadOnlyCollection<DeviceEvent>> ReadRecentEventsAsync(int take = 100, CancellationToken cancellationToken = default);
+    /// <summary>Публикует событие в буфер и в SignalR (ISAPI alertStream, тесты и т.д.).</summary>
+    void Publish(DeviceEvent deviceEvent);
 }
 
 public interface IDeviceStatusBroadcaster
 {
     Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, string? statusMessage = null, CancellationToken cancellationToken = default);
+}
+
+public interface IDeviceActivityBroadcaster
+{
+    Task NotifyLiveEventAsync(DeviceEvent deviceEvent, CancellationToken cancellationToken = default);
 }
 
 public interface IDeviceArpStatusService
@@ -184,7 +202,18 @@ public sealed record ImportedUser(
     Guid SourceDeviceId,
     string SourceDeviceName,
     /// <summary>Сырой JSON одной записи UserInfo из ответа списка (faceURL, numOfCard, FPInfo, cardNo и т.д.).</summary>
-    string? UserInfoSnapshotJson = null);
+    string? UserInfoSnapshotJson = null)
+{
+    public List<ImportedCard> Cards { get; init; } = [];
+    public List<ImportedFace> Faces { get; init; } = [];
+    public List<ImportedFingerprint> Fingerprints { get; init; } = [];
+    public List<ImportedIris> Irises { get; init; } = [];
+}
+
+public sealed record ImportedCard(string CardNo, string? CardType);
+public sealed record ImportedFace(byte[] ImageData, int FDID);
+public sealed record ImportedFingerprint(int FingerPrintID, byte[] TemplateData);
+public sealed record ImportedIris(int IrisID, byte[] TemplateData);
 
 /// <summary>Результат импорта пользователей с устройств.</summary>
 public sealed record PersonImportResult(
@@ -205,7 +234,9 @@ public sealed record PersonImportItem(
     /// <summary>Импортировано файлов лиц (0 или 1).</summary>
     int FacesImported = 0,
     /// <summary>Импортировано шаблонов отпечатков.</summary>
-    int FingerprintsImported = 0);
+    int FingerprintsImported = 0,
+    /// <summary>Импортировано шаблонов радужки.</summary>
+    int IrisesImported = 0);
 
 public interface IDevicePersonImportService
 {
