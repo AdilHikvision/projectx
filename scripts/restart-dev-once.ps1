@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $backendDir = Join-Path $root "backend"
 $frontendDir = Join-Path $root "frontend"
-$ports = @(5154, 5173, 5174)
+$ports = @(5154, 80, 5173, 5174)
 
 foreach ($port in $ports) {
     Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | ForEach-Object {

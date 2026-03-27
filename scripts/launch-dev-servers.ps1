@@ -3,7 +3,7 @@ $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $backendDir = Join-Path $root "backend"
 $frontendDir = Join-Path $root "frontend"
-$ports = @(5154, 5173, 5174)
+$ports = @(5154, 80, 5173, 5174)
 
 foreach ($port in $ports) {
     Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | ForEach-Object {
@@ -26,4 +26,4 @@ Start-Process powershell -ArgumentList @(
     "-Command",
     "Set-Location '$frontendDir'; npm run dev"
 )
-Write-Host "Started backend (5154) and frontend (5173). URLs: http://localhost:5154 | http://localhost:5173" -ForegroundColor Green
+Write-Host "Started backend (5154) and frontend (80). URLs: http://127.0.0.1:5154 | http://127.0.0.1/" -ForegroundColor Green

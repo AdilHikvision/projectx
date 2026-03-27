@@ -1,7 +1,7 @@
 const configuredApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
 const API_BASE_URL =
   configuredApiBaseUrl ||
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5154')
+  (typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:5154')
 
 const HUB_BASE_URL = (import.meta.env.VITE_HUB_URL as string | undefined)?.trim() ||
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ||
@@ -68,7 +68,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     throw new Error(
       `Server returned ${contentType || 'non-JSON'} instead of JSON. ` +
         (preview.toLowerCase().includes('<!doctype') || preview.toLowerCase().includes('<html')
-          ? 'Is the backend running on port 5154? Check VITE_API_BASE_URL.'
+          ? 'Is the backend running (port 5154)? Check VITE_API_BASE_URL.'
           : `Preview: ${preview}`)
     )
   }
