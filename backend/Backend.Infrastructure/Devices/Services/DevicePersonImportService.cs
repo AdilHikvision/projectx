@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Backend.Application.Devices;
@@ -558,7 +559,8 @@ public sealed class DevicePersonImportService(
             TimeSpan.FromSeconds(20));
     }
 
-    private const int ImportLogMaxResponseChars = 6000;
+    private const int ImportLogMaxResponseChars = 12000;
+    private const int ImportLogContinuationChunkChars = 8000;
 
     private static string TruncateForImportLog(string? s, int maxChars = ImportLogMaxResponseChars)
     {
@@ -568,7 +570,7 @@ public sealed class DevicePersonImportService(
         return s[..maxChars] + $" … [обрезано, всего {s.Length} символов]";
     }
 
-    /// <summary>Сырой ответ устройства в лог при импорте (обрезка длинных JSON с base64).</summary>
+    /// <summary>Сырой ответ устройства в лог при импорте (длинные JSON с base64 — первая часть + continuation).</summary>
     private void LogImportIsapiResponse(
         string deviceName,
         string employeeNo,
@@ -577,14 +579,37 @@ public sealed class DevicePersonImportService(
         string? httpError,
         string? body)
     {
+        var len = body?.Length ?? 0;
+        var truncated = TruncateForImportLog(body);
         logger.LogInformation(
-            "[Import ISAPI] {Device} empNo={EmployeeNo} {Operation} httpOk={HttpOk} httpErr={HttpErr} response={Response}",
+            "[Import ISAPI] {Device} empNo={EmployeeNo} {Operation} httpOk={HttpOk} httpErr={HttpErr} responseChars={ResponseChars} response={Response}",
             deviceName,
             string.IsNullOrEmpty(employeeNo) ? "—" : employeeNo,
             operation,
             httpOk,
             httpError ?? "—",
-            TruncateForImportLog(body));
+            len,
+            truncated);
+
+        if (body is null || len <= ImportLogMaxResponseChars) return;
+
+        var rest = body[ImportLogMaxResponseChars..];
+        var totalParts = (rest.Length + ImportLogContinuationChunkChars - 1) / ImportLogContinuationChunkChars;
+        for (var off = 0; off < rest.Length; off += ImportLogContinuationChunkChars)
+        {
+            var take = Math.Min(ImportLogContinuationChunkChars, rest.Length - off);
+            var part = rest.Substring(off, take);
+            var partIndex = off / ImportLogContinuationChunkChars + 1;
+            logger.LogInformation(
+                "[Import ISAPI] {Device} empNo={EmployeeNo} {Operation} response continuation {PartIndex}/{PartTotal} chunkChars={ChunkChars} response={Response}",
+                deviceName,
+                string.IsNullOrEmpty(employeeNo) ? "—" : employeeNo,
+                operation,
+                partIndex,
+                totalParts,
+                take,
+                part);
+        }
     }
 
     private async Task RemoveExistingFacesAndFingerprintsAsync(Guid? employeeId, Guid? visitorId, CancellationToken cancellationToken)
@@ -644,32 +669,48 @@ public sealed class DevicePersonImportService(
             if (replaceExistingBiometrics)
                 await RemoveExistingFacesAndFingerprintsAsync(employeeId, visitorId, cancellationToken);
 
-            JsonElement userInfo = default;
-            var hasUserInfo = false;
-
+            // Снимок из массового UserInfo/Search и детальный ответ по employeeNo храним раздельно: детальный часто урезан по картам,
+            // полная подмена снимка ломала импорт карт; FPInfo/лицо в детальном ответе обычно полнее — используем оба источника.
+            JsonElement snapshotUserInfo = default;
+            var hasSnapshotUserInfo = false;
             if (!string.IsNullOrWhiteSpace(userInfoSnapshotJson))
             {
                 try
                 {
                     using var snapDoc = JsonDocument.Parse(userInfoSnapshotJson);
-                    userInfo = snapDoc.RootElement.Clone();
-                    hasUserInfo = true;
+                    snapshotUserInfo = snapDoc.RootElement.Clone();
+                    hasSnapshotUserInfo = true;
                 }
                 catch
                 {
-                    // snapshot из списка не распарсился — ниже запросим детальный UserInfo
+                    // snapshot из списка не распарсился
                 }
             }
 
-            if (!hasUserInfo)
+            if (hasSnapshotUserInfo && !string.IsNullOrWhiteSpace(userInfoSnapshotJson))
+                LogImportIsapiResponse(
+                    device.Name,
+                    employeeNo,
+                    "UserInfo (снимок из ответа POST UserInfo/Search по этому сотруднику, без нового HTTP)",
+                    true,
+                    "—",
+                    userInfoSnapshotJson);
+
+            JsonElement detailUserInfo = default;
+            var hasDetailUserInfo = false;
+            var detailJson = await FetchUserInfoJsonByEmployeeNoWithFallbacksAsync(client, device.Name, employeeNo, cancellationToken);
+            if (!string.IsNullOrEmpty(detailJson) &&
+                TryGetUserInfoJsonElementForEmployeeNo(detailJson, employeeNo, out var detailEl))
             {
-                var detailJson = await FetchUserInfoJsonByEmployeeNoWithFallbacksAsync(client, device.Name, employeeNo, cancellationToken);
-                hasUserInfo = !string.IsNullOrEmpty(detailJson) && TryGetFirstUserInfoJsonElement(detailJson!, out userInfo);
+                detailUserInfo = detailEl;
+                hasDetailUserInfo = true;
             }
 
             var cardNos = new List<string>();
-            if (hasUserInfo)
-                CollectCardNosFromUserInfo(userInfo, cardNos);
+            if (hasSnapshotUserInfo)
+                CollectCardNosFromUserInfo(snapshotUserInfo, cardNos);
+            if (hasDetailUserInfo)
+                CollectCardNosFromUserInfo(detailUserInfo, cardNos);
 
             if (cardNos.Count == 0)
             {
@@ -690,8 +731,21 @@ public sealed class DevicePersonImportService(
             foreach (var norm in distinctCards)
             {
                 var no = norm.Length > 64 ? norm[..64] : norm;
-                if (await dbContext.Cards.AsNoTracking().AnyAsync(c => c.CardNo == no, cancellationToken))
+                var existingCard = await dbContext.Cards.FirstOrDefaultAsync(c => c.CardNo == no, cancellationToken);
+                if (existingCard is not null)
+                {
+                    var sameOwner = (employeeId.HasValue && existingCard.EmployeeId == employeeId) ||
+                                    (visitorId.HasValue && existingCard.VisitorId == visitorId);
+                    if (sameOwner)
+                        continue;
+                    // Карта уже в БД у другого человека — при импорте с устройства переназначаем владельца (номер глобально уникален).
+                    existingCard.EmployeeId = employeeId;
+                    existingCard.VisitorId = visitorId;
+                    existingCard.CardNumber = no;
+                    cardsAdded++;
                     continue;
+                }
+
                 dbContext.Cards.Add(new Card
                 {
                     Id = Guid.NewGuid(),
@@ -708,23 +762,41 @@ public sealed class DevicePersonImportService(
                 await dbContext.SaveChangesAsync(cancellationToken);
 
             var facesAdded = 0;
-            if (hasUserInfo)
-                facesAdded = await TrySaveFaceFromUserInfoAsync(client, device, userInfo, employeeId, visitorId, cancellationToken);
+            if (hasDetailUserInfo)
+                facesAdded = await TrySaveFaceFromUserInfoAsync(client, device, detailUserInfo, employeeId, visitorId, cancellationToken);
+            if (facesAdded == 0 && hasSnapshotUserInfo)
+                facesAdded = await TrySaveFaceFromUserInfoAsync(client, device, snapshotUserInfo, employeeId, visitorId, cancellationToken);
             if (facesAdded == 0)
                 facesAdded = await TryImportFaceFromFdLibAsync(client, device, employeeNo, employeeId, visitorId, cancellationToken);
 
             var fpList = new List<(int FingerIndex, byte[] Data)>();
-            if (hasUserInfo)
-                CollectFingerprintsFromUserInfoFpInfo(userInfo, fpList);
+            if (hasDetailUserInfo)
+                CollectAllFingerprintsFromUserInfo(detailUserInfo, fpList);
+            if (hasSnapshotUserInfo)
+                CollectAllFingerprintsFromUserInfo(snapshotUserInfo, fpList);
 
-            if (fpList.Count == 0)
+            // В FPInfo иногда кладут превью пальца (JPEG), а не шаблон — убираем картинки, иначе FingerPrintUpload не вызывается.
+            fpList = fpList
+                .Where(x => x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                .ToList();
+
+            var nFpDevice = await GetFingerPrintCountAsync(client, device.Name, employeeNo, cancellationToken);
+            var fpHint = 0;
+            if (hasDetailUserInfo)
+                fpHint = Math.Max(fpHint, GetFingerprintCountHintFromUserInfo(detailUserInfo));
+            if (hasSnapshotUserInfo)
+                fpHint = Math.Max(fpHint, GetFingerprintCountHintFromUserInfo(snapshotUserInfo));
+            if (nFpDevice == 0 && fpHint > 0)
+                nFpDevice = fpHint;
+
+            // Дозапрашиваем FingerPrintUpload, если шаблонов мало относительно счётчика/списка на устройстве (частичный FPInfo в UserInfo).
+            var needFingerPrintUpload = fpList.Count == 0
+                || (nFpDevice > 0 && fpList.Count < nFpDevice)
+                || (fpHint > 0 && fpList.Count < fpHint);
+
+            if (needFingerPrintUpload)
             {
-                var nFp = await GetFingerPrintCountAsync(client, device.Name, employeeNo, cancellationToken);
-                var fpHint = hasUserInfo ? TryGetNumOfFpHint(userInfo) : 0;
-                if (nFp == 0 && fpHint > 0)
-                    nFp = fpHint;
-
-                if (nFp > 0)
+                if (nFpDevice > 0)
                     fpList.AddRange(await FetchFingerprintsFromFingerPrintUploadAsync(client, device.Name, employeeNo, cancellationToken));
                 else
                 {
@@ -732,6 +804,40 @@ public sealed class DevicePersonImportService(
                     var probe = await FetchFingerprintsFromFingerPrintUploadAsync(client, device.Name, employeeNo, cancellationToken);
                     if (probe.Count > 0)
                         fpList.AddRange(probe);
+                }
+            }
+
+            fpList = fpList
+                .Where(x => x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                .ToList();
+
+            if (fpList.Count == 0)
+            {
+                var alt = await FetchFingerprintsFromFingerPrintInfoSearchAsync(client, device.Name, employeeNo, cancellationToken);
+                foreach (var x in alt)
+                {
+                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                        fpList.Add(x);
+                }
+            }
+
+            if (fpList.Count == 0)
+            {
+                var cfg = await FetchFingerprintsFromFingerPrintCfgSearchAsync(client, device.Name, employeeNo, cancellationToken);
+                foreach (var x in cfg)
+                {
+                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                        fpList.Add(x);
+                }
+            }
+
+            if (fpList.Count == 0)
+            {
+                var perFinger = await FetchFingerprintsFingerPrintUploadPerFingerAsync(client, device.Name, employeeNo, cancellationToken);
+                foreach (var x in perFinger)
+                {
+                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                        fpList.Add(x);
                 }
             }
 
@@ -827,6 +933,7 @@ public sealed class DevicePersonImportService(
             if (!string.IsNullOrWhiteSpace(content) &&
                 content.Contains("\"notSupport\"", StringComparison.OrdinalIgnoreCase))
             {
+                LogImportIsapiResponse(deviceName, employeeNo, "POST IrisInfo/Search (notSupport)", ok, err, content);
                 if (IrisNotSupportLogged.TryAdd(deviceName, 0))
                     logger.LogDebug("IrisInfo/Search: устройство не поддерживает радужку (notSupport), {Device}", deviceName);
                 return result;
@@ -913,11 +1020,87 @@ public sealed class DevicePersonImportService(
             var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/UserInfo/Search?format=json", body, ct);
             LogImportIsapiResponse(deviceName, employeeNo, $"POST UserInfo/Search (деталь, вариант {i + 1}/{bodies.Length})", ok, err, content);
             if (!ok || string.IsNullOrWhiteSpace(content)) continue;
-            if (TryGetFirstUserInfoJsonElement(content, out _))
+            if (TryGetUserInfoJsonElementForEmployeeNo(content, employeeNo, out _))
                 return content;
         }
 
         return null;
+    }
+
+    /// <summary>Достаёт запись UserInfo из ответа Search по совпадению employeeNo (как в ParseUserInfoSearchResponse — регистр полей JSON разный).</summary>
+    private static bool TryGetUserInfoJsonElementForEmployeeNo(string json, string employeeNo, out JsonElement userInfo)
+    {
+        userInfo = default;
+        var want = employeeNo.Trim();
+        if (string.IsNullOrEmpty(want)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!TryFindUserInfoListElement(root, out var userList))
+                return false;
+
+            if (userList.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in userList.EnumerateArray())
+                {
+                    if (TryGetEmployeeNoFromUserInfoElement(item, out var emp) &&
+                        string.Equals(emp.Trim(), want, StringComparison.OrdinalIgnoreCase))
+                    {
+                        userInfo = item.Clone();
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (userList.ValueKind == JsonValueKind.Object)
+            {
+                if (TryGetEmployeeNoFromUserInfoElement(userList, out var emp) &&
+                    string.Equals(emp.Trim(), want, StringComparison.OrdinalIgnoreCase))
+                {
+                    userInfo = userList.Clone();
+                    return true;
+                }
+
+                return false;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return false;
+    }
+
+    private static bool TryFindUserInfoListElement(JsonElement root, out JsonElement userList)
+    {
+        userList = default;
+        JsonElement search;
+        if (TryGetPropertyInsensitive(root, "UserInfoSearch", out search) ||
+            TryGetPropertyInsensitive(root, "UserInfoSearchResult", out search))
+        {
+            if (TryGetPropertyInsensitive(search, "UserInfo", out var ui))
+            {
+                userList = ui;
+                return true;
+            }
+
+            if (TryGetPropertyInsensitive(search, "UserInfoList", out var uil))
+            {
+                userList = uil;
+                return true;
+            }
+        }
+        else if (TryGetPropertyInsensitive(root, "UserInfo", out var directUi))
+        {
+            userList = directUi;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryGetFirstUserInfoJsonElement(string json, out JsonElement userInfo)
@@ -926,41 +1109,23 @@ public sealed class DevicePersonImportService(
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            JsonElement userList = default;
-            var found = false;
-            if (root.TryGetProperty("UserInfoSearch", out var search))
-            {
-                if (search.TryGetProperty("UserInfo", out var ui)) { userList = ui; found = true; }
-                else if (search.TryGetProperty("UserInfoList", out var uil)) { userList = uil; found = true; }
-            }
-            else if (root.TryGetProperty("UserInfoSearchResult", out var searchResult))
-            {
-                if (searchResult.TryGetProperty("UserInfo", out var ui)) { userList = ui; found = true; }
-                else if (searchResult.TryGetProperty("UserInfoList", out var uil)) { userList = uil; found = true; }
-            }
-            else if (root.TryGetProperty("UserInfo", out var directUi))
-            {
-                userList = directUi;
-                found = true;
-            }
-
-            if (!found) return false;
+            if (!TryFindUserInfoListElement(doc.RootElement, out var userList))
+                return false;
 
             if (userList.ValueKind == JsonValueKind.Array)
             {
                 foreach (var item in userList.EnumerateArray())
                 {
-                    userInfo = item;
+                    userInfo = item.Clone();
                     return true;
                 }
+
                 return false;
             }
 
             if (userList.ValueKind == JsonValueKind.Object)
             {
-                userInfo = userList;
+                userInfo = userList.Clone();
                 return true;
             }
         }
@@ -974,7 +1139,7 @@ public sealed class DevicePersonImportService(
 
     private static void CollectCardNosFromUserInfo(JsonElement el, List<string> dest)
     {
-        foreach (var name in new[] { "cardNo", "CardNo" })
+        foreach (var name in new[] { "cardNo", "CardNo", "cardNumber", "CardNumber" })
         {
             if (!TryGetPropertyInsensitive(el, name, out var cn)) continue;
             var s = JsonElementToTrimmedString(cn);
@@ -1039,14 +1204,13 @@ public sealed class DevicePersonImportService(
             var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/CardInfo/Search?format=json", body, ct);
             LogImportIsapiResponse(deviceName, employeeNo, $"POST CardInfo/Search (вариант {i + 1}/{bodies.Length})", ok, err, content);
             if (!ok || string.IsNullOrWhiteSpace(content)) continue;
+            var parsed = ParseCardInfoSearchResponse(content);
+            if (parsed.Count > 0) return parsed;
             if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } jsonErr)
             {
                 logger.LogDebug("CardInfo/Search: {Error}", jsonErr);
                 continue;
             }
-
-            var parsed = ParseCardInfoSearchResponse(content);
-            if (parsed.Count > 0) return parsed;
         }
 
         return [];
@@ -1567,45 +1731,131 @@ public sealed class DevicePersonImportService(
         }
     }
 
+    /// <summary>Собирает отпечатки из UserInfo: FPInfo (несколько имён списков), корневой FingerPrintInfo.</summary>
+    private static void CollectAllFingerprintsFromUserInfo(JsonElement userInfo, List<(int FingerIndex, byte[] Data)> dest)
+    {
+        CollectFingerprintsFromUserInfoFpInfo(userInfo, dest);
+
+        if (TryGetPropertyInsensitive(userInfo, "FingerPrintInfo", out var rootFpi))
+        {
+            if (rootFpi.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in rootFpi.EnumerateArray())
+                    TryAddFingerprintItem(item, dest);
+            }
+            else if (rootFpi.ValueKind == JsonValueKind.Object)
+                // Обёртка с вложенным FingerPrintInfo/List и status «NoFP» (конец выдачи по страницам, не ошибка — ISAPI §9.12.2.2).
+                ExtractFingerprintsFromElement(rootFpi, dest, 0);
+        }
+    }
+
     private static void CollectFingerprintsFromUserInfoFpInfo(JsonElement userInfo, List<(int FingerIndex, byte[] Data)> dest)
     {
         if (!TryGetPropertyInsensitive(userInfo, "FPInfo", out var fp) || fp.ValueKind != JsonValueKind.Object)
             return;
 
-        if (!TryGetPropertyInsensitive(fp, "List", out var list) || list.ValueKind != JsonValueKind.Array)
-            return;
-
-        foreach (var item in list.EnumerateArray())
+        foreach (var listName in new[] { "List", "list", "FingerPrintList", "fingerPrintList", "FingerPrintInfo" })
         {
-            var fingerId = 1;
-            foreach (var name in new[] { "fingerPrintID", "fingerPrintId" })
+            if (!TryGetPropertyInsensitive(fp, listName, out var list))
+                continue;
+            if (list.ValueKind == JsonValueKind.Array)
             {
-                if (TryGetPropertyInsensitive(item, name, out var idEl) && idEl.TryGetInt32(out var id))
-                {
-                    fingerId = id;
-                    break;
-                }
+                foreach (var item in list.EnumerateArray())
+                    AddFingerprintFromFpListItem(item, dest);
             }
+            else if (list.ValueKind == JsonValueKind.Object)
+                AddFingerprintFromFpListItem(list, dest);
+        }
+    }
 
-            foreach (var name in new[] { "fingerData", "FingerData" })
+    private static void AddFingerprintFromFpListItem(JsonElement item, List<(int FingerIndex, byte[] Data)> dest)
+    {
+        var fingerId = 1;
+        foreach (var name in new[] { "fingerPrintID", "fingerPrintId" })
+        {
+            if (TryGetPropertyInsensitive(item, name, out var idEl) && idEl.TryGetInt32(out var id))
             {
-                if (!TryGetPropertyInsensitive(item, name, out var fd) || fd.ValueKind != JsonValueKind.String)
-                    continue;
-                var b64 = fd.GetString();
-                if (string.IsNullOrWhiteSpace(b64)) continue;
-                try
-                {
-                    var raw = Convert.FromBase64String(b64.Trim());
-                    if (raw.Length > 0)
-                        dest.Add((fingerId, raw));
-                }
-                catch
-                {
-                    // skip
-                }
+                fingerId = id;
                 break;
             }
         }
+
+        foreach (var name in new[] { "fingerData", "FingerData", "fingerPrintData", "FingerPrintData", "templateData", "TemplateData", "fpData", "FPData" })
+        {
+            if (!TryGetPropertyInsensitive(item, name, out var fd))
+                continue;
+            if (!TryDecodeFingerprintPayload(fd, out var raw) || raw.Length == 0)
+                continue;
+            dest.Add((fingerId, raw));
+            break;
+        }
+    }
+
+    /// <summary>Строка base64/hex или JSON-массив байт [12,34,…] — встречается в ответах Hikvision.</summary>
+    private static bool TryDecodeFingerprintPayload(JsonElement fd, out byte[] raw)
+    {
+        raw = Array.Empty<byte>();
+        if (fd.ValueKind == JsonValueKind.String)
+        {
+            var s = fd.GetString()?.Trim();
+            return !string.IsNullOrEmpty(s) && TryDecodeFingerprintStringBase64OrHex(s, out raw);
+        }
+
+        if (fd.ValueKind != JsonValueKind.Array) return false;
+        var buf = new List<byte>();
+        foreach (var x in fd.EnumerateArray())
+        {
+            if (x.TryGetInt32(out var n) && n is >= 0 and <= 255)
+                buf.Add((byte)n);
+            else
+                return false;
+        }
+
+        raw = buf.ToArray();
+        return raw.Length > 0;
+    }
+
+    private static bool TryDecodeFingerprintStringBase64OrHex(string s, out byte[] raw)
+    {
+        raw = Array.Empty<byte>();
+        try
+        {
+            raw = Convert.FromBase64String(s);
+            return raw.Length > 0;
+        }
+        catch
+        {
+            /* try hex */
+        }
+
+        try
+        {
+            var hex = Regex.Replace(s, @"\s+", "");
+            if (hex.Length < 4 || hex.Length % 2 != 0) return false;
+            raw = Convert.FromHexString(hex);
+            return raw.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Оценка числа отпечатков из UserInfo: корневые счётчики и длина списков в FPInfo.</summary>
+    private static int GetFingerprintCountHintFromUserInfo(JsonElement userInfo)
+    {
+        var n = TryGetNumOfFpHint(userInfo);
+        if (!TryGetPropertyInsensitive(userInfo, "FPInfo", out var fp) || fp.ValueKind != JsonValueKind.Object)
+            return n;
+        foreach (var listName in new[] { "List", "list", "FingerPrintList", "fingerPrintList", "FingerPrintInfo" })
+        {
+            if (!TryGetPropertyInsensitive(fp, listName, out var list) || list.ValueKind != JsonValueKind.Array)
+                continue;
+            var c = (int)list.GetArrayLength();
+            if (c > n) n = c;
+        }
+
+        return n;
     }
 
     private async Task<int> GetFingerPrintCountAsync(IsapiClient client, string deviceName, string employeeNo, CancellationToken ct)
@@ -1663,115 +1913,131 @@ public sealed class DevicePersonImportService(
         string employeeNo,
         CancellationToken ct)
     {
-        // Прошивки Value/Pro ожидают узел FingerPrintCond (ошибка MessageParametersLack / FingerPrintCond).
-        // Часть терминалов — плоский employeeNo в FingerPrintCond; часть — EmployeeNoList или mode=byEmployeeNo.
-        var condFlat = new Dictionary<string, object?>
+        var variant = 0;
+        foreach (var readers in GetFingerprintEnableCardReaderCandidates())
         {
-            ["employeeNo"] = employeeNo,
-            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-            ["searchResultPosition"] = 0,
-            ["maxResults"] = 10,
-            ["enableCardReader"] = new[] { 1 },
-        };
-        var condFlatNoReader = new Dictionary<string, object?>
-        {
-            ["employeeNo"] = employeeNo,
-            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-            ["searchResultPosition"] = 0,
-            ["maxResults"] = 10,
-        };
-        var condByEmployeeNoMode = new Dictionary<string, object?>
-        {
-            ["mode"] = "byEmployeeNo",
-            ["EmployeeNoDetail"] = new Dictionary<string, object?>
+            var condFlat = new Dictionary<string, object?>
             {
                 ["employeeNo"] = employeeNo,
-                ["enableCardReader"] = new[] { 1 },
-            },
-        };
-        var condBase = new Dictionary<string, object?>
-        {
-            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-            ["searchResultPosition"] = 0,
-            ["maxResults"] = 10,
-            ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
-            ["enableCardReader"] = new[] { 1 },
-        };
-        var condNoReader = new Dictionary<string, object?>
-        {
-            ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-            ["searchResultPosition"] = 0,
-            ["maxResults"] = 10,
-            ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
-        };
-
-        var bodies = new[]
-        {
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlat } },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlatNoReader } },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condByEmployeeNoMode } },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condBase } },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintCond"] = condBase },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(
-                new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condNoReader } },
-                IsapiPascalJson),
-            JsonSerializer.Serialize(new
+                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                ["searchResultPosition"] = 0,
+                ["maxResults"] = 10,
+                ["enableCardReader"] = readers,
+            };
+            var condFlatNoReader = new Dictionary<string, object?>
             {
-                FingerPrintUploadCond = new
+                ["employeeNo"] = employeeNo,
+                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                ["searchResultPosition"] = 0,
+                ["maxResults"] = 10,
+            };
+            var condByEmployeeNoMode = new Dictionary<string, object?>
+            {
+                ["mode"] = "byEmployeeNo",
+                ["EmployeeNoDetail"] = new Dictionary<string, object?>
                 {
-                    searchID = Guid.NewGuid().ToString("N")[..20],
-                    searchResultPosition = 0,
-                    maxResults = 10,
-                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
+                    ["employeeNo"] = employeeNo,
+                    ["enableCardReader"] = readers,
                 },
-            }, IsapiPascalJson),
-            JsonSerializer.Serialize(new
+            };
+            var condBase = new Dictionary<string, object?>
             {
-                FingerPrintSearchCond = new
-                {
-                    searchID = Guid.NewGuid().ToString("N")[..20],
-                    searchResultPosition = 0,
-                    maxResults = 10,
-                    EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
-                },
-            }, IsapiPascalJson),
-        };
+                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                ["searchResultPosition"] = 0,
+                ["maxResults"] = 10,
+                ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+                ["enableCardReader"] = readers,
+            };
+            var condNoReader = new Dictionary<string, object?>
+            {
+                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                ["searchResultPosition"] = 0,
+                ["maxResults"] = 10,
+                ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+            };
 
-        for (var i = 0; i < bodies.Length; i++)
-        {
-            var body = bodies[i];
-            var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
-            LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintUpload (вариант {i + 1}/{bodies.Length})", ok, err, content);
-            if (!ok || string.IsNullOrWhiteSpace(content)) continue;
-            if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } jsonErr &&
-                !content.Contains("FingerPrintInfo", StringComparison.OrdinalIgnoreCase))
+            var bodies = new[]
             {
-                logger.LogDebug("FingerPrintUpload: {Err}", jsonErr);
-                continue;
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlat } },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlatNoReader } },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condByEmployeeNoMode } },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condBase } },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintCond"] = condBase },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(
+                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condNoReader } },
+                    IsapiPascalJson),
+                JsonSerializer.Serialize(new
+                {
+                    FingerPrintUploadCond = new
+                    {
+                        searchID = Guid.NewGuid().ToString("N")[..20],
+                        searchResultPosition = 0,
+                        maxResults = 10,
+                        EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
+                    },
+                }, IsapiPascalJson),
+                JsonSerializer.Serialize(new
+                {
+                    FingerPrintSearchCond = new
+                    {
+                        searchID = Guid.NewGuid().ToString("N")[..20],
+                        searchResultPosition = 0,
+                        maxResults = 10,
+                        EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
+                    },
+                }, IsapiPascalJson),
+            };
+
+            for (var i = 0; i < bodies.Length; i++)
+            {
+                variant++;
+                var body = bodies[i];
+                var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
+                LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintUpload readers=[{string.Join(',', readers)}] #{variant}", ok, err, content);
+                if (!ok || string.IsNullOrWhiteSpace(content)) continue;
+                var batch = new List<(int FingerIndex, byte[] Data)>();
+                TryParseFingerPrintUploadResponse(content, batch);
+                if (batch.Count > 0) return batch;
+                if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } jsonErr &&
+                    !content.Contains("FingerPrintInfo", StringComparison.OrdinalIgnoreCase) &&
+                    !content.Contains("FPInfo", StringComparison.OrdinalIgnoreCase) &&
+                    !content.Contains("fingerData", StringComparison.OrdinalIgnoreCase))
+                {
+                    logger.LogDebug("FingerPrintUpload: {Err}", jsonErr);
+                    continue;
+                }
             }
-
-            var batch = new List<(int FingerIndex, byte[] Data)>();
-            TryParseFingerPrintUploadResponse(content, batch);
-            if (batch.Count > 0) return batch;
         }
 
         return [];
     }
 
+    /// <summary>
+    /// Разбор ответа FingerPrintUpload / FingerPrintInfo/Search и т.п.
+    /// Шаблон — те же поля, что при <see cref="DeviceFingerprintCaptureService"/>: CaptureFingerPrint → fingerData (Base64, типично 1…768 байт, см. ISAPI Pro §12.6.2.1).
+    /// Узел FingerPrintInfo.status «NoFP» означает «все отпечатки выданы» (постраничная выдача), не отсутствие данных (ISAPI §9.12.2.2).
+    /// </summary>
     private static void TryParseFingerPrintUploadResponse(string json, List<(int FingerIndex, byte[] Data)> dest)
     {
         try
         {
+            var t = json.TrimStart();
+            if (t.StartsWith('<'))
+            {
+                ExtractFingerprintsFromXmlFingerprintResponse(json, dest);
+                if (dest.Count > 0) return;
+            }
+
             using var doc = JsonDocument.Parse(json);
             ExtractFingerprintsFromElement(doc.RootElement, dest, 0);
         }
@@ -1781,9 +2047,41 @@ public sealed class DevicePersonImportService(
         }
     }
 
+    private static readonly Regex XmlFingerprintDataRegex = new(
+        @"<(?:fingerData|FingerPrintData|fingerPrintData)\b[^>]*>\s*([^<]+)\s*</",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static void ExtractFingerprintsFromXmlFingerprintResponse(string xml, List<(int FingerIndex, byte[] Data)> dest)
+    {
+        foreach (Match m in XmlFingerprintDataRegex.Matches(xml))
+        {
+            if (!m.Success) continue;
+            var b64 = m.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(b64)) continue;
+            try
+            {
+                var raw = Convert.FromBase64String(b64);
+                if (raw.Length > 0 && !IsLikelyRasterImage(raw))
+                    dest.Add((1, raw));
+            }
+            catch
+            {
+                /* invalid base64 */
+            }
+        }
+    }
+
     private static void ExtractFingerprintsFromElement(JsonElement el, List<(int FingerIndex, byte[] Data)> dest, int depth)
     {
-        if (depth > 8) return;
+        if (depth > 14) return;
+
+        // Корневой ответ иногда — массив записей; вложенные массивы (например List) раньше отбрасывались из‑за «только Object».
+        if (el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in el.EnumerateArray())
+                ExtractFingerprintsFromElement(item, dest, depth + 1);
+            return;
+        }
 
         if (TryGetPropertyInsensitive(el, "FingerPrintInfo", out var fpi))
         {
@@ -1793,7 +2091,14 @@ public sealed class DevicePersonImportService(
                     TryAddFingerprintItem(item, dest);
             }
             else if (fpi.ValueKind == JsonValueKind.Object)
-                TryAddFingerprintItem(fpi, dest);
+                ExtractFingerprintsFromElement(fpi, dest, depth + 1);
+        }
+
+        // Ответ FingerPrintUpload часто повторяет форму UserInfo: FPInfo.List[].fingerData, без узла FingerPrintInfo.
+        if (el.ValueKind == JsonValueKind.Object)
+        {
+            CollectFingerprintsFromUserInfoFpInfo(el, dest);
+            TryAddFingerprintItem(el, dest);
         }
 
         if (el.ValueKind != JsonValueKind.Object) return;
@@ -1816,24 +2121,163 @@ public sealed class DevicePersonImportService(
             }
         }
 
-        foreach (var name in new[] { "fingerData", "FingerData" })
+        foreach (var name in new[] { "fingerData", "FingerData", "fingerPrintData", "FingerPrintData", "templateData", "TemplateData", "fpData", "FPData" })
         {
-            if (!TryGetPropertyInsensitive(item, name, out var fd) || fd.ValueKind != JsonValueKind.String)
+            if (!TryGetPropertyInsensitive(item, name, out var fd))
                 continue;
-            var b64 = fd.GetString();
-            if (string.IsNullOrWhiteSpace(b64)) continue;
-            try
-            {
-                var raw = Convert.FromBase64String(b64.Trim());
-                if (raw.Length > 0)
-                    dest.Add((fingerId, raw));
-            }
-            catch
-            {
-                // skip
-            }
+            if (!TryDecodeFingerprintPayload(fd, out var raw) || raw.Length == 0)
+                continue;
+            dest.Add((fingerId, raw));
             return;
         }
+    }
+
+    /// <summary>Варианты enableCardReader: отпечаток может идти с настроенного считывателя или со 2-го модуля (см. Hikvision:ReaderId).</summary>
+    private IEnumerable<int[]> GetFingerprintEnableCardReaderCandidates()
+    {
+        var r = Math.Clamp(HikvisionIsapiDefaults.GetReaderId(configuration), 1, 32);
+        yield return new[] { r };
+        if (r != 1) yield return new[] { 1 };
+        if (r != 2) yield return new[] { 2 };
+        yield return new[] { 1, 2 };
+    }
+
+    /// <summary>Запасной поиск шаблонов (часть прошивок отдаёт шаблоны здесь, а не в FingerPrintUpload).</summary>
+    private async Task<List<(int FingerIndex, byte[] Data)>> FetchFingerprintsFromFingerPrintInfoSearchAsync(
+        IsapiClient client,
+        string deviceName,
+        string employeeNo,
+        CancellationToken ct)
+    {
+        var bodies = new[]
+        {
+            JsonSerializer.Serialize(new
+            {
+                FingerPrintInfoSearchCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    searchResultPosition = 0,
+                    maxResults = 10,
+                    employeeNo,
+                },
+            }, IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["FingerPrintInfoSearchCond"] = new Dictionary<string, object?>
+                    {
+                        ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                        ["searchResultPosition"] = 0,
+                        ["maxResults"] = 10,
+                        ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+                    },
+                },
+                IsapiPascalJson),
+        };
+
+        foreach (var (body, idx) in bodies.Select((b, i) => (b, i)))
+        {
+            var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintInfo/Search?format=json", body, ct);
+            LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintInfo/Search (вариант {idx + 1}/{bodies.Length})", ok, err, content);
+            if (!ok || string.IsNullOrWhiteSpace(content)) continue;
+            var batch = new List<(int FingerIndex, byte[] Data)>();
+            TryParseFingerPrintUploadResponse(content, batch);
+            if (batch.Count > 0)
+                return batch;
+        }
+
+        return [];
+    }
+
+    /// <summary>Часть прошивок (в т.ч. DS-K1T) отдаёт шаблон только при явном fingerPrintID в условии.</summary>
+    private async Task<List<(int FingerIndex, byte[] Data)>> FetchFingerprintsFingerPrintUploadPerFingerAsync(
+        IsapiClient client,
+        string deviceName,
+        string employeeNo,
+        CancellationToken ct)
+    {
+        var merged = new List<(int FingerIndex, byte[] Data)>();
+        foreach (var readers in GetFingerprintEnableCardReaderCandidates())
+        {
+            for (var fid = 1; fid <= 10; fid++)
+            {
+                var cond = new Dictionary<string, object?>
+                {
+                    ["employeeNo"] = employeeNo,
+                    ["fingerPrintID"] = fid,
+                    ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                    ["searchResultPosition"] = 0,
+                    ["maxResults"] = 1,
+                    ["enableCardReader"] = readers,
+                };
+                var body = JsonSerializer.Serialize(
+                    new Dictionary<string, object?>
+                    {
+                        ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = cond },
+                    },
+                    IsapiPascalJson);
+                var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
+                LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintUpload per-slot fingerPrintID={fid} readers=[{string.Join(',', readers)}]", ok, err, content);
+                if (!ok || string.IsNullOrWhiteSpace(content)) continue;
+                var batch = new List<(int FingerIndex, byte[] Data)>();
+                TryParseFingerPrintUploadResponse(content, batch);
+                foreach (var b in batch)
+                {
+                    var idx = b.FingerIndex is >= 1 and <= 10 ? b.FingerIndex : fid;
+                    if (b.Data.Length > 0)
+                        merged.Add((idx, b.Data));
+                }
+            }
+        }
+
+        return merged;
+    }
+
+    /// <summary>Запасной список конфигураций отпечатков по сотруднику (другой корень JSON, чем FingerPrintUpload).</summary>
+    private async Task<List<(int FingerIndex, byte[] Data)>> FetchFingerprintsFromFingerPrintCfgSearchAsync(
+        IsapiClient client,
+        string deviceName,
+        string employeeNo,
+        CancellationToken ct)
+    {
+        var bodies = new[]
+        {
+            JsonSerializer.Serialize(new
+            {
+                FingerPrintCfgSearchCond = new
+                {
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    searchResultPosition = 0,
+                    maxResults = 10,
+                    employeeNo,
+                },
+            }, IsapiPascalJson),
+            JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["FingerPrintCfgSearchCond"] = new Dictionary<string, object?>
+                    {
+                        ["searchID"] = Guid.NewGuid().ToString("N")[..20],
+                        ["searchResultPosition"] = 0,
+                        ["maxResults"] = 10,
+                        ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
+                    },
+                },
+                IsapiPascalJson),
+        };
+
+        foreach (var (body, idx) in bodies.Select((b, i) => (b, i)))
+        {
+            var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintCfg/Search?format=json", body, ct);
+            LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintCfg/Search (вариант {idx + 1}/{bodies.Length})", ok, err, content);
+            if (!ok || string.IsNullOrWhiteSpace(content)) continue;
+            var batch = new List<(int FingerIndex, byte[] Data)>();
+            TryParseFingerPrintUploadResponse(content, batch);
+            if (batch.Count > 0)
+                return batch;
+        }
+
+        return [];
     }
 
     private static bool TryGetPropertyInsensitive(JsonElement el, string name, out JsonElement value)

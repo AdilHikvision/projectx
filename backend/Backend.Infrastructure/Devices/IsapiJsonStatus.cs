@@ -69,6 +69,7 @@ public static class IsapiJsonStatus
         owner = default;
         if (depth > 14 || el.ValueKind != JsonValueKind.Object)
             return false;
+        // Учитываем только "statusCode" (число), не строковый "status" (напр. "NoFP" в FingerPrintInfo — не ошибка, см. ISAPI §9.12.2.2).
         if (el.TryGetProperty("statusCode", out var sc))
         {
             if (sc.TryGetInt32(out code) || (sc.ValueKind == JsonValueKind.String && int.TryParse(sc.GetString(), out code)))
