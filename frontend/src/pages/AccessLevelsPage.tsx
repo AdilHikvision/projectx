@@ -58,8 +58,7 @@ function floorOrDoorLabel(doorIndex: number, doorName: string | null | undefined
 
 const ACCESS_TABS = [
   { value: 'access-level', label: 'Access Level' },
-  { value: 'doors', label: 'Doors' },
-  { value: 'floors', label: 'Floors' },
+  { value: 'doors', label: 'Doors / Floors' },
 ] as const
 
 export function AccessLevelsPage() {
@@ -430,38 +429,6 @@ export function AccessLevelsPage() {
             </div>
           )}
 
-          {tabFilter === 'floors' && (
-            <div className="grid gap-3">
-              {doorsLoading ? (
-                <div className="p-12 text-center text-sm font-bold text-text-light uppercase tracking-widest">Loading floors...</div>
-              ) : doorsError ? (
-                <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold shadow-sm">{doorsError}</div>
-              ) : doorsList.filter((d) => d.isElevator).length === 0 ? (
-                <div className="p-12 text-center bg-surface rounded-2xl shadow-md">
-                  <span className="material-symbols-outlined text-5xl text-text-light mb-4 block">layers</span>
-                  <p className="text-sm font-bold text-text-muted uppercase tracking-widest mb-2">No elevator floors</p>
-                  <p className="text-text-muted text-sm">Mark a device as Elevator Controller in Devices, then floors appear here from the controller.</p>
-                </div>
-              ) : (
-                doorsList
-                  .filter((d) => d.isElevator)
-                  .map((door) => (
-                    <div key={`${door.deviceId}-${door.doorIndex}`} className="p-4 bg-surface rounded-2xl shadow-md flex justify-between items-center border-none">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-xl text-primary">
-                          <span className="material-symbols-outlined">layers</span>
-                        </div>
-                        <div>
-                          <p className="text-sm font-black text-text-dark leading-tight">{door.deviceName}</p>
-                          <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{floorOrDoorLabel(door.doorIndex, door.doorName, true)}</p>
-                        </div>
-                      </div>
-                      <Badge variant="primary">Elevator</Badge>
-                    </div>
-                  ))
-              )}
-            </div>
-          )}
         </div>
       </div>
 

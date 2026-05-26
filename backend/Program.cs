@@ -4,6 +4,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using Npgsql;
 using Backend.Application.Security;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
@@ -2711,18 +2712,50 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
         .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
         .ToListAsync(cancellationToken);
 
+    var leaves = await dbContext.EmployeeLeaves.AsNoTracking()
+        .Where(l => l.StartDate <= toDate && l.EndDate >= fromDate && l.Status != LeaveStatus.Rejected && l.Status != LeaveStatus.Cancelled)
+        .ToListAsync(cancellationToken);
+
+    var fromDt = fromDate.ToDateTime(TimeOnly.MinValue);
+    var toDt = toDate.ToDateTime(TimeOnly.MaxValue);
+    var selfServiceRequests = await dbContext.AttendanceRequests.AsNoTracking()
+        .Where(r => (r.Type == AttendanceRequestType.Absence || r.Type == AttendanceRequestType.Vacation || r.Type == AttendanceRequestType.Overtime)
+                    && r.Status != AttendanceRequestStatus.Rejected
+                    && r.RequestedTimeUtc <= toDt
+                    && (r.RequestedEndTimeUtc == null ? r.RequestedTimeUtc >= fromDt : r.RequestedEndTimeUtc >= fromDt))
+        .ToListAsync(cancellationToken);
+
     var empResult = employees.Select(e => new
     {
         employeeId = e.Id,
         employeeName = e.FirstName + " " + e.LastName,
-        dates = e.DayPatterns.Select(p => new
+        dates = e.DayPatterns.Select(p =>
         {
-            date = p.Date.ToString("yyyy-MM-dd"),
-            scheduleId = p.WorkScheduleId,
-            scheduleName = p.WorkSchedule?.Name,
-            shiftStart = p.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"),
-            shiftEnd = p.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
-            isDayOff = p.IsDayOff
+            var leave = leaves.FirstOrDefault(l => l.EmployeeId == e.Id && l.StartDate <= p.Date && l.EndDate >= p.Date);
+            var req = selfServiceRequests.FirstOrDefault(r => {
+                if (r.EmployeeId != e.Id) return false;
+                var reqStart = DateOnly.FromDateTime(r.RequestedTimeUtc);
+                var reqEnd = r.RequestedEndTimeUtc.HasValue ? DateOnly.FromDateTime(r.RequestedEndTimeUtc.Value) : reqStart;
+                return reqStart <= p.Date && reqEnd >= p.Date;
+            });
+            return new
+            {
+                date = p.Date.ToString("yyyy-MM-dd"),
+                scheduleId = p.WorkScheduleId,
+                scheduleName = p.WorkSchedule?.Name,
+                shiftStart = p.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"),
+                shiftEnd = p.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
+                isDayOff = p.IsDayOff,
+                leaveId = leave?.Id,
+                leaveType = leave?.LeaveType.ToString(),
+                leaveIsPaid = leave?.IsPaid,
+                leaveStatus = leave?.Status.ToString(),
+                leaveReason = leave?.Reason,
+                requestId = req?.Id,
+                requestType = req?.Type.ToString(),
+                requestStatus = req?.Status.ToString(),
+                requestComment = req?.Comment,
+            };
         }).ToArray()
     });
 
@@ -2766,6 +2799,87 @@ app.MapPut("/api/schedule-planner/{employeeId:guid}/days", async (
 
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Leaves ────────────────────────────────────────────────────────────────────
+
+app.MapGet("/api/leaves", async (AppDbContext db, Guid? employeeId, DateOnly? from, DateOnly? to, CancellationToken ct) =>
+{
+    var q = db.EmployeeLeaves.Include(l => l.Employee).ThenInclude(e => e.Department).AsNoTracking().AsQueryable();
+    if (employeeId.HasValue) q = q.Where(l => l.EmployeeId == employeeId.Value);
+    if (from.HasValue) q = q.Where(l => l.EndDate >= from.Value);
+    if (to.HasValue) q = q.Where(l => l.StartDate <= to.Value);
+    var list = await q.OrderByDescending(l => l.StartDate).ToListAsync(ct);
+    return Results.Ok(list.Select(l => new {
+        l.Id, l.EmployeeId,
+        employeeName = $"{l.Employee.FirstName} {l.Employee.LastName}",
+        department = l.Employee.Department?.Name,
+        leaveType = l.LeaveType.ToString(),
+        l.IsPaid, l.StartDate, l.EndDate, l.Reason,
+        status = l.Status.ToString(), l.Notes, l.ApprovedAt
+    }));
+}).RequireAuthorization();
+
+app.MapPost("/api/leaves", async (CreateLeaveRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!Enum.TryParse<LeaveType>(req.LeaveType, true, out var lt))
+        return Results.BadRequest(new { message = "Invalid leaveType. Use Vacation or DayOff." });
+    var emp = await db.Employees.FirstOrDefaultAsync(e => e.Id == req.EmployeeId, ct);
+    if (emp is null) return Results.NotFound(new { message = "Employee not found." });
+    if (req.EndDate < req.StartDate) return Results.BadRequest(new { message = "EndDate must be >= StartDate." });
+    var leave = new EmployeeLeave {
+        EmployeeId = req.EmployeeId, LeaveType = lt, IsPaid = req.IsPaid,
+        StartDate = req.StartDate, EndDate = req.EndDate,
+        Reason = req.Reason, Notes = req.Notes, Status = LeaveStatus.Pending
+    };
+    db.EmployeeLeaves.Add(leave);
+    await db.SaveChangesAsync(ct);
+    return Results.Created($"/api/leaves/{leave.Id}", new { leave.Id, leave.EmployeeId, leaveType = leave.LeaveType.ToString(), leave.IsPaid, leave.StartDate, leave.EndDate, leave.Reason, status = leave.Status.ToString() });
+}).RequireAuthorization();
+
+app.MapPut("/api/leaves/{id:guid}", async (Guid id, UpdateLeaveRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
+    if (leave is null) return Results.NotFound();
+    if (leave.Status == LeaveStatus.Approved) return Results.BadRequest(new { message = "Cannot edit an approved leave." });
+    if (!Enum.TryParse<LeaveType>(req.LeaveType, true, out var lt)) return Results.BadRequest(new { message = "Invalid leaveType." });
+    leave.LeaveType = lt; leave.IsPaid = req.IsPaid; leave.StartDate = req.StartDate;
+    leave.EndDate = req.EndDate; leave.Reason = req.Reason; leave.Notes = req.Notes;
+    leave.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { leave.Id, leaveType = leave.LeaveType.ToString(), leave.IsPaid, leave.StartDate, leave.EndDate, leave.Reason, status = leave.Status.ToString() });
+}).RequireAuthorization();
+
+app.MapDelete("/api/leaves/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
+    if (leave is null) return Results.NotFound();
+    db.EmployeeLeaves.Remove(leave);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, ClaimsPrincipal user, CancellationToken ct) =>
+{
+    var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
+    if (leave is null) return Results.NotFound();
+    leave.Status = LeaveStatus.Approved;
+    leave.ApprovedAt = DateTime.UtcNow;
+    if (Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var uid)) leave.ApprovedByUserId = uid;
+    leave.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
+}).RequireAuthorization();
+
+app.MapPost("/api/leaves/{id:guid}/reject", async (Guid id, NoteRequest? req, AppDbContext db, CancellationToken ct) =>
+{
+    var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
+    if (leave is null) return Results.NotFound();
+    leave.Status = LeaveStatus.Rejected;
+    if (req?.Note is not null) leave.Notes = req.Note;
+    leave.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization();
 
 // ─── Attendance Records ────────────────────────────────────────────────────────
@@ -3178,7 +3292,7 @@ app.MapPost("/api/attendance/sync-from-device/{deviceId:guid}", async (Guid devi
 
 // ─── Attendance Requests ───────────────────────────────────────────────────────
 
-app.MapGet("/api/attendance-requests", async (Guid? employeeId, string? status, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/attendance-requests", async (Guid? employeeId, string? status, string? types, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var query = dbContext.AttendanceRequests.AsNoTracking()
         .Include(r => r.Employee)
@@ -3186,6 +3300,13 @@ app.MapGet("/api/attendance-requests", async (Guid? employeeId, string? status, 
     if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
     if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<AttendanceRequestStatus>(status, true, out var statusEnum))
         query = query.Where(r => r.Status == statusEnum);
+    if (!string.IsNullOrWhiteSpace(types))
+    {
+        var typeList = types.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => Enum.TryParse<AttendanceRequestType>(t, true, out var parsed) ? (AttendanceRequestType?)parsed : null)
+            .Where(t => t.HasValue).Select(t => t!.Value).ToList();
+        if (typeList.Count > 0) query = query.Where(r => typeList.Contains(r.Type));
+    }
     var items = await query.OrderByDescending(r => r.CreatedUtc)
         .Select(r => new AttendanceRequestResponse(r.Id, r.EmployeeId, r.Employee.FirstName + " " + r.Employee.LastName, r.Type.ToString(), r.RequestedTimeUtc, r.RequestedEndTimeUtc, r.Comment, r.Status.ToString(), r.ReviewedByUserId, r.ReviewedAtUtc, r.ReviewComment, r.CreatedUtc, r.Latitude, r.Longitude, r.GeoZoneName))
         .ToListAsync(cancellationToken);
@@ -3567,7 +3688,9 @@ app.MapGet("/api/payroll/employees", async (AppDbContext db, CancellationToken c
             salaryConfig = cfg is null ? null : new
             {
                 cfg.Id, salaryType = cfg.SalaryType.ToString(), cfg.BaseAmount, cfg.Currency,
-                cfg.OvertimeMultiplier, cfg.EffectiveFrom,
+                cfg.OvertimeMultiplier, cfg.OvertimeEnabled, cfg.PayByWorkedHours,
+                cfg.OvertimeTiersJson, cfg.LatenessDeductionEnabled, cfg.LatenessTiersJson,
+                cfg.EffectiveFrom,
                 components = cfg.Components.Select(ec => new
                 {
                     componentId = ec.ComponentId,
@@ -3609,6 +3732,15 @@ app.MapPut("/api/payroll/employees/{employeeId:guid}/salary", async (
     cfg.BaseAmount = req.BaseAmount;
     cfg.Currency = req.Currency ?? "AZN";
     cfg.OvertimeMultiplier = req.OvertimeMultiplier ?? 1.5m;
+    cfg.OvertimeEnabled = req.OvertimeEnabled ?? true;
+    cfg.PayByWorkedHours = req.PayByWorkedHours ?? false;
+    cfg.OvertimeTiersJson = req.OvertimeTiers is { Length: > 0 }
+        ? System.Text.Json.JsonSerializer.Serialize(req.OvertimeTiers)
+        : null;
+    cfg.LatenessDeductionEnabled = req.LatenessDeductionEnabled ?? false;
+    cfg.LatenessTiersJson = req.LatenessTiers is { Length: > 0 }
+        ? System.Text.Json.JsonSerializer.Serialize(req.LatenessTiers)
+        : null;
     cfg.EffectiveFrom = req.EffectiveFrom;
 
     if (req.ComponentIds is not null)
@@ -3722,6 +3854,14 @@ app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
     var empByNo = allEmployees.Where(e => e.EmployeeNo != null)
         .ToDictionary(e => e.EmployeeNo!, e => e);
 
+    // Get approved paid leaves for the period
+    var leavesInPeriod = await db.EmployeeLeaves.AsNoTracking()
+        .Where(l => l.Status == LeaveStatus.Approved && l.IsPaid &&
+                    l.StartDate <= DateOnly.FromDateTime(periodEnd.AddDays(-1)) &&
+                    l.EndDate >= DateOnly.FromDateTime(periodStart))
+        .ToListAsync(ct);
+    var leavesByEmp = leavesInPeriod.GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
     // Clear existing entries for recalculation
     db.PayrollEntries.RemoveRange(period.Entries);
     period.Entries.Clear();
@@ -3743,6 +3883,7 @@ app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
         var workedDays = 0;
         var totalWorkedHours = 0.0;
         var totalOvertimeHours = 0.0;
+        var totalLatenessMinutes = 0.0;
 
         // Get employee's work schedule for overtime calc
         var schedule = await db.WorkSchedules.AsNoTracking()
@@ -3750,26 +3891,67 @@ app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
         var scheduledHoursPerDay = schedule?.ShiftStart.HasValue == true && schedule?.ShiftEnd.HasValue == true
             ? (schedule.ShiftEnd.Value - schedule.ShiftStart.Value).TotalHours
             : (double)(schedule?.RequiredHoursPerDay ?? 8);
+        var shiftStart = schedule?.ShiftStart; // TimeSpan? for lateness calc
 
         foreach (var (date, dayLogs) in logsByDate)
         {
-            // Only count Mon-Fri as working days (unless schedule says otherwise)
             var checkIn = dayLogs.Min(l => l.EventTimeUtc);
             var checkOut = dayLogs.Max(l => l.EventTimeUtc);
             var hoursWorked = (checkOut - checkIn).TotalHours;
 
-            // Clamp unrealistic values (>16 hours = likely multi-day issue)
             if (hoursWorked > 16) hoursWorked = scheduledHoursPerDay;
             if (hoursWorked > 0)
             {
                 workedDays++;
                 totalWorkedHours += hoursWorked;
-                var overtime = Math.Max(0, hoursWorked - scheduledHoursPerDay);
-                totalOvertimeHours += overtime;
+                if (cfg.OvertimeEnabled)
+                {
+                    var overtime = Math.Max(0, hoursWorked - scheduledHoursPerDay);
+                    totalOvertimeHours += overtime;
+                }
+
+                // Lateness calculation
+                if (cfg.LatenessDeductionEnabled && shiftStart.HasValue)
+                {
+                    var checkInLocal = checkIn.ToLocalTime();
+                    var scheduledStart = checkInLocal.Date.Add(shiftStart.Value);
+                    var lateMin = (checkInLocal - scheduledStart).TotalMinutes;
+                    if (lateMin > 0) totalLatenessMinutes += lateMin;
+                }
+            }
+        }
+
+        // Add paid leave days to worked days
+        if (leavesByEmp.TryGetValue(emp.Id, out var empLeaves))
+        {
+            foreach (var lv in empLeaves)
+            {
+                for (var d = lv.StartDate; d <= lv.EndDate; d = d.AddDays(1))
+                {
+                    var dow = d.DayOfWeek;
+                    if (dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday) continue;
+                    var dt = d.ToDateTime(TimeOnly.MinValue);
+                    if (dt < periodStart || dt >= periodEnd) continue;
+                    if (!logsByDate.ContainsKey(d))
+                    {
+                        workedDays++;
+                        totalWorkedHours += scheduledHoursPerDay;
+                    }
+                }
             }
         }
 
         var absentDays = Math.Max(0, totalWorkingDays - workedDays);
+
+        // Parse overtime tiers
+        List<OvertimeTierDto>? otTiers = null;
+        if (cfg.OvertimeTiersJson is not null)
+            try { otTiers = System.Text.Json.JsonSerializer.Deserialize<List<OvertimeTierDto>>(cfg.OvertimeTiersJson); } catch { }
+
+        // Parse lateness tiers
+        List<LatenessTierDto>? lateTiers = null;
+        if (cfg.LatenessTiersJson is not null)
+            try { lateTiers = System.Text.Json.JsonSerializer.Deserialize<List<LatenessTierDto>>(cfg.LatenessTiersJson); } catch { }
 
         // Calculate pay
         decimal basePay;
@@ -3780,22 +3962,72 @@ app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
         {
             case SalaryType.Monthly:
                 hourlyRate = totalWorkingDays > 0 ? cfg.BaseAmount / (totalWorkingDays * 8) : 0;
-                basePay = totalWorkingDays > 0
-                    ? cfg.BaseAmount * workedDays / totalWorkingDays
-                    : 0;
-                overtimePay = (decimal)totalOvertimeHours * hourlyRate * cfg.OvertimeMultiplier;
+                if (cfg.PayByWorkedHours)
+                {
+                    var regularHours = Math.Max(0, totalWorkedHours - totalOvertimeHours);
+                    basePay = (decimal)regularHours * hourlyRate;
+                }
+                else
+                {
+                    basePay = totalWorkingDays > 0 ? cfg.BaseAmount * workedDays / totalWorkingDays : 0;
+                }
                 break;
             case SalaryType.Hourly:
-                basePay = (decimal)totalWorkedHours * cfg.BaseAmount;
-                overtimePay = (decimal)totalOvertimeHours * cfg.BaseAmount * (cfg.OvertimeMultiplier - 1);
+                hourlyRate = cfg.BaseAmount;
+                basePay = (decimal)(totalWorkedHours - totalOvertimeHours) * cfg.BaseAmount;
                 break;
             case SalaryType.Daily:
+                hourlyRate = cfg.BaseAmount / 8m;
                 basePay = workedDays * cfg.BaseAmount;
-                overtimePay = 0;
                 break;
             default:
-                basePay = 0; overtimePay = 0;
+                hourlyRate = 0; basePay = 0;
                 break;
+        }
+
+        // Overtime pay with tiered support
+        if (cfg.OvertimeEnabled && totalOvertimeHours > 0)
+        {
+            if (otTiers is { Count: > 0 })
+            {
+                var sorted = otTiers.OrderBy(t => t.AfterHours).ToList();
+                overtimePay = 0;
+                var remaining = totalOvertimeHours;
+                for (var ti = 0; ti < sorted.Count && remaining > 0; ti++)
+                {
+                    var tierStart = sorted[ti].AfterHours;
+                    var tierEnd = ti + 1 < sorted.Count ? sorted[ti + 1].AfterHours : double.MaxValue;
+                    var hoursInTier = Math.Min(remaining, tierEnd - tierStart);
+                    overtimePay += (decimal)hoursInTier * hourlyRate * sorted[ti].Multiplier;
+                    remaining -= hoursInTier;
+                }
+            }
+            else
+            {
+                overtimePay = cfg.SalaryType == SalaryType.Hourly
+                    ? (decimal)totalOvertimeHours * cfg.BaseAmount * (cfg.OvertimeMultiplier - 1)
+                    : (decimal)totalOvertimeHours * hourlyRate * cfg.OvertimeMultiplier;
+            }
+        }
+        else
+        {
+            overtimePay = 0;
+        }
+
+        // Lateness deduction
+        decimal latenessDeduction = 0;
+        if (cfg.LatenessDeductionEnabled && totalLatenessMinutes > 0)
+        {
+            decimal lateMultiplier = 1m;
+            if (lateTiers is { Count: > 0 })
+            {
+                var applicableTier = lateTiers
+                    .Where(t => totalLatenessMinutes / Math.Max(1, workedDays) >= t.AfterMinutes)
+                    .OrderByDescending(t => t.AfterMinutes)
+                    .FirstOrDefault();
+                if (applicableTier is not null) lateMultiplier = applicableTier.DeductionMultiplier;
+            }
+            latenessDeduction = (decimal)(totalLatenessMinutes / 60.0) * hourlyRate * lateMultiplier;
         }
 
         // Build effective component list: defaults + employee-specific
@@ -3826,6 +4058,7 @@ app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
             }
         }
 
+        deductionsTotal += latenessDeduction;
         var grossPay = basePay + overtimePay + allowancesTotal + bonusesTotal;
         var taxAmount = grossPay * taxRate / 100m;
         var netPay = grossPay - deductionsTotal - taxAmount;
@@ -3909,6 +4142,132 @@ app.MapPut("/api/payroll/periods/{id:guid}/entries/{entryId:guid}/reject", async
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { entry.Id, status = entry.Status.ToString() });
 }).RequireAuthorization();
+
+// ─── Vault ────────────────────────────────────────────────────────────────────
+
+var backupDir = Path.Combine(AppContext.BaseDirectory, "backups");
+var vaultSettingsFile = Path.Combine(AppContext.BaseDirectory, "vault-settings.json");
+
+app.MapPost("/api/vault/backup", async (IConfiguration config, CancellationToken ct) =>
+{
+    Directory.CreateDirectory(backupDir);
+
+    var baseConn = config.GetConnectionString("DefaultConnection") ?? "Host=localhost;Port=5433;Database=projectx";
+    var username = (!string.IsNullOrWhiteSpace(config["Database:Username"]) ? config["Database:Username"] : null)
+                   ?? Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "projectx_user";
+    var password = (!string.IsNullOrWhiteSpace(config["Database:Password"]) ? config["Database:Password"] : null)
+                   ?? Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "";
+
+    var cb = new NpgsqlConnectionStringBuilder(baseConn) { Username = username, Password = password };
+    var host = cb.Host ?? "localhost";
+    var port = cb.Port > 0 ? cb.Port : 5433;
+    var database = cb.Database ?? "projectx";
+
+    var pgDumpExe = new[]
+    {
+        @"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe",
+        @"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
+        @"C:\Program Files\PostgreSQL\15\bin\pg_dump.exe",
+        @"C:\Program Files\PostgreSQL\14\bin\pg_dump.exe",
+    }.FirstOrDefault(File.Exists) ?? "pg_dump";
+
+    var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+    var filename = $"backup_{timestamp}.sql";
+    var filepath = Path.Combine(backupDir, filename);
+
+    var psi = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = pgDumpExe,
+        Arguments = $"-h \"{host}\" -p {port} -U \"{username}\" -d \"{database}\" -f \"{filepath}\"",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+    };
+    psi.Environment["PGPASSWORD"] = password;
+
+    using var proc = System.Diagnostics.Process.Start(psi);
+    if (proc is null) return Results.Problem("Failed to start pg_dump process.");
+
+    var stderr = await proc.StandardError.ReadToEndAsync(ct);
+    await proc.WaitForExitAsync(ct);
+
+    if (proc.ExitCode != 0)
+    {
+        if (File.Exists(filepath)) File.Delete(filepath);
+        return Results.Problem($"pg_dump exited with code {proc.ExitCode}: {stderr.Trim()}");
+    }
+
+    var fi = new FileInfo(filepath);
+    return Results.Ok(new { filename, sizeBytes = fi.Length, createdAt = fi.CreationTimeUtc });
+}).RequireAuthorization();
+
+app.MapGet("/api/vault/backups", () =>
+{
+    if (!Directory.Exists(backupDir)) return Results.Ok(Array.Empty<object>());
+    var files = new DirectoryInfo(backupDir)
+        .GetFiles("backup_*.sql*")
+        .OrderByDescending(f => f.CreationTimeUtc)
+        .Select(f => new { filename = f.Name, sizeBytes = f.Length, createdAt = f.CreationTimeUtc })
+        .ToArray();
+    return Results.Ok(files);
+}).RequireAuthorization();
+
+app.MapDelete("/api/vault/backups/{filename}", (string filename) =>
+{
+    if (filename.Contains("..") || filename.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        return Results.BadRequest(new { message = "Invalid filename." });
+    var path = Path.Combine(backupDir, filename);
+    if (!File.Exists(path)) return Results.NotFound();
+    File.Delete(path);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapGet("/api/vault/backups/{filename}/download", (string filename) =>
+{
+    if (filename.Contains("..") || filename.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        return Results.BadRequest(new { message = "Invalid filename." });
+    var path = Path.Combine(backupDir, filename);
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.File(path, "application/octet-stream", filename);
+}).RequireAuthorization();
+
+app.MapGet("/api/vault/secondary-db", () =>
+{
+    if (!File.Exists(vaultSettingsFile)) return Results.Ok(new { connectionString = (string?)null });
+    try
+    {
+        var settings = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(vaultSettingsFile));
+        return Results.Ok(new { connectionString = settings?.GetValueOrDefault("SecondaryDb") });
+    }
+    catch { return Results.Ok(new { connectionString = (string?)null }); }
+}).RequireAuthorization();
+
+app.MapPost("/api/vault/secondary-db", async (VaultSecondaryDbRequest req, CancellationToken ct) =>
+{
+    var settings = new Dictionary<string, string> { ["SecondaryDb"] = req.ConnectionString ?? "" };
+    await File.WriteAllTextAsync(vaultSettingsFile, JsonSerializer.Serialize(settings), ct);
+    return Results.Ok(new { message = "Saved." });
+}).RequireAuthorization();
+
+app.MapPost("/api/vault/secondary-db/test", async (VaultSecondaryDbRequest req, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.ConnectionString))
+        return Results.Ok(new { success = false, message = "Connection string is required." });
+    try
+    {
+        using var conn = new NpgsqlConnection(req.ConnectionString);
+        await conn.OpenAsync(ct);
+        await conn.CloseAsync();
+        return Results.Ok(new { success = true, message = "Connected successfully." });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+}).RequireAuthorization();
+
+// ─── End Vault ────────────────────────────────────────────────────────────────
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
 if (File.Exists(indexHtmlPath))
@@ -4341,10 +4700,20 @@ public sealed record ReviewAttendanceRequestBody(string? Comment);
 public sealed record SelfServiceLoginRequest(string Email, string Password);
 public sealed record SelfServiceChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record PayrollComponentRequest(string Name, string ComponentType, bool IsFixed, decimal? Amount, decimal? Percentage, bool IsDefault, bool IsActive, string? Description);
-public sealed record EmployeeSalaryConfigRequest(string SalaryType, decimal BaseAmount, string? Currency, decimal? OvertimeMultiplier, DateOnly EffectiveFrom, Guid[]? ComponentIds);
+public sealed record OvertimeTierDto(double AfterHours, decimal Multiplier);
+public sealed record LatenessTierDto(int AfterMinutes, decimal DeductionMultiplier);
+public sealed record EmployeeSalaryConfigRequest(
+    string SalaryType, decimal BaseAmount, string? Currency,
+    decimal? OvertimeMultiplier, bool? OvertimeEnabled, bool? PayByWorkedHours,
+    OvertimeTierDto[]? OvertimeTiers,
+    bool? LatenessDeductionEnabled, LatenessTierDto[]? LatenessTiers,
+    DateOnly EffectiveFrom, Guid[]? ComponentIds);
 public sealed record CreatePayrollPeriodRequest(int Year, int Month, string? Notes);
 public sealed record CalculatePayrollRequest(decimal TaxRate);
 public sealed record NoteRequest(string? Note);
+public sealed record CreateLeaveRequest(Guid EmployeeId, string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
+public sealed record UpdateLeaveRequest(string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
+public sealed record VaultSecondaryDbRequest(string? ConnectionString);
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub) : IDeviceStatusBroadcaster
 {

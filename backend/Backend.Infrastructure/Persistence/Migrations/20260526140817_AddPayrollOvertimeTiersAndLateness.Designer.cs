@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260526140817_AddPayrollOvertimeTiersAndLateness")]
+    partial class AddPayrollOvertimeTiersAndLateness
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -602,59 +605,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("employee_day_patterns", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeLeave", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ApprovedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateOnly>("EndDate")
-                        .HasColumnType("date");
-
-                    b.Property<bool>("IsPaid")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("LeaveType")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Reason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateOnly>("StartDate")
-                        .HasColumnType("date");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EmployeeId");
-
-                    b.HasIndex("EmployeeId", "StartDate");
-
-                    b.ToTable("EmployeeLeaves");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.EmployeePayrollComponent", b =>
@@ -1585,17 +1535,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("WorkSchedule");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeLeave", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.Employee", "Employee")
-                        .WithMany("Leaves")
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Employee");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.EmployeePayrollComponent", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.PayrollComponent", "Component")
@@ -1837,8 +1776,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Fingerprints");
 
                     b.Navigation("Irises");
-
-                    b.Navigation("Leaves");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.EmployeeSalaryConfig", b =>

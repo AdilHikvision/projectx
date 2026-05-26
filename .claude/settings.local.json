@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(netstat -ano)",
+      "Bash(VITE_PORT=5173 npm run dev)",
+      "Bash(pkill -f \"dotnet run\")",
+      "Bash(pkill -f \"npm run dev\")",
+      "Bash(pkill -f node)"
+    ]
+  }
+}

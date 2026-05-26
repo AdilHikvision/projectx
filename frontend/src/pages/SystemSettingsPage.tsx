@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
@@ -6,7 +6,7 @@ import { Modal, PageHeader } from '../components/organisms'
 import { CompanyTab } from './CompanyTab'
 import { DevicesTab } from './DevicesTab'
 import { useAuth } from '../auth/AuthContext'
-import { apiRequest } from '../lib/api'
+import { apiRequest, getApiBaseUrl } from '../lib/api'
 import { useLoading } from '../context/LoadingContext'
 
 function formatLocalDate(d: Date): string {
@@ -284,6 +284,101 @@ export function SystemSettingsPage() {
         handleUpdateMode('Single', name)
     }
 
+    // ─── Vault ────────────────────────────────────────────────────────────────
+    interface BackupFile { filename: string; sizeBytes: number; createdAt: string }
+
+    const [backups, setBackups] = useState<BackupFile[]>([])
+    const [backupsLoading, setBackupsLoading] = useState(false)
+    const [backingUp, setBackingUp] = useState(false)
+    const [backupError, setBackupError] = useState<string | null>(null)
+    const [secondaryDb, setSecondaryDb] = useState('')
+    const [secondaryDbSaving, setSecondaryDbSaving] = useState(false)
+    const [secondaryDbTesting, setSecondaryDbTesting] = useState(false)
+    const [secondaryDbTestResult, setSecondaryDbTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+    const loadBackups = useCallback(async () => {
+        if (!token) return
+        setBackupsLoading(true)
+        try {
+            const data = await apiRequest<BackupFile[]>('/api/vault/backups', { token })
+            setBackups(data)
+        } catch { setBackups([]) } finally { setBackupsLoading(false) }
+    }, [token])
+
+    const loadSecondaryDb = useCallback(async () => {
+        if (!token) return
+        try {
+            const data = await apiRequest<{ connectionString: string | null }>('/api/vault/secondary-db', { token })
+            setSecondaryDb(data.connectionString ?? '')
+        } catch { /* ignore */ }
+    }, [token])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'global') return
+        void loadBackups()
+        void loadSecondaryDb()
+    }, [token, activeTab, loadBackups, loadSecondaryDb])
+
+    const triggerBackup = async () => {
+        if (!token) return
+        setBackingUp(true)
+        setBackupError(null)
+        try {
+            await apiRequest('/api/vault/backup', { method: 'POST', token })
+            await loadBackups()
+        } catch (e) {
+            setBackupError(e instanceof Error ? e.message : 'Backup failed')
+        } finally { setBackingUp(false) }
+    }
+
+    const deleteBackup = async (filename: string) => {
+        if (!token) return
+        await apiRequest(`/api/vault/backups/${encodeURIComponent(filename)}`, { method: 'DELETE', token })
+        await loadBackups()
+    }
+
+    const downloadBackup = async (filename: string) => {
+        if (!token) return
+        const res = await fetch(`${getApiBaseUrl()}/api/vault/backups/${encodeURIComponent(filename)}/download`, {
+            headers: { Authorization: `Bearer ${token}` }
+        })
+        if (!res.ok) return
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url; a.download = filename
+        document.body.appendChild(a); a.click()
+        document.body.removeChild(a); URL.revokeObjectURL(url)
+    }
+
+    const saveSecondaryDb = async () => {
+        if (!token) return
+        setSecondaryDbSaving(true)
+        try {
+            await apiRequest('/api/vault/secondary-db', { method: 'POST', token, body: JSON.stringify({ connectionString: secondaryDb }) })
+        } finally { setSecondaryDbSaving(false) }
+    }
+
+    const testSecondaryDb = async () => {
+        if (!token) return
+        setSecondaryDbTesting(true)
+        setSecondaryDbTestResult(null)
+        try {
+            const res = await apiRequest<{ success: boolean; message: string }>('/api/vault/secondary-db/test', {
+                method: 'POST', token, body: JSON.stringify({ connectionString: secondaryDb })
+            })
+            setSecondaryDbTestResult(res)
+        } catch (e) {
+            setSecondaryDbTestResult({ success: false, message: e instanceof Error ? e.message : 'Test failed' })
+        } finally { setSecondaryDbTesting(false) }
+    }
+
+    function fmtSize(bytes: number): string {
+        if (bytes < 1024) return `${bytes} B`
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+    }
+
     const handleAction = () => {
         if (activeTab === 'devices' && devicesRef.current) {
             devicesRef.current.triggerAction()
@@ -494,7 +589,7 @@ export function SystemSettingsPage() {
                                 </div>
                             </div>
 
-                            {/* Data Retention & Intelligence */}
+                            {/* Vault & Data Ops */}
                             <div className="space-y-6">
                                 <div className="flex items-center gap-3 px-2">
                                     <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-600">
@@ -503,20 +598,93 @@ export function SystemSettingsPage() {
                                     <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Vault & Data Ops</h3>
                                 </div>
 
-                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none text-text-light">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-xs font-black text-text-dark">Automated Snapshot Engine</p>
-                                            <p className="text-[9px] font-bold text-text-light uppercase tracking-widest">Daily encrypted offsite backups</p>
+                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none">
+                                    {/* Backup section */}
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div>
+                                                <p className="text-xs font-black text-text-dark">Database Backup</p>
+                                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">pg_dump snapshot of the primary database</p>
+                                            </div>
+                                            <Button icon="backup" onClick={triggerBackup} isLoading={backingUp} disabled={backingUp} size="sm">
+                                                Backup now
+                                            </Button>
                                         </div>
-                                        <div className="w-10 h-5 bg-slate-200 rounded-full relative shadow-inner">
-                                            <div className="absolute top-1 left-1 w-3 h-3 bg-white rounded-full shadow-sm" />
+
+                                        {backupError && (
+                                            <div className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-700 font-bold">
+                                                {backupError}
+                                            </div>
+                                        )}
+
+                                        <div className="rounded-2xl border border-border-light overflow-hidden">
+                                            <div className="px-4 py-2.5 bg-slate-50 border-b border-border-light flex items-center justify-between">
+                                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest">
+                                                    {backupsLoading ? 'Loading…' : `${backups.length} snapshot${backups.length === 1 ? '' : 's'}`}
+                                                </p>
+                                                <button type="button" onClick={loadBackups} className="text-text-muted hover:text-primary transition-colors">
+                                                    <span className="material-symbols-outlined text-base">refresh</span>
+                                                </button>
+                                            </div>
+
+                                            {backupsLoading ? (
+                                                <div className="flex justify-center py-8">
+                                                    <span className="material-symbols-outlined animate-spin text-2xl text-primary">progress_activity</span>
+                                                </div>
+                                            ) : backups.length === 0 ? (
+                                                <div className="flex flex-col items-center justify-center py-8 gap-2 text-text-light">
+                                                    <span className="material-symbols-outlined text-3xl">cloud_off</span>
+                                                    <p className="text-xs">No backups yet. Click "Backup now" to create one.</p>
+                                                </div>
+                                            ) : (
+                                                <ul className="divide-y divide-border-light max-h-48 overflow-y-auto">
+                                                    {backups.map(b => (
+                                                        <li key={b.filename} className="flex items-center gap-3 px-4 py-2.5 hover:bg-background-light transition-colors">
+                                                            <span className="material-symbols-outlined text-base text-emerald-600 shrink-0">archive</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="text-xs font-bold text-text-dark truncate font-mono">{b.filename}</p>
+                                                                <p className="text-[10px] text-text-muted">
+                                                                    {fmtSize(b.sizeBytes)} · {new Date(b.createdAt).toLocaleString()}
+                                                                </p>
+                                                            </div>
+                                                            <button type="button" onClick={() => downloadBackup(b.filename)} title="Download" className="text-text-muted hover:text-primary transition-colors shrink-0">
+                                                                <span className="material-symbols-outlined text-base">download</span>
+                                                            </button>
+                                                            <button type="button" onClick={() => deleteBackup(b.filename)} title="Delete" className="text-text-muted hover:text-error-text transition-colors shrink-0">
+                                                                <span className="material-symbols-outlined text-base">delete</span>
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <div className="pt-4 flex gap-3">
-                                        <Button fullWidth variant="outline" icon="cyclone" size="sm" className="shadow-sm hover:shadow-md transition-shadow">Deep Reindex</Button>
-                                        <Button fullWidth variant="outline" icon="history" size="sm" className="shadow-sm hover:shadow-md transition-shadow">Purge Logs</Button>
+                                    {/* Secondary DB */}
+                                    <div className="border-t border-border-light pt-6 space-y-4">
+                                        <div>
+                                            <p className="text-xs font-black text-text-dark">Secondary / Backup Database</p>
+                                            <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">PostgreSQL connection string for replica or standby</p>
+                                        </div>
+                                        <Input
+                                            placeholder="Host=host;Port=5432;Database=db;Username=user;Password=pass"
+                                            value={secondaryDb}
+                                            onChange={e => { setSecondaryDb(e.target.value); setSecondaryDbTestResult(null) }}
+                                        />
+                                        <div className="flex gap-2">
+                                            <Button variant="outline" size="sm" icon="lan" onClick={testSecondaryDb} isLoading={secondaryDbTesting} disabled={!secondaryDb.trim() || secondaryDbTesting}>
+                                                Test connection
+                                            </Button>
+                                            <Button size="sm" icon="save" onClick={saveSecondaryDb} isLoading={secondaryDbSaving} disabled={secondaryDbSaving}>
+                                                Save
+                                            </Button>
+                                        </div>
+                                        {secondaryDbTestResult && (
+                                            <div className={`rounded-2xl px-4 py-3 text-xs font-bold flex items-center gap-2 ${secondaryDbTestResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                                                <span className="material-symbols-outlined text-base">{secondaryDbTestResult.success ? 'check_circle' : 'error'}</span>
+                                                {secondaryDbTestResult.message}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>

@@ -26,7 +26,45 @@ function formatDT(iso: string) {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-type PageTab = 'daily' | 'weekly' | 'monthly' | 'records' | 'schedules'
+type PageTab = 'daily' | 'weekly' | 'monthly' | 'records' | 'schedules' | 'leaves'
+
+interface LeaveRow {
+  id: string
+  employeeId: string
+  employeeName: string
+  department: string | null
+  leaveType: string
+  isPaid: boolean
+  startDate: string
+  endDate: string
+  reason: string | null
+  status: string
+  notes: string | null
+  approvedAt: string | null
+}
+
+interface LeaveForm {
+  employeeId: string
+  leaveType: 'Vacation' | 'DayOff'
+  isPaid: boolean
+  startDate: string
+  endDate: string
+  reason: string
+}
+
+interface SelfServiceRequestRow {
+  id: string
+  employeeId: string
+  employeeName: string
+  type: string
+  requestedTimeUtc: string
+  requestedEndTimeUtc: string | null
+  comment: string | null
+  status: string
+  reviewedAtUtc: string | null
+  reviewComment: string | null
+  createdUtc: string
+}
 type SubTab = 'all' | 'absent' | 'late' | 'early' | 'overtime' | 'incomplete'
 
 interface PeriodRow {
@@ -197,6 +235,22 @@ export function WorkHoursTrackingPage() {
   })
   const [scheduleSaving, setScheduleSaving] = useState(false)
 
+  // ── Leaves ────────────────────────────────────────────────────────────────
+  const [leaves, setLeaves] = useState<LeaveRow[]>([])
+  const [leavesLoading, setLeavesLoading] = useState(false)
+  const [selfServiceReqs, setSelfServiceReqs] = useState<SelfServiceRequestRow[]>([])
+  const [selfServiceLoading, setSelfServiceLoading] = useState(false)
+  const [leaveModal, setLeaveModal] = useState<'create' | null>(null)
+  const [leaveSaving, setLeaveSaving] = useState(false)
+  const [leaveForm, setLeaveForm] = useState<LeaveForm>({
+    employeeId: '',
+    leaveType: 'Vacation',
+    isPaid: true,
+    startDate: new Date().toISOString().slice(0, 10),
+    endDate: new Date().toISOString().slice(0, 10),
+    reason: '',
+  })
+
   // ── Quick Assign ──────────────────────────────────────────────────────────
   const [assignSchedule, setAssignSchedule] = useState<WorkScheduleRow | null>(null)
   const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string }[]>([])
@@ -233,6 +287,30 @@ export function WorkHoursTrackingPage() {
   useEffect(() => {
     if (tab === 'schedules') void loadSchedules()
   }, [tab, loadSchedules])
+
+  const loadLeaves = useCallback(async () => {
+    if (!token) return
+    setLeavesLoading(true)
+    setSelfServiceLoading(true)
+    try {
+      const [leavesData, reqsData] = await Promise.all([
+        apiRequest<LeaveRow[]>('/api/leaves', { token }),
+        apiRequest<SelfServiceRequestRow[]>('/api/attendance-requests?types=Vacation,Absence,Overtime', { token }),
+      ])
+      setLeaves(leavesData)
+      setSelfServiceReqs(reqsData)
+    } catch {
+      setLeaves([])
+      setSelfServiceReqs([])
+    } finally {
+      setLeavesLoading(false)
+      setSelfServiceLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (tab === 'leaves') void loadLeaves()
+  }, [tab, loadLeaves])
 
   const authOpts = { token }
 
@@ -458,6 +536,60 @@ export function WorkHoursTrackingPage() {
     }
   }
 
+  async function createLeave() {
+    if (!token || !leaveForm.employeeId) return
+    setLeaveSaving(true)
+    try {
+      await apiRequest('/api/leaves', {
+        method: 'POST', token,
+        body: JSON.stringify({
+          employeeId: leaveForm.employeeId,
+          leaveType: leaveForm.leaveType,
+          isPaid: leaveForm.isPaid,
+          startDate: leaveForm.startDate,
+          endDate: leaveForm.endDate,
+          reason: leaveForm.reason.trim() || null,
+          notes: null,
+        }),
+      })
+      setLeaveModal(null)
+      setLeaveForm({ employeeId: '', leaveType: 'Vacation', isPaid: true, startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10), reason: '' })
+      await loadLeaves()
+    } finally {
+      setLeaveSaving(false)
+    }
+  }
+
+  async function approveLeave(id: string) {
+    if (!token) return
+    await apiRequest(`/api/leaves/${id}/approve`, { method: 'POST', token })
+    await loadLeaves()
+  }
+
+  async function rejectLeave(id: string) {
+    if (!token) return
+    await apiRequest(`/api/leaves/${id}/reject`, { method: 'POST', token })
+    await loadLeaves()
+  }
+
+  async function deleteLeave(id: string) {
+    if (!token) return
+    await apiRequest(`/api/leaves/${id}`, { method: 'DELETE', token })
+    await loadLeaves()
+  }
+
+  async function approveSelfServiceReq(id: string) {
+    if (!token) return
+    await apiRequest(`/api/attendance-requests/${id}/approve`, { method: 'PUT', token })
+    await loadLeaves()
+  }
+
+  async function rejectSelfServiceReq(id: string) {
+    if (!token) return
+    await apiRequest(`/api/attendance-requests/${id}/reject`, { method: 'PUT', token })
+    await loadLeaves()
+  }
+
   return (
     <AppLayout onAction={() => {}}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
@@ -473,7 +605,7 @@ export function WorkHoursTrackingPage() {
 
           {/* Combined tab + sub-tab bar */}
           {(() => {
-            const showSub = tab === 'daily' || tab === 'weekly' || tab === 'monthly'
+            const showSub = (tab === 'daily' || tab === 'weekly' || tab === 'monthly') && tab !== 'leaves' && tab !== 'schedules'
             const subTabCounts: Record<SubTab, number> = (() => {
               if (!showSub) return { all: 0, absent: 0, late: 0, early: 0, overtime: 0, incomplete: 0 }
               if (tab === 'daily') {
@@ -517,7 +649,7 @@ export function WorkHoursTrackingPage() {
               <div className="bg-surface rounded-2xl shadow-sm p-1 w-fit max-w-full">
                 {/* Main tabs row */}
                 <div className="flex gap-1">
-                  {(['daily', 'weekly', 'monthly', 'records', 'schedules'] as PageTab[]).map(t => (
+                  {(['daily', 'weekly', 'monthly', 'records', 'schedules', 'leaves'] as PageTab[]).map(t => (
                     <button
                       key={t}
                       type="button"
@@ -555,7 +687,7 @@ export function WorkHoursTrackingPage() {
           })()}
 
           {/* Filters */}
-          {tab !== 'schedules' && (
+          {tab !== 'schedules' && tab !== 'leaves' && (
           <div className="bg-surface rounded-2xl p-5 shadow-sm flex flex-wrap gap-4 items-end">
             <div className="space-y-1 flex-1 min-w-[160px]">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Employee</label>
@@ -962,6 +1094,186 @@ export function WorkHoursTrackingPage() {
               </div>
             )
           })()}
+
+          {/* Leaves tab */}
+          {tab === 'leaves' && (
+            <div className="space-y-6">
+              {/* Admin-assigned leaves */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-text-dark">Admin-assigned leaves</p>
+                    <p className="text-xs text-text-light">Vacations and days-off assigned by HR. Approved paid leaves count as worked days in payroll.</p>
+                  </div>
+                  <Button type="button" icon="add" onClick={() => setLeaveModal('create')}>
+                    New leave
+                  </Button>
+                </div>
+                <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{leaves.length} leave{leaves.length === 1 ? '' : 's'}</p>
+                  </div>
+                  {leavesLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                      <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                    </div>
+                  ) : leaves.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
+                      <span className="material-symbols-outlined text-4xl">beach_access</span>
+                      <p className="text-sm">No leaves yet. Create one to assign vacation or day-off to an employee.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
+                            <th className="px-5 py-3 text-left">Employee</th>
+                            <th className="px-5 py-3 text-left">Type</th>
+                            <th className="px-5 py-3 text-left">Dates</th>
+                            <th className="px-5 py-3 text-left">Reason</th>
+                            <th className="px-5 py-3 text-left">Status</th>
+                            <th className="px-5 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leaves.map((lv) => (
+                            <tr key={lv.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
+                              <td className="px-5 py-3 font-bold text-text-dark">
+                                <p>{lv.employeeName}</p>
+                                {lv.department && <p className="text-[10px] text-text-muted">{lv.department}</p>}
+                              </td>
+                              <td className="px-5 py-3">
+                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${lv.leaveType === 'Vacation' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
+                                  {lv.leaveType === 'Vacation' ? 'Vacation' : 'Day-off'}
+                                </span>
+                                <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${lv.isPaid ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
+                                  {lv.isPaid ? 'Paid' : 'Unpaid'}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-text-light font-mono text-xs">
+                                {lv.startDate} — {lv.endDate}
+                              </td>
+                              <td className="px-5 py-3 text-text-light text-xs max-w-[200px] truncate">{lv.reason ?? '—'}</td>
+                              <td className="px-5 py-3">
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                  lv.status === 'Approved' ? 'bg-green-50 text-green-700' :
+                                  lv.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                  lv.status === 'Cancelled' ? 'bg-slate-100 text-slate-500' :
+                                  'bg-amber-50 text-amber-700'
+                                }`}>
+                                  {lv.status}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-right space-x-2">
+                                {lv.status === 'Pending' && (
+                                  <>
+                                    <button type="button" onClick={() => approveLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-green-700 hover:underline">
+                                      Approve
+                                    </button>
+                                    <button type="button" onClick={() => rejectLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
+                                      Reject
+                                    </button>
+                                  </>
+                                )}
+                                {(lv.status === 'Rejected' || lv.status === 'Cancelled') && (
+                                  <button type="button" onClick={() => deleteLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
+                                    Delete
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Self-service requests */}
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-bold text-text-dark">Self-service requests</p>
+                  <p className="text-xs text-text-light">Vacation, absence and overtime requests submitted by employees via the self-service portal.</p>
+                </div>
+                <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border">
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{selfServiceReqs.length} request{selfServiceReqs.length === 1 ? '' : 's'}</p>
+                  </div>
+                  {selfServiceLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                      <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                    </div>
+                  ) : selfServiceReqs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
+                      <span className="material-symbols-outlined text-4xl">inbox</span>
+                      <p className="text-sm">No self-service requests yet.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
+                            <th className="px-5 py-3 text-left">Employee</th>
+                            <th className="px-5 py-3 text-left">Type</th>
+                            <th className="px-5 py-3 text-left">From</th>
+                            <th className="px-5 py-3 text-left">To</th>
+                            <th className="px-5 py-3 text-left">Comment</th>
+                            <th className="px-5 py-3 text-left">Status</th>
+                            <th className="px-5 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selfServiceReqs.map((req) => (
+                            <tr key={req.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
+                              <td className="px-5 py-3 font-bold text-text-dark">{req.employeeName}</td>
+                              <td className="px-5 py-3">
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                  req.type === 'Vacation' ? 'bg-emerald-50 text-emerald-700' :
+                                  req.type === 'Overtime' ? 'bg-amber-50 text-amber-700' :
+                                  'bg-blue-50 text-blue-700'
+                                }`}>
+                                  {req.type}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-text-light font-mono text-xs">
+                                {new Date(req.requestedTimeUtc).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
+                              </td>
+                              <td className="px-5 py-3 text-text-light font-mono text-xs">
+                                {req.requestedEndTimeUtc ? new Date(req.requestedEndTimeUtc).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}
+                              </td>
+                              <td className="px-5 py-3 text-text-light text-xs max-w-[180px] truncate">{req.comment ?? '—'}</td>
+                              <td className="px-5 py-3">
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                  req.status === 'Approved' ? 'bg-green-50 text-green-700' :
+                                  req.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                  'bg-amber-50 text-amber-700'
+                                }`}>
+                                  {req.status}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3 text-right space-x-2">
+                                {req.status === 'Pending' && (
+                                  <>
+                                    <button type="button" onClick={() => approveSelfServiceReq(req.id)} className="text-[10px] font-black uppercase tracking-wider text-green-700 hover:underline">
+                                      Approve
+                                    </button>
+                                    <button type="button" onClick={() => rejectSelfServiceReq(req.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
+                                      Reject
+                                    </button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1155,6 +1467,89 @@ export function WorkHoursTrackingPage() {
               <Button variant="danger" fullWidth isLoading={correctionSaving} onClick={clearCorrection}>Reset</Button>
             )}
             <Button fullWidth isLoading={correctionSaving} onClick={saveCorrection}>Save</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={leaveModal === 'create'}
+        onClose={() => setLeaveModal(null)}
+        title="New leave"
+      >
+        <div className="space-y-4 pt-2">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Employee</label>
+            <select
+              value={leaveForm.employeeId}
+              onChange={(e) => setLeaveForm(p => ({ ...p, employeeId: e.target.value }))}
+              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            >
+              <option value="">Select employee…</option>
+              {employees.map(e => (
+                <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Leave type</label>
+              <select
+                value={leaveForm.leaveType}
+                onChange={(e) => setLeaveForm(p => ({ ...p, leaveType: e.target.value as 'Vacation' | 'DayOff' }))}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              >
+                <option value="Vacation">Vacation</option>
+                <option value="DayOff">Day-off (отгул)</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Payment</label>
+              <label className="flex items-center gap-2 h-10 px-3 rounded-xl bg-background-light cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={leaveForm.isPaid}
+                  onChange={(e) => setLeaveForm(p => ({ ...p, isPaid: e.target.checked }))}
+                  className="w-4 h-4 rounded accent-primary"
+                />
+                <span className="text-sm font-bold text-text-dark">Paid</span>
+              </label>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Start date</label>
+              <input
+                type="date"
+                value={leaveForm.startDate}
+                onChange={(e) => setLeaveForm(p => ({ ...p, startDate: e.target.value }))}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">End date</label>
+              <input
+                type="date"
+                value={leaveForm.endDate}
+                onChange={(e) => setLeaveForm(p => ({ ...p, endDate: e.target.value }))}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Reason (optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Annual vacation, personal"
+              value={leaveForm.reason}
+              onChange={(e) => setLeaveForm(p => ({ ...p, reason: e.target.value }))}
+              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" fullWidth onClick={() => setLeaveModal(null)}>Cancel</Button>
+            <Button fullWidth isLoading={leaveSaving} onClick={createLeave} disabled={!leaveForm.employeeId}>
+              Create
+            </Button>
           </div>
         </div>
       </Modal>

@@ -142,6 +142,7 @@ public sealed class Employee : BaseEntity
     public ICollection<AttendanceRecord> AttendanceRecords { get; set; } = new List<AttendanceRecord>();
     public ICollection<AttendanceRequest> AttendanceRequests { get; set; } = new List<AttendanceRequest>();
     public ICollection<EmployeeDayPattern> DayPatterns { get; set; } = new List<EmployeeDayPattern>();
+    public ICollection<EmployeeLeave> Leaves { get; set; } = new List<EmployeeLeave>();
 }
 
 public sealed class Visitor : BaseEntity
@@ -276,6 +277,24 @@ public sealed class EmployeeDayPattern : BaseEntity
     public bool IsDayOff { get; set; }
 }
 
+public enum LeaveType { Vacation, DayOff }
+public enum LeaveStatus { Pending, Approved, Rejected, Cancelled }
+
+public sealed class EmployeeLeave : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public LeaveType LeaveType { get; set; }
+    public bool IsPaid { get; set; } = true;
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate { get; set; }
+    public string? Reason { get; set; }
+    public LeaveStatus Status { get; set; } = LeaveStatus.Pending;
+    public string? Notes { get; set; }
+    public Guid? ApprovedByUserId { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+}
+
 /// <summary>
 /// Сырой лог успешной аутентификации с устройства. Не привязан FK к Employee — храним
 /// то, что прислало устройство (employeeNoString + name), независимо от регистрации в
@@ -405,6 +424,16 @@ public sealed class EmployeeSalaryConfig : BaseEntity
     public decimal BaseAmount { get; set; }
     public string Currency { get; set; } = "AZN";
     public decimal OvertimeMultiplier { get; set; } = 1.5m;
+    /// <summary>Если false — оверайт не начисляется вообще.</summary>
+    public bool OvertimeEnabled { get; set; } = true;
+    /// <summary>JSON: [{afterHours:0,multiplier:1.5},{afterHours:20,multiplier:2.0}] — тиры сверхурочных. Если null — используется OvertimeMultiplier.</summary>
+    public string? OvertimeTiersJson { get; set; }
+    /// <summary>Для Monthly: считать базу по отработанным часам, а не по дням.</summary>
+    public bool PayByWorkedHours { get; set; } = false;
+    /// <summary>Включить вычет за опоздания.</summary>
+    public bool LatenessDeductionEnabled { get; set; } = false;
+    /// <summary>JSON: [{afterMinutes:5,deductionMultiplier:1.0},{afterMinutes:30,deductionMultiplier:2.0}]</summary>
+    public string? LatenessTiersJson { get; set; }
     public DateOnly EffectiveFrom { get; set; }
     public ICollection<EmployeePayrollComponent> Components { get; set; } = [];
 }

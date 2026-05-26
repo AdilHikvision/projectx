@@ -43,6 +43,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<EmployeePayrollComponent> EmployeePayrollComponents => Set<EmployeePayrollComponent>();
     public DbSet<PayrollPeriod> PayrollPeriods => Set<PayrollPeriod>();
     public DbSet<PayrollEntry> PayrollEntries => Set<PayrollEntry>();
+    public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -339,6 +340,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Status).HasConversion<int>().IsRequired();
             entity.Property(x => x.Notes).HasMaxLength(1000);
             entity.HasIndex(x => new { x.PeriodId, x.EmployeeId }).IsUnique();
+        });
+
+        builder.Entity<EmployeeLeave>(b => {
+            b.HasKey(e => e.Id);
+            b.Property(e => e.Reason).HasMaxLength(500);
+            b.Property(e => e.Notes).HasMaxLength(1000);
+            b.HasOne(e => e.Employee).WithMany(emp => emp.Leaves).HasForeignKey(e => e.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(e => e.EmployeeId);
+            b.HasIndex(e => new { e.EmployeeId, e.StartDate });
         });
     }
 }

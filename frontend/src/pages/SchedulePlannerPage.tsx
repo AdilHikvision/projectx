@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+﻿import { useEffect, useState, useCallback, useMemo } from 'react'
 import { AppLayout } from '../components/templates'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
@@ -43,6 +43,15 @@ interface DateData {
     shiftStart: string | null
     shiftEnd: string | null
     isDayOff: boolean
+    leaveId?: string | null
+    leaveType?: string | null
+    leaveIsPaid?: boolean | null
+    leaveStatus?: string | null
+    leaveReason?: string | null
+    requestId?: string | null
+    requestType?: string | null
+    requestStatus?: string | null
+    requestComment?: string | null
 }
 
 interface Employee {
@@ -206,7 +215,7 @@ export function SchedulePlannerPage() {
             const sched = data?.schedules.find(s => s.id === base.scheduleId) ?? null
             return { ...base, color: sched?.color ?? '#6366f1', isPending: false, isReset: false }
         }
-        return { scheduleId: null, scheduleName: null, shiftStart: null, shiftEnd: null, isDayOff: false, color: '#6366f1', isPending: false, isReset: false }
+        return { scheduleId: null, scheduleName: null, shiftStart: null, shiftEnd: null, isDayOff: false, color: '#6366f1', isPending: false, isReset: false, leaveId: null, leaveType: null, leaveIsPaid: null, leaveStatus: null, leaveReason: null, requestId: null, requestType: null, requestStatus: null, requestComment: null }
     }
 
     // ─── Totals ───────────────────────────────────────────────────────────────
@@ -480,8 +489,42 @@ export function SchedulePlannerPage() {
                                                         onClick={() => openModal(emp.employeeId, col.dateStr, col.dayLabel, col.dayNum)}
                                                         className="border-r border-black/[0.05] last:border-r-0 cursor-pointer p-1 transition-all hover:brightness-95"
                                                         style={{ backgroundColor: cellBg }}>
-                                                        <div className="flex items-center justify-center" style={{ minHeight: 52 }}>
-                                                            {hasShift ? (
+                                                        <div className="flex flex-col items-center justify-center gap-0.5 w-full" style={{ minHeight: 52 }}>
+                                                            {p.leaveType ? (
+                                                                <div className={`w-full rounded-lg px-1.5 py-1.5 text-center ${
+                                                                    p.leaveType === 'Vacation'
+                                                                        ? p.leaveIsPaid ? 'bg-emerald-100 border border-emerald-300' : 'bg-yellow-50 border border-yellow-200'
+                                                                        : p.leaveIsPaid ? 'bg-blue-100 border border-blue-300' : 'bg-slate-100 border border-slate-300'
+                                                                }`}>
+                                                                    <p className={`text-[10px] font-black leading-none ${
+                                                                        p.leaveType === 'Vacation' ? (p.leaveIsPaid ? 'text-emerald-700' : 'text-yellow-700') : (p.leaveIsPaid ? 'text-blue-700' : 'text-slate-600')
+                                                                    }`}>
+                                                                        {p.leaveType === 'Vacation' ? 'VAC' : 'OFF'}
+                                                                    </p>
+                                                                    <p className={`text-[9px] leading-none mt-0.5 ${p.leaveIsPaid ? 'text-emerald-500' : 'text-yellow-500'}`}>
+                                                                        {p.leaveIsPaid ? 'PAID' : 'UNPAID'}
+                                                                    </p>
+                                                                    {p.leaveStatus === 'Pending' && <p className="text-[8px] text-amber-500 font-bold">pending</p>}
+                                                                </div>
+                                                            ) : p.requestType ? (
+                                                                <div className={`w-full rounded-lg px-1.5 py-1.5 text-center ${
+                                                                    p.requestType === 'Vacation' ? 'bg-emerald-50 border border-emerald-200' :
+                                                                    p.requestType === 'Overtime' ? 'bg-amber-50 border border-amber-200' :
+                                                                    'bg-blue-50 border border-blue-200'
+                                                                }`}>
+                                                                    <p className={`text-[10px] font-black leading-none ${
+                                                                        p.requestType === 'Vacation' ? 'text-emerald-600' :
+                                                                        p.requestType === 'Overtime' ? 'text-amber-600' :
+                                                                        'text-blue-600'
+                                                                    }`}>
+                                                                        {p.requestType === 'Vacation' ? 'VAC' : p.requestType === 'Overtime' ? 'OT' : 'ABS'}
+                                                                    </p>
+                                                                    <p className={`text-[8px] font-bold leading-none mt-0.5 ${p.requestStatus === 'Approved' ? 'text-green-500' : 'text-amber-500'}`}>
+                                                                        {p.requestStatus === 'Approved' ? 'approved' : 'pending'}
+                                                                    </p>
+                                                                    <p className="text-[7px] text-text-muted leading-none">self-svc</p>
+                                                                </div>
+                                                            ) : hasShift ? (
                                                                 <div className="w-full rounded-lg px-1.5 py-1.5 text-center" style={chipStyle}>
                                                                     <p className="text-[10px] font-black leading-none truncate">{p.scheduleName}</p>
                                                                     {p.shiftStart && p.shiftEnd && (
