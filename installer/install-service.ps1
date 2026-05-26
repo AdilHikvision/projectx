@@ -170,7 +170,7 @@ function Test-TcpPortOpen {
 }
 
 if (-not (Test-TcpPortOpen -HostName $DbHost -Port $DbPort)) {
-    throw "Database endpoint '$DbHost:$DbPort' is unreachable. Install/start PostgreSQL and verify credentials before installing ProjectX service."
+    throw "Database endpoint '${DbHost}:${DbPort}' is unreachable. Install/start PostgreSQL and verify credentials before installing ProjectX service."
 }
 
 $serviceBinaryPath = "`"$exePath`" --urls `"$ApiUrls`""

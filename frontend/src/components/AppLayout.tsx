@@ -14,6 +14,8 @@ const routeMeta: Record<string, { title: string; breadcrumb?: string; actionText
     '/people': { title: 'People Management', breadcrumb: 'Main Site', actionText: 'Add User', actionIcon: 'person_add', searchPlaceholder: 'Search Users & Visitors...' },
     '/access-levels': { title: 'Access Control', breadcrumb: 'Main Site', actionText: 'Create Policy', actionIcon: 'add_moderator', searchPlaceholder: 'Search policies...' },
     '/work-hours': { title: 'Attendance Tracking', breadcrumb: 'Main Site', actionText: 'Export Report', actionIcon: 'download', searchPlaceholder: 'Search attendance...' },
+    '/approvals': { title: 'Approvals', breadcrumb: 'Dashboard', searchPlaceholder: 'Search requests...' },
+    '/geo-zones': { title: 'Geo-zones', breadcrumb: 'Dashboard', searchPlaceholder: 'Search zones...' },
     '/payroll': { title: 'Payroll Calculation', breadcrumb: 'Main Site', actionText: 'Process All', actionIcon: 'payments', searchPlaceholder: 'Search payroll...' },
     '/settings': { title: 'Global Configuration', breadcrumb: 'Main Site', actionText: 'Save Changes', actionIcon: 'save', searchPlaceholder: 'Search settings...' },
     '/status': { title: 'System Status', breadcrumb: 'Main Site', searchPlaceholder: 'Search logs...' },
@@ -102,6 +104,26 @@ export function AppLayout({ children }: AppLayoutProps) {
                     >
                         <span className="material-symbols-outlined shrink-0 text-xl">schedule</span>
                         Work Hours
+                    </NavLink>
+                    <NavLink
+                        to="/approvals"
+                        className={({ isActive }) =>
+                            `flex items-center gap-4 px-3 py-2.5 rounded-lg text-sm font-semibold transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-text-muted hover:bg-slate-75'
+                            }`
+                        }
+                    >
+                        <span className="material-symbols-outlined shrink-0 text-xl">approval</span>
+                        Approvals
+                    </NavLink>
+                    <NavLink
+                        to="/geo-zones"
+                        className={({ isActive }) =>
+                            `flex items-center gap-4 px-3 py-2.5 rounded-lg text-sm font-semibold transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'text-text-muted hover:bg-slate-75'
+                            }`
+                        }
+                    >
+                        <span className="material-symbols-outlined shrink-0 text-xl">my_location</span>
+                        Geo-zones
                     </NavLink>
                     <NavLink
                         to="/payroll"

@@ -90,6 +90,22 @@ public interface IDeviceStatusBroadcaster
 public interface IDeviceActivityBroadcaster
 {
     Task NotifyLiveEventAsync(DeviceEvent deviceEvent, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Push a progress update for a person→devices sync operation. The frontend listens on
+    /// the same SignalR hub and matches by <paramref name="syncId"/> to render a progress bar
+    /// (current device, current/total, status text). Stage values: "syncing", "skipped",
+    /// "done", "error", "complete".
+    /// </summary>
+    Task NotifyPersonSyncProgressAsync(
+        string syncId,
+        string stage,
+        int current,
+        int total,
+        Guid deviceId,
+        string deviceName,
+        string? message,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IDeviceArpStatusService
@@ -244,4 +260,33 @@ public interface IDevicePersonImportService
     Task<IReadOnlyCollection<ImportedUser>> FetchUsersFromDeviceAsync(Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Импортирует пользователей с выбранных устройств в БД (создаёт Employee или Visitor).</summary>
     Task<PersonImportResult> ImportFromDevicesAsync(IReadOnlyCollection<Guid> deviceIds, Guid? companyId = null, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Текущее состояние времени и часового пояса на устройстве (ISAPI /System/time).</summary>
+public sealed record DeviceTimeInfo(
+    Guid DeviceId,
+    string DeviceName,
+    bool Online,
+    string? TimeMode,
+    DateTimeOffset? LocalTime,
+    string? TimeZone,
+    string? Message);
+
+/// <summary>Результат синхронизации времени и часового пояса на одно устройство.</summary>
+public sealed record DeviceTimeSyncResult(
+    Guid DeviceId,
+    string DeviceName,
+    bool Success,
+    string? Message);
+
+public interface IDeviceLocalizationService
+{
+    /// <summary>Читает текущие параметры времени с устройства (GET /ISAPI/System/time).</summary>
+    Task<DeviceTimeInfo> GetDeviceTimeAsync(Guid deviceId, CancellationToken cancellationToken = default);
+
+    /// <summary>Принудительно выставляет на устройство ручное время (UTC) и часовой пояс в формате POSIX (например, "AZT-4:00:00").</summary>
+    Task<DeviceTimeSyncResult> SyncDeviceAsync(Guid deviceId, DateTime serverUtcNow, string posixTimeZone, CancellationToken cancellationToken = default);
+
+    /// <summary>Синхронизирует время и часовой пояс со всеми устройствами.</summary>
+    Task<IReadOnlyList<DeviceTimeSyncResult>> SyncAllDevicesAsync(DateTime serverUtcNow, string posixTimeZone, CancellationToken cancellationToken = default);
 }

@@ -48,6 +48,10 @@ public sealed class DeviceArpStatusService(
 
         logger.LogInformation("DeviceArpStatusService started (ARP-only status check).");
 
+        // Общий счётчик отрицательных сигналов: и ARP-fail, и ISAPI-fail увеличивают его. Любой положительный
+        // сигнал сбрасывает в 0. Helps против мерцания: устройство Hikvision часто отвечает на ARP из кэша ОС,
+        // но ISAPI периодически таймаутит — без общего debounce статус скакал между Online/Offline каждые 5 сек.
+        // Auth-ошибки (401/403) — исключение: учётка неверна и так останется, в Offline уходим сразу.
         var consecutiveFailures = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -72,6 +76,10 @@ public sealed class DeviceArpStatusService(
 
                     var reachable = ArpReachabilityHelper.IsReachable(device.IpAddress);
 
+                    bool? success = null;          // null = негативный сигнал, но без auth-ошибки
+                    string? failureMessage = null;
+                    bool authError = false;
+
                     if (reachable)
                     {
                         var username = string.IsNullOrWhiteSpace(device.Username) ? "admin" : device.Username;
@@ -85,31 +93,46 @@ public sealed class DeviceArpStatusService(
 
                         if (credValid)
                         {
-                            consecutiveFailures.TryRemove(device.DeviceIdentifier, out _);
-                            var now = DateTime.UtcNow;
-                            var wasOffline = !_cache.TryGetValue(device.DeviceIdentifier, out var prev) || prev.Status == DeviceConnectivityStatus.Disconnected;
-                            _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Connected, now, null);
-                            if (wasOffline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, true, now, null);
+                            success = true;
                         }
                         else
                         {
-                            consecutiveFailures.TryRemove(device.DeviceIdentifier, out _);
-                            var wasOnline = _cache.TryGetValue(device.DeviceIdentifier, out var prev) && prev.Status == DeviceConnectivityStatus.Connected;
-                            var msg = credMessage ?? "Неверный логин или пароль.";
-                            _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Disconnected, default, msg);
-                            if (wasOnline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, false, null, msg);
+                            // auth-ошибка определяется по сообщению из верификатора; сетевые таймауты сюда не попадают
+                            authError = credMessage != null &&
+                                (credMessage.Contains("логин", StringComparison.OrdinalIgnoreCase)
+                                    || credMessage.Contains("Доступ запрещ", StringComparison.OrdinalIgnoreCase));
+                            failureMessage = credMessage ?? "Не удалось подключиться к устройству.";
                         }
+                    }
+                    else
+                    {
+                        failureMessage = "Сеть недоступна";
+                    }
+
+                    if (success == true)
+                    {
+                        consecutiveFailures.TryRemove(device.DeviceIdentifier, out _);
+                        var now = DateTime.UtcNow;
+                        var wasOffline = !_cache.TryGetValue(device.DeviceIdentifier, out var prev) || prev.Status == DeviceConnectivityStatus.Disconnected;
+                        _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Connected, now, null);
+                        if (wasOffline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, true, now, null);
+                    }
+                    else if (authError)
+                    {
+                        // auth-ошибка стабильна: пароль неверен и сам не починится, debounce не нужен
+                        consecutiveFailures.TryRemove(device.DeviceIdentifier, out _);
+                        var wasOnline = _cache.TryGetValue(device.DeviceIdentifier, out var prev) && prev.Status == DeviceConnectivityStatus.Connected;
+                        _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Disconnected, default, failureMessage);
+                        if (wasOnline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, false, null, failureMessage);
                     }
                     else
                     {
                         var failCount = consecutiveFailures.AddOrUpdate(device.DeviceIdentifier, 1, (_, c) => c + 1);
                         if (failCount >= FailuresBeforeOffline)
                         {
-                            consecutiveFailures.TryRemove(device.DeviceIdentifier, out _);
                             var wasOnline = _cache.TryGetValue(device.DeviceIdentifier, out var prev) && prev.Status == DeviceConnectivityStatus.Connected;
-                            var msg = "Сеть недоступна";
-                            _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Disconnected, default, msg);
-                            if (wasOnline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, false, null, msg);
+                            _cache[device.DeviceIdentifier] = (DeviceConnectivityStatus.Disconnected, default, failureMessage);
+                            if (wasOnline) NotifyStatusChanged(device.DeviceIdentifier, device.Id, false, null, failureMessage);
                         }
                     }
                 }

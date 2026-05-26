@@ -47,7 +47,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     },
   })
 
-  if (response.status === 401 && !path.includes('/api/auth/login')) {
+  if (response.status === 401 && !path.includes('/api/auth/login') && !path.startsWith('/api/self-service/')) {
     dispatchSessionExpired()
     throw new Error('Session expired')
   }

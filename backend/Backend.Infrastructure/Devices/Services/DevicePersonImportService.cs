@@ -39,7 +39,10 @@ public sealed class DevicePersonImportService(
         var client = CreateClient(device);
         var all = new List<ImportedUser>();
         var searchPosition = 0;
-        const int maxResults = 100;
+        // Hikvision UserInfo/Search documented page size is 30 (per ISAPI Pro/Ultra/Value examples).
+        // Some firmwares ignore higher values silently and return only 30 — set this to the
+        // documented limit so the loop paginates predictably across the full user list.
+        const int maxResults = 30;
 
         while (true)
         {
@@ -612,13 +615,22 @@ public sealed class DevicePersonImportService(
         }
     }
 
-    private async Task RemoveExistingFacesAndFingerprintsAsync(Guid? employeeId, Guid? visitorId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Remove existing biometrics of a SPECIFIC type for a person. This is per-type on purpose:
+    /// the import flow must only clear data for biometric types it is actually about to refresh
+    /// from the device. Deleting upfront wholesale (the previous behavior) caused data loss when
+    /// the device had no fingerprints / faces / irises for the person — the DB would end up empty
+    /// even though the device just didn't expose that biometric.
+    /// </summary>
+    private async Task RemoveExistingFacesAsync(Guid? employeeId, Guid? visitorId, CancellationToken cancellationToken)
     {
         var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
         var faceQuery = employeeId.HasValue
             ? dbContext.Faces.Where(f => f.EmployeeId == employeeId)
             : dbContext.Faces.Where(f => f.VisitorId == visitorId);
         var faces = await faceQuery.ToListAsync(cancellationToken);
+        if (faces.Count == 0) return;
+
         foreach (var f in faces)
         {
             try
@@ -635,20 +647,31 @@ public sealed class DevicePersonImportService(
             dbContext.Faces.Remove(f);
         }
 
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task RemoveExistingFingerprintsAsync(Guid? employeeId, Guid? visitorId, CancellationToken cancellationToken)
+    {
         var fpQuery = employeeId.HasValue
             ? dbContext.Fingerprints.Where(x => x.EmployeeId == employeeId)
             : dbContext.Fingerprints.Where(x => x.VisitorId == visitorId);
         var fps = await fpQuery.ToListAsync(cancellationToken);
-        dbContext.Fingerprints.RemoveRange(fps);
+        if (fps.Count == 0) return;
 
+        dbContext.Fingerprints.RemoveRange(fps);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task RemoveExistingIrisesAsync(Guid? employeeId, Guid? visitorId, CancellationToken cancellationToken)
+    {
         var irisQuery = employeeId.HasValue
             ? dbContext.Irises.Where(x => x.EmployeeId == employeeId)
             : dbContext.Irises.Where(x => x.VisitorId == visitorId);
         var irises = await irisQuery.ToListAsync(cancellationToken);
-        dbContext.Irises.RemoveRange(irises);
+        if (irises.Count == 0) return;
 
-        if (faces.Count > 0 || fps.Count > 0 || irises.Count > 0)
-            await dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.Irises.RemoveRange(irises);
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task<(int Cards, int Faces, int Fingerprints, int Irises)> ImportCredentialsFromDeviceAsync(
@@ -666,8 +689,11 @@ public sealed class DevicePersonImportService(
 
         try
         {
-            if (replaceExistingBiometrics)
-                await RemoveExistingFacesAndFingerprintsAsync(employeeId, visitorId, cancellationToken);
+            // NOTE: previously we called RemoveExistingFacesAndFingerprintsAsync upfront here when
+            // replaceExistingBiometrics was true. That was destructive: if the device had no fingerprints
+            // for a person who already had fingerprints in our DB, the DB record was wiped and we ended up
+            // with nothing. Now we delete biometrics PER TYPE, only when the device actually returned fresh
+            // data of that type — see the per-type guards near the Faces/Fingerprints/Irises sections below.
 
             // Снимок из массового UserInfo/Search и детальный ответ по employeeNo храним раздельно: детальный часто урезан по картам,
             // полная подмена снимка ломала импорт карт; FPInfo/лицо в детальном ответе обычно полнее — используем оба источника.
@@ -780,30 +806,61 @@ public sealed class DevicePersonImportService(
                 .Where(x => x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
                 .ToList();
 
-            var nFpDevice = await GetFingerPrintCountAsync(client, device.Name, employeeNo, cancellationToken);
+            // Determine how many fingerprints the device thinks this person has. We trust the
+            // numOfFP / numberOfFP hints (UserInfo and FingerPrint/Count) — if both report zero, the
+            // device has no fingerprints to fetch and we MUST skip the upload calls entirely. This
+            // prevents the previous behavior of issuing 100+ FingerPrintUpload requests per person
+            // (10 fingerPrintIDs × multiple card-reader candidates) when there was nothing to fetch.
             var fpHint = 0;
             if (hasDetailUserInfo)
                 fpHint = Math.Max(fpHint, GetFingerprintCountHintFromUserInfo(detailUserInfo));
             if (hasSnapshotUserInfo)
                 fpHint = Math.Max(fpHint, GetFingerprintCountHintFromUserInfo(snapshotUserInfo));
-            if (nFpDevice == 0 && fpHint > 0)
-                nFpDevice = fpHint;
 
-            // Дозапрашиваем FingerPrintUpload, если шаблонов мало относительно счётчика/списка на устройстве (частичный FPInfo в UserInfo).
-            var needFingerPrintUpload = fpList.Count == 0
-                || (nFpDevice > 0 && fpList.Count < nFpDevice)
-                || (fpHint > 0 && fpList.Count < fpHint);
+            // Only call FingerPrint/Count if UserInfo did not already give us a non-zero hint.
+            // Avoids an extra HTTP round-trip for the common case where UserInfo already
+            // tells us numOfFP=0 (most users have no fingerprints).
+            var nFpDevice = fpHint;
+            if (nFpDevice == 0)
+                nFpDevice = await GetFingerPrintCountAsync(client, device.Name, employeeNo, cancellationToken);
+
+            // Only ask the device for fingerprint templates if it actually claims to have some.
+            // Was: тригер был fpList.Count == 0, что заставляло сканировать всех сотрудников
+            // (включая тех, у кого numOfFP=0) и порождало 100+ HTTP-запросов на пустую выдачу.
+            var needFingerPrintUpload = nFpDevice > 0 && fpList.Count < nFpDevice;
 
             if (needFingerPrintUpload)
             {
-                if (nFpDevice > 0)
-                    fpList.AddRange(await FetchFingerprintsFromFingerPrintUploadAsync(client, device.Name, employeeNo, cancellationToken));
-                else
+                fpList.AddRange(
+                    await FetchFingerprintsFromFingerPrintUploadAsync(
+                        client, device.Name, employeeNo, nFpDevice, cancellationToken));
+
+                fpList = fpList
+                    .Where(x => x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                    .ToList();
+
+                // Firmware-specific fallbacks: only attempted if the device claims to have
+                // fingerprints but the canonical FingerPrintUpload format failed to return them.
+                if (fpList.Count == 0)
                 {
-                    // Док.: Count по employeeNo; часть прошивок возвращает 0 при наличии пальцев — пробуем поиск шаблонов.
-                    var probe = await FetchFingerprintsFromFingerPrintUploadAsync(client, device.Name, employeeNo, cancellationToken);
-                    if (probe.Count > 0)
-                        fpList.AddRange(probe);
+                    var alt = await FetchFingerprintsFromFingerPrintInfoSearchAsync(
+                        client, device.Name, employeeNo, cancellationToken);
+                    foreach (var x in alt)
+                    {
+                        if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                            fpList.Add(x);
+                    }
+                }
+
+                if (fpList.Count == 0)
+                {
+                    var cfg = await FetchFingerprintsFromFingerPrintCfgSearchAsync(
+                        client, device.Name, employeeNo, cancellationToken);
+                    foreach (var x in cfg)
+                    {
+                        if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
+                            fpList.Add(x);
+                    }
                 }
             }
 
@@ -811,40 +868,15 @@ public sealed class DevicePersonImportService(
                 .Where(x => x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
                 .ToList();
 
-            if (fpList.Count == 0)
-            {
-                var alt = await FetchFingerprintsFromFingerPrintInfoSearchAsync(client, device.Name, employeeNo, cancellationToken);
-                foreach (var x in alt)
-                {
-                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
-                        fpList.Add(x);
-                }
-            }
-
-            if (fpList.Count == 0)
-            {
-                var cfg = await FetchFingerprintsFromFingerPrintCfgSearchAsync(client, device.Name, employeeNo, cancellationToken);
-                foreach (var x in cfg)
-                {
-                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
-                        fpList.Add(x);
-                }
-            }
-
-            if (fpList.Count == 0)
-            {
-                var perFinger = await FetchFingerprintsFingerPrintUploadPerFingerAsync(client, device.Name, employeeNo, cancellationToken);
-                foreach (var x in perFinger)
-                {
-                    if (x.Data.Length > 0 && !IsLikelyRasterImage(x.Data))
-                        fpList.Add(x);
-                }
-            }
-
             fpList = fpList
                 .GroupBy(x => x.FingerIndex)
                 .Select(g => g.OrderByDescending(x => x.Data.Length).First())
                 .ToList();
+
+            // Safeguard: only refresh DB fingerprints when the device actually returned data.
+            // If fpList is empty (device has none), preserve whatever the DB already has.
+            if (fpList.Count > 0 && replaceExistingBiometrics)
+                await RemoveExistingFingerprintsAsync(employeeId, visitorId, cancellationToken);
 
             var fpsAdded = 0;
             foreach (var (fingerIdx, data) in fpList)
@@ -871,11 +903,16 @@ public sealed class DevicePersonImportService(
             if (fpsAdded > 0)
                 await dbContext.SaveChangesAsync(cancellationToken);
 
+            // Same fool-proofing for irises: only fetch if device might have them, and only
+            // replace existing DB rows when the device actually returned new data.
             var irisRows = await FetchIrisesFromIrisInfoSearchAsync(client, device.Name, employeeNo, cancellationToken);
             irisRows = irisRows
                 .GroupBy(x => x.IrisId)
                 .Select(g => g.OrderByDescending(x => x.Data.Length).First())
                 .ToList();
+
+            if (irisRows.Count > 0 && replaceExistingBiometrics)
+                await RemoveExistingIrisesAsync(employeeId, visitorId, cancellationToken);
 
             var irisesAdded = 0;
             foreach (var (irisIdx, data) in irisRows)
@@ -1907,119 +1944,119 @@ public sealed class DevicePersonImportService(
         return 0;
     }
 
+    /// <summary>
+    /// Per ISAPI Pro/Ultra/Value §8.12.2.2: POST /ISAPI/AccessControl/FingerPrintUpload?format=json returns
+    /// fingerprint templates for a person paginated. The endpoint expects a root-level <c>FingerPrintCond</c>
+    /// node with a flat <c>employeeNo</c>; pagination uses <c>searchID</c>/<c>searchResultPosition</c>/<c>maxResults</c>;
+    /// the response carries <c>FingerPrintInfo.status</c>, where <c>"NoFP"</c> indicates the last page.
+    /// </summary>
     private async Task<List<(int FingerIndex, byte[] Data)>> FetchFingerprintsFromFingerPrintUploadAsync(
         IsapiClient client,
         string deviceName,
         string employeeNo,
+        int knownFpCount,
         CancellationToken ct)
     {
-        var variant = 0;
-        foreach (var readers in GetFingerprintEnableCardReaderCandidates())
+        var collected = new List<(int FingerIndex, byte[] Data)>();
+
+        // Pagination loop. Capped to a small number of iterations as a safety net — knownFpCount on the device is
+        // typically <= 10 per person, so 5 pages of 10 records each is more than enough headroom.
+        const int pageSize = 10;
+        const int maxPages = 5;
+        var seenFingerIds = new HashSet<int>();
+
+        for (var page = 0; page < maxPages; page++)
         {
-            var condFlat = new Dictionary<string, object?>
+            var searchPosition = page * pageSize;
+            // Single canonical body. Root-level FingerPrintCond with flat employeeNo is the format actually accepted
+            // by Hikvision Pro/Ultra/Value firmware (the four wrapped variants we used to send all returned HTTP 400
+            // "MessageParametersLack: FingerPrintCond" — only the unwrapped form is recognized).
+            var body = JsonSerializer.Serialize(new
             {
-                ["employeeNo"] = employeeNo,
-                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-                ["searchResultPosition"] = 0,
-                ["maxResults"] = 10,
-                ["enableCardReader"] = readers,
-            };
-            var condFlatNoReader = new Dictionary<string, object?>
-            {
-                ["employeeNo"] = employeeNo,
-                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-                ["searchResultPosition"] = 0,
-                ["maxResults"] = 10,
-            };
-            var condByEmployeeNoMode = new Dictionary<string, object?>
-            {
-                ["mode"] = "byEmployeeNo",
-                ["EmployeeNoDetail"] = new Dictionary<string, object?>
+                FingerPrintCond = new
                 {
-                    ["employeeNo"] = employeeNo,
-                    ["enableCardReader"] = readers,
+                    searchID = Guid.NewGuid().ToString("N")[..20],
+                    searchResultPosition = searchPosition,
+                    maxResults = pageSize,
+                    employeeNo,
                 },
-            };
-            var condBase = new Dictionary<string, object?>
-            {
-                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-                ["searchResultPosition"] = 0,
-                ["maxResults"] = 10,
-                ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
-                ["enableCardReader"] = readers,
-            };
-            var condNoReader = new Dictionary<string, object?>
-            {
-                ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-                ["searchResultPosition"] = 0,
-                ["maxResults"] = 10,
-                ["EmployeeNoList"] = new Dictionary<string, object?> { ["EmployeeNo"] = new[] { employeeNo } },
-            };
+            }, IsapiPascalJson);
 
-            var bodies = new[]
-            {
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlat } },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condFlatNoReader } },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condByEmployeeNoMode } },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condBase } },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintCond"] = condBase },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = condNoReader } },
-                    IsapiPascalJson),
-                JsonSerializer.Serialize(new
-                {
-                    FingerPrintUploadCond = new
-                    {
-                        searchID = Guid.NewGuid().ToString("N")[..20],
-                        searchResultPosition = 0,
-                        maxResults = 10,
-                        EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
-                    },
-                }, IsapiPascalJson),
-                JsonSerializer.Serialize(new
-                {
-                    FingerPrintSearchCond = new
-                    {
-                        searchID = Guid.NewGuid().ToString("N")[..20],
-                        searchResultPosition = 0,
-                        maxResults = 10,
-                        EmployeeNoList = new { EmployeeNo = new[] { employeeNo } },
-                    },
-                }, IsapiPascalJson),
-            };
+            var (ok, content, err) = await client.PostJsonAsync(
+                "ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
+            LogImportIsapiResponse(deviceName, employeeNo,
+                $"POST FingerPrintUpload pos={searchPosition}", ok, err, content);
 
-            for (var i = 0; i < bodies.Length; i++)
+            if (!ok || string.IsNullOrWhiteSpace(content))
+                break;
+
+            var batch = new List<(int FingerIndex, byte[] Data)>();
+            TryParseFingerPrintUploadResponse(content, batch);
+
+            var addedThisPage = 0;
+            foreach (var item in batch)
             {
-                variant++;
-                var body = bodies[i];
-                var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
-                LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintUpload readers=[{string.Join(',', readers)}] #{variant}", ok, err, content);
-                if (!ok || string.IsNullOrWhiteSpace(content)) continue;
-                var batch = new List<(int FingerIndex, byte[] Data)>();
-                TryParseFingerPrintUploadResponse(content, batch);
-                if (batch.Count > 0) return batch;
-                if (IsapiJsonStatus.GetErrorMessageIfFailed(content) is { } jsonErr &&
-                    !content.Contains("FingerPrintInfo", StringComparison.OrdinalIgnoreCase) &&
-                    !content.Contains("FPInfo", StringComparison.OrdinalIgnoreCase) &&
-                    !content.Contains("fingerData", StringComparison.OrdinalIgnoreCase))
+                if (item.Data.Length == 0 || IsLikelyRasterImage(item.Data)) continue;
+                var idx = item.FingerIndex is >= 1 and <= 10 ? item.FingerIndex : 1;
+                if (seenFingerIds.Add(idx))
                 {
-                    logger.LogDebug("FingerPrintUpload: {Err}", jsonErr);
-                    continue;
+                    collected.Add((idx, item.Data));
+                    addedThisPage++;
                 }
             }
+
+            // Termination conditions per ISAPI spec: status=="NoFP" means last page; also stop if device returned
+            // nothing on this page or we have already collected the expected number of templates.
+            var status = TryGetFingerPrintInfoStatus(content);
+            if (string.Equals(status, "NoFP", StringComparison.OrdinalIgnoreCase)) break;
+            if (addedThisPage == 0) break;
+            if (knownFpCount > 0 && collected.Count >= knownFpCount) break;
         }
 
-        return [];
+        return collected;
+    }
+
+    /// <summary>Return the value of FingerPrintInfo.status (e.g. "OK", "MORE", "NoFP") if present.</summary>
+    private static string? TryGetFingerPrintInfoStatus(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return FindStatusRecursive(doc.RootElement, depth: 0);
+        }
+        catch
+        {
+            return null;
+        }
+
+        static string? FindStatusRecursive(JsonElement el, int depth)
+        {
+            if (depth > 6 || el.ValueKind != JsonValueKind.Object) return null;
+            foreach (var p in el.EnumerateObject())
+            {
+                if (string.Equals(p.Name, "status", StringComparison.OrdinalIgnoreCase) &&
+                    p.Value.ValueKind == JsonValueKind.String)
+                    return p.Value.GetString();
+            }
+            foreach (var p in el.EnumerateObject())
+            {
+                if (p.Value.ValueKind == JsonValueKind.Object)
+                {
+                    var inner = FindStatusRecursive(p.Value, depth + 1);
+                    if (!string.IsNullOrEmpty(inner)) return inner;
+                }
+                else if (p.Value.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var arrEl in p.Value.EnumerateArray())
+                    {
+                        if (arrEl.ValueKind != JsonValueKind.Object) continue;
+                        var inner = FindStatusRecursive(arrEl, depth + 1);
+                        if (!string.IsNullOrEmpty(inner)) return inner;
+                    }
+                }
+            }
+            return null;
+        }
     }
 
     /// <summary>
@@ -2187,50 +2224,6 @@ public sealed class DevicePersonImportService(
         }
 
         return [];
-    }
-
-    /// <summary>Часть прошивок (в т.ч. DS-K1T) отдаёт шаблон только при явном fingerPrintID в условии.</summary>
-    private async Task<List<(int FingerIndex, byte[] Data)>> FetchFingerprintsFingerPrintUploadPerFingerAsync(
-        IsapiClient client,
-        string deviceName,
-        string employeeNo,
-        CancellationToken ct)
-    {
-        var merged = new List<(int FingerIndex, byte[] Data)>();
-        foreach (var readers in GetFingerprintEnableCardReaderCandidates())
-        {
-            for (var fid = 1; fid <= 10; fid++)
-            {
-                var cond = new Dictionary<string, object?>
-                {
-                    ["employeeNo"] = employeeNo,
-                    ["fingerPrintID"] = fid,
-                    ["searchID"] = Guid.NewGuid().ToString("N")[..20],
-                    ["searchResultPosition"] = 0,
-                    ["maxResults"] = 1,
-                    ["enableCardReader"] = readers,
-                };
-                var body = JsonSerializer.Serialize(
-                    new Dictionary<string, object?>
-                    {
-                        ["FingerPrintUpload"] = new Dictionary<string, object?> { ["FingerPrintCond"] = cond },
-                    },
-                    IsapiPascalJson);
-                var (ok, content, err) = await client.PostJsonAsync("ISAPI/AccessControl/FingerPrintUpload?format=json", body, ct);
-                LogImportIsapiResponse(deviceName, employeeNo, $"POST FingerPrintUpload per-slot fingerPrintID={fid} readers=[{string.Join(',', readers)}]", ok, err, content);
-                if (!ok || string.IsNullOrWhiteSpace(content)) continue;
-                var batch = new List<(int FingerIndex, byte[] Data)>();
-                TryParseFingerPrintUploadResponse(content, batch);
-                foreach (var b in batch)
-                {
-                    var idx = b.FingerIndex is >= 1 and <= 10 ? b.FingerIndex : fid;
-                    if (b.Data.Length > 0)
-                        merged.Add((idx, b.Data));
-                }
-            }
-        }
-
-        return merged;
     }
 
     /// <summary>Запасной список конфигураций отпечатков по сотруднику (другой корень JSON, чем FingerPrintUpload).</summary>

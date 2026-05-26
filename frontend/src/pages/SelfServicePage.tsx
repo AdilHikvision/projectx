@@ -36,8 +36,8 @@ interface AttendanceRequest {
 type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'Vacation' | 'Overtime'
 
 const REQUEST_TYPES: { type: RequestType; label: string; icon: string; color: string }[] = [
-  { type: 'CheckIn', label: 'Check-in', icon: 'login', color: 'bg-green-500/10 text-green-600' },
-  { type: 'CheckOut', label: 'Check-out', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
+  { type: 'CheckIn', label: 'Check-in correction', icon: 'login', color: 'bg-green-500/10 text-green-600' },
+  { type: 'CheckOut', label: 'Check-out correction', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
   { type: 'Absence', label: 'Absence', icon: 'person_off', color: 'bg-amber-500/10 text-amber-600' },
   { type: 'Vacation', label: 'Vacation', icon: 'beach_access', color: 'bg-purple-500/10 text-purple-600' },
   { type: 'Overtime', label: 'Overtime', icon: 'more_time', color: 'bg-indigo-500/10 text-indigo-600' },
@@ -50,11 +50,17 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  CheckIn: 'Check-in',
-  CheckOut: 'Check-out',
+  CheckIn: 'Check-in correction',
+  CheckOut: 'Check-out correction',
   Absence: 'Absence',
   Vacation: 'Vacation',
   Overtime: 'Overtime',
+}
+
+function maskHHMM(input: string): string {
+  const digits = input.replace(/\D/g, '').slice(0, 4)
+  if (digits.length <= 2) return digits
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`
 }
 
 function ssApiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -63,11 +69,11 @@ function ssApiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function SelfServicePage() {
@@ -82,8 +88,21 @@ export function SelfServicePage() {
   const [reqDateTime, setReqDateTime] = useState(new Date().toISOString().slice(0, 16))
   const [reqEndDateTime, setReqEndDateTime] = useState('')
   const [reqComment, setReqComment] = useState('')
+  // Поля корректировки (только для type === 'Correction').
+  const [corrDate, setCorrDate] = useState(new Date().toISOString().slice(0, 10))
+  const [corrCheckIn, setCorrCheckIn] = useState('')
+  const [, setCorrCheckOut] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitSuccess, setSubmitSuccess] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Принудительная смена сгенерированного пароля при первом входе.
+  const [pwModal, setPwModal] = useState(false)
+  const [pwCurrent, setPwCurrent] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [pwSubmitting, setPwSubmitting] = useState(false)
+  const [pwError, setPwError] = useState<string | null>(null)
 
   const token = localStorage.getItem(SS_TOKEN_KEY)
 
@@ -92,8 +111,43 @@ export function SelfServicePage() {
       navigate('/login')
       return
     }
+    // Если admin создал учётку с генерированным паролем — заставляем сменить.
+    try {
+      const userData = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+      if (userData.requiresPasswordSetup) {
+        setPwCurrent(userData.currentPassword ?? '')
+        setPwModal(true)
+      }
+    } catch { /* ignore parse errors */ }
     loadData()
   }, [token])
+
+  const submitPasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setPwError(null)
+    if (pwNew.length < 6) { setPwError('Password must be at least 6 characters.'); return }
+    if (pwNew !== pwConfirm) { setPwError('Passwords do not match.'); return }
+    setPwSubmitting(true)
+    try {
+      await ssApiRequest('/api/self-service/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
+      })
+      // Снимаем флаг локально, чтобы при следующем mount модалка не открывалась.
+      try {
+        const userData = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+        userData.requiresPasswordSetup = false
+        delete userData.currentPassword
+        localStorage.setItem('projectx.ss.user', JSON.stringify(userData))
+      } catch { /* ignore */ }
+      setPwModal(false)
+      setPwCurrent(''); setPwNew(''); setPwConfirm('')
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : 'Failed to change password.')
+    } finally {
+      setPwSubmitting(false)
+    }
+  }
 
   const loadData = async () => {
     try {
@@ -103,7 +157,13 @@ export function SelfServicePage() {
       ])
       setMe(meData)
       setRequests(reqData)
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+        localStorage.removeItem(SS_TOKEN_KEY)
+        navigate('/login')
+        return
+      }
       setError('Failed to load data. Please sign in again.')
     } finally {
       setLoading(false)
@@ -115,27 +175,65 @@ export function SelfServicePage() {
     setReqDateTime(new Date().toISOString().slice(0, 16))
     setReqEndDateTime('')
     setReqComment('')
+    setCorrDate(new Date().toISOString().slice(0, 10))
+    setCorrCheckIn('')
+    setCorrCheckOut('')
     setSubmitSuccess(false)
+    setSubmitError(null)
     setModalOpen(true)
   }
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
+    setSubmitError(null)
     try {
+      let requestedTimeUtc: string
+      let requestedEndTimeUtc: string | null = null
+      let latitude: number | null = null
+      let longitude: number | null = null
+      if (selectedType === 'CheckIn' || selectedType === 'CheckOut') {
+        const m = corrCheckIn.match(/^([01][0-9]|2[0-3]):([0-5][0-9])$/)
+        if (!m) {
+          setSubmitError('Enter time in HH:MM format (e.g. 09:00).')
+          setSubmitting(false)
+          return
+        }
+        const d = new Date(corrDate + 'T00:00:00')
+        d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0)
+        requestedTimeUtc = d.toISOString()
+        requestedEndTimeUtc = null
+
+        // Запрос геолокации. Если разрешена — отправим вместе с запросом, на бэке проверится
+        // GeoZone и при попадании запрос авто-аппрувится (минуя админа).
+        if ('geolocation' in navigator) {
+          try {
+            const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+              navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: true })
+            )
+            latitude = pos.coords.latitude
+            longitude = pos.coords.longitude
+          } catch { /* пользователь отказал — отправим без координат, уйдёт в Pending */ }
+        }
+      } else {
+        requestedTimeUtc = new Date(reqDateTime).toISOString()
+        requestedEndTimeUtc = reqEndDateTime ? new Date(reqEndDateTime).toISOString() : null
+      }
       await ssApiRequest('/api/self-service/requests', {
         method: 'POST',
         body: JSON.stringify({
           type: selectedType,
-          requestedTimeUtc: new Date(reqDateTime).toISOString(),
-          requestedEndTimeUtc: reqEndDateTime ? new Date(reqEndDateTime).toISOString() : null,
+          requestedTimeUtc,
+          requestedEndTimeUtc,
           comment: reqComment || null,
+          latitude,
+          longitude,
         }),
       })
       setSubmitSuccess(true)
       await loadData()
-    } catch {
-      // keep modal open to show error
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to submit request.')
     } finally {
       setSubmitting(false)
     }
@@ -145,6 +243,56 @@ export function SelfServicePage() {
     localStorage.removeItem(SS_TOKEN_KEY)
     localStorage.removeItem('projectx.ss.user')
     navigate('/login')
+  }
+
+  // Quick action: Check-in/Check-out at current time with current location.
+  // Если координаты в зоне — бэк auto-approved; иначе уйдёт в Pending.
+  const [quickBusy, setQuickBusy] = useState<'CheckIn' | 'CheckOut' | null>(null)
+  const [quickResult, setQuickResult] = useState<string | null>(null)
+
+  const quickCheck = async (type: 'CheckIn' | 'CheckOut') => {
+    if (quickBusy) return
+    setQuickBusy(type)
+    setQuickResult(null)
+    try {
+      let latitude: number | null = null
+      let longitude: number | null = null
+      if ('geolocation' in navigator) {
+        try {
+          const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: true })
+          )
+          latitude = pos.coords.latitude
+          longitude = pos.coords.longitude
+        } catch {
+          setQuickResult('Location access denied — request will need admin approval.')
+        }
+      }
+      const res = await ssApiRequest<{ status: string; autoApproved?: boolean; matchedZone?: string | null }>(
+        '/api/self-service/requests',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            type,
+            requestedTimeUtc: new Date().toISOString(),
+            requestedEndTimeUtc: null,
+            comment: null,
+            latitude,
+            longitude,
+          }),
+        }
+      )
+      if (res.autoApproved) {
+        setQuickResult(`✓ ${type === 'CheckIn' ? 'Checked in' : 'Checked out'} (zone: ${res.matchedZone ?? 'verified'})`)
+      } else {
+        setQuickResult(`Sent — pending admin approval (you are outside any geo-zone or location was unavailable).`)
+      }
+      await loadData()
+    } catch {
+      setQuickResult('Failed to send. Try again.')
+    } finally {
+      setQuickBusy(null)
+    }
   }
 
   if (loading) {
@@ -181,13 +329,23 @@ export function SelfServicePage() {
               <p className="text-text-light text-xs">{me.department ?? 'No department'}</p>
             </div>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-1 text-text-light hover:text-error-text text-xs font-bold uppercase tracking-widest transition-colors"
-          >
-            <span className="material-symbols-outlined text-base">logout</span>
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => { setPwCurrent(''); setPwNew(''); setPwConfirm(''); setPwError(null); setPwModal(true) }}
+              className="flex items-center gap-1 text-text-light hover:text-primary text-xs font-bold uppercase tracking-widest transition-colors"
+              title="Change password"
+            >
+              <span className="material-symbols-outlined text-base">key</span>
+              Password
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 text-text-light hover:text-error-text text-xs font-bold uppercase tracking-widest transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">logout</span>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
 
@@ -218,6 +376,45 @@ export function SelfServicePage() {
           )}
           {me.todayRecords.length === 0 && (
             <p className="text-text-light text-xs mt-2">No events today.</p>
+          )}
+        </div>
+
+        {/* Quick check-in / check-out by location */}
+        <div className="bg-surface rounded-2xl p-5 shadow-sm space-y-3">
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Check by location</p>
+          <p className="text-[12px] text-text-light">
+            We'll use your current location. If you're inside an authorized zone, the entry is auto-approved.
+            Otherwise the request is sent to admin for approval.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              type="button"
+              size="lg"
+              icon="login"
+              isLoading={quickBusy === 'CheckIn'}
+              disabled={quickBusy !== null}
+              onClick={() => quickCheck('CheckIn')}
+              className="rounded-2xl"
+            >
+              Check in now
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              icon="logout"
+              isLoading={quickBusy === 'CheckOut'}
+              disabled={quickBusy !== null}
+              onClick={() => quickCheck('CheckOut')}
+              className="rounded-2xl"
+            >
+              Check out now
+            </Button>
+          </div>
+          {quickResult && (
+            <p className={`text-[12px] font-bold ${quickResult.startsWith('✓') ? 'text-green-700' : 'text-amber-700'}`}>
+              {quickResult}
+            </p>
           )}
         </div>
 
@@ -283,28 +480,74 @@ export function SelfServicePage() {
           </div>
         ) : (
           <form onSubmit={handleSubmitRequest} className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-                {needsEndDate ? 'Start date & time' : 'Date & time'}
-              </label>
-              <input
-                type="datetime-local"
-                value={reqDateTime}
-                onChange={(e) => setReqDateTime(e.target.value)}
-                required
-                className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-              />
-            </div>
-            {needsEndDate && (
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">End date & time</label>
-                <input
-                  type="datetime-local"
-                  value={reqEndDateTime}
-                  onChange={(e) => setReqEndDateTime(e.target.value)}
-                  className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                />
-              </div>
+            {selectedType === 'CheckIn' || selectedType === 'CheckOut' ? (
+              <>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Date</label>
+                  <input
+                    type="date"
+                    value={corrDate}
+                    onChange={(e) => setCorrDate(e.target.value)}
+                    required
+                    className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
+                    {selectedType === 'CheckIn' ? 'Check-in time (HH:MM)' : 'Check-out time (HH:MM)'}
+                  </label>
+                  <input
+                    type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                    value={corrCheckIn}
+                    onChange={(e) => setCorrCheckIn(maskHHMM(e.target.value))}
+                    required
+                    className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
+                    {needsEndDate ? 'Start date & time' : 'Date & time'}
+                  </label>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <input
+                      type="date"
+                      value={reqDateTime.slice(0, 10)}
+                      onChange={(e) => setReqDateTime(`${e.target.value}T${reqDateTime.slice(11) || '09:00'}`)}
+                      required
+                      className="rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                    <input
+                      type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                      value={reqDateTime.slice(11, 16)}
+                      onChange={(e) => setReqDateTime(`${reqDateTime.slice(0, 10) || new Date().toISOString().slice(0, 10)}T${maskHHMM(e.target.value)}`)}
+                      required
+                      className="w-24 rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                  </div>
+                </div>
+                {needsEndDate && (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">End date & time</label>
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <input
+                        type="date"
+                        value={reqEndDateTime.slice(0, 10)}
+                        onChange={(e) => setReqEndDateTime(`${e.target.value}T${reqEndDateTime.slice(11) || '18:00'}`)}
+                        className="rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={reqEndDateTime.slice(11, 16)}
+                        onChange={(e) => setReqEndDateTime(`${reqEndDateTime.slice(0, 10) || new Date().toISOString().slice(0, 10)}T${maskHHMM(e.target.value)}`)}
+                        className="w-24 rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Comment (optional)</label>
@@ -316,11 +559,105 @@ export function SelfServicePage() {
                 className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm text-text-dark focus:ring-2 focus:ring-primary/20 outline-none resize-none"
               />
             </div>
+            {submitError && (
+              <p className="text-red-600 text-xs font-bold bg-red-50 rounded-xl px-3 py-2">{submitError}</p>
+            )}
             <Button type="submit" isLoading={submitting} fullWidth size="lg" className="rounded-2xl">
               Submit request
             </Button>
           </form>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={pwModal}
+        onClose={() => {
+          // При обязательной первой смене (requiresPasswordSetup=true) запрещаем закрывать.
+          try {
+            const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+            if (u.requiresPasswordSetup) return
+          } catch { /* ignore */ }
+          setPwModal(false)
+        }}
+        title={(() => {
+          try {
+            const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+            return u.requiresPasswordSetup ? 'Set your password' : 'Change password'
+          } catch { return 'Change password' }
+        })()}
+      >
+        <form onSubmit={submitPasswordChange} className="space-y-4 pt-2">
+          {(() => {
+            let mustSetup = false
+            try {
+              const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+              mustSetup = !!u.requiresPasswordSetup
+            } catch { /* ignore */ }
+            return mustSetup ? (
+              <p className="text-[12px] text-text-light">
+                You signed in with a temporary password. Please set your own password to continue.
+              </p>
+            ) : (
+              <p className="text-[12px] text-text-light">
+                Enter your current password and a new one to update.
+              </p>
+            )
+          })()}
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Current password</label>
+            <input
+              type="password"
+              value={pwCurrent}
+              onChange={(e) => setPwCurrent(e.target.value)}
+              required
+              className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">New password</label>
+            <input
+              type="password"
+              value={pwNew}
+              onChange={(e) => setPwNew(e.target.value)}
+              minLength={6}
+              required
+              className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Confirm new password</label>
+            <input
+              type="password"
+              value={pwConfirm}
+              onChange={(e) => setPwConfirm(e.target.value)}
+              required
+              className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            />
+          </div>
+          {pwError && <p className="text-error-text text-[12px] font-bold">{pwError}</p>}
+          <div className="flex gap-3">
+            {(() => {
+              let mustSetup = false
+              try {
+                const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+                mustSetup = !!u.requiresPasswordSetup
+              } catch { /* ignore */ }
+              return !mustSetup
+                ? <Button type="button" variant="outline" fullWidth onClick={() => setPwModal(false)}>Cancel</Button>
+                : null
+            })()}
+            <Button type="submit" isLoading={pwSubmitting} fullWidth size="lg" className="rounded-2xl">
+              {(() => {
+                let mustSetup = false
+                try {
+                  const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
+                  mustSetup = !!u.requiresPasswordSetup
+                } catch { /* ignore */ }
+                return mustSetup ? 'Set password' : 'Update password'
+              })()}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   )

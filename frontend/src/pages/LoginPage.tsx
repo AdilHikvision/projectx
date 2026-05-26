@@ -83,12 +83,12 @@ export function LoginPage() {
     setSsLoading(true)
     setSsError(null)
     try {
-      const res = await apiRequest<{ token: string; employeeId: string }>('/api/self-service/login', {
+      const res = await apiRequest<{ token: string; employeeId: string; requiresPasswordSetup: boolean }>('/api/self-service/login', {
         method: 'POST',
         body: JSON.stringify({ email: ssEmail, password: ssPassword }),
       })
       localStorage.setItem(SELF_SERVICE_TOKEN_KEY, res.token)
-      localStorage.setItem(SELF_SERVICE_USER_KEY, JSON.stringify({ employeeId: res.employeeId }))
+      localStorage.setItem(SELF_SERVICE_USER_KEY, JSON.stringify({ employeeId: res.employeeId, requiresPasswordSetup: res.requiresPasswordSetup, currentPassword: ssPassword }))
       navigate('/self-service')
     } catch {
       setSsError('Invalid email or password.')

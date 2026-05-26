@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
@@ -30,11 +30,6 @@ interface DeviceDoor {
   isElevator?: boolean
 }
 
-function floorOrDoorLine(d: AccessLevelDoor) {
-  const no = d.doorIndex + 1
-  if (d.isElevator) return `Floor ${no} (ISAPI door ${no})`
-  return `Door ${no}`
-}
 
 interface DeviceEvent {
   deviceIdentifier: string
@@ -45,6 +40,13 @@ interface DeviceEvent {
   employeeNo?: string | null
   personName?: string | null
   primaryFaceId?: string | null
+}
+
+interface DeviceSummary {
+  id: string
+  deviceIdentifier: string
+  name: string
+  deviceType?: string | null
 }
 
 const EVENT_TYPES: Record<number, string> = {
@@ -60,7 +62,11 @@ const EVENT_TYPES: Record<number, string> = {
 
 const TIMELINE_PAGE_SIZE = 10
 
-function buildActivityPresentation(evt: DeviceEvent): {
+function buildActivityPresentation(
+  evt: DeviceEvent,
+  deviceByIdentifier: Map<string, DeviceSummary>,
+  accessLevelByDeviceId: Map<string, string>,
+): {
   headline: string
   category: string
   lines: { label: string; value: string }[]
@@ -71,35 +77,23 @@ function buildActivityPresentation(evt: DeviceEvent): {
     evt.personName && baseSummary.toLowerCase().includes('face authentication')
       ? `${evt.personName} — ${baseSummary}`
       : baseSummary
+
   const lines: { label: string; value: string }[] = []
-  try {
-    const j = JSON.parse(evt.payload) as Record<string, unknown>
-    if (typeof j.dateTime === 'string' && j.dateTime)
-      lines.push({ label: 'Device time', value: j.dateTime })
-    if (typeof j.eventDescription === 'string' && j.eventDescription && j.eventDescription !== 'Access Controller Event')
-      lines.push({ label: 'Description', value: j.eventDescription })
-    const ac = j.AccessControllerEvent as Record<string, unknown> | undefined
-    if (ac && typeof ac === 'object') {
-      if (ac.majorEventType != null && ac.subEventType != null)
-        lines.push({ label: 'Major / minor', value: `${ac.majorEventType} / ${ac.subEventType}` })
-      if (typeof ac.deviceName === 'string' && ac.deviceName)
-        lines.push({ label: 'Controller', value: ac.deviceName })
-      if (typeof ac.remoteHostAddr === 'string' && ac.remoteHostAddr)
-        lines.push({ label: 'Remote host', value: ac.remoteHostAddr })
-      if (ac.serialNo != null)
-        lines.push({ label: 'Serial no.', value: String(ac.serialNo) })
-      if (typeof ac.label === 'string' && ac.label)
-        lines.push({ label: 'Label', value: ac.label })
-    }
-    if (typeof j.shortSerialNumber === 'string' && j.shortSerialNumber)
-      lines.push({ label: 'Unit S/N', value: j.shortSerialNumber })
-  } catch {
-    /* ignore */
-  }
-  if (evt.personName && !lines.some((x) => x.label === 'Person'))
-    lines.unshift({ label: 'Person', value: evt.personName })
-  if (evt.employeeNo)
-    lines.push({ label: 'Employee no.', value: evt.employeeNo })
+
+  // Person row first when we know who triggered the event.
+  if (evt.personName)
+    lines.push({ label: 'Person', value: evt.personName })
+
+  // Device name from our DB (looked up by deviceIdentifier). Falls back to the raw
+  // identifier if the device isn't in the local map yet (race on first load).
+  const device = deviceByIdentifier.get(evt.deviceIdentifier)
+  lines.push({ label: 'Device', value: device?.name ?? evt.deviceIdentifier })
+
+  // Access level: only one access level can contain a given device door, so we use
+  // the first match. If the device isn't part of any level, show a dash.
+  const accessLevelName = device ? accessLevelByDeviceId.get(device.id) : undefined
+  lines.push({ label: 'Access level', value: accessLevelName ?? '—' })
+
   return { headline, category, lines }
 }
 
@@ -107,6 +101,7 @@ export function MonitoringPage() {
   const { token } = useAuth()
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [onlineDoors, setOnlineDoors] = useState<DeviceDoor[]>([])
+  const [devices, setDevices] = useState<DeviceSummary[]>([])
   const [events, setEvents] = useState<DeviceEvent[]>([])
   const [doorControlLoading, setDoorControlLoading] = useState<string | null>(null)
   const [eventsFilter, setEventsFilter] = useState<'all' | 'doors' | 'access'>('all')
@@ -133,29 +128,55 @@ export function MonitoringPage() {
     }
   }, [token])
 
-  const loadEvents = useCallback(async () => {
+  const loadDevices = useCallback(async () => {
     if (!token) return
     try {
-      const list = await apiRequest<DeviceEvent[]>('/api/devices/events?take=200', { token })
-      setEvents(list)
+      const list = await apiRequest<DeviceSummary[]>('/api/devices', { token })
+      setDevices(list)
     } catch {
-      setEvents([])
+      setDevices([])
     }
   }, [token])
 
-  const loadEventsRef = useRef(loadEvents)
-  loadEventsRef.current = loadEvents
-
+  // Real-time-only mode: the timeline starts EMPTY when the page opens. The user explicitly
+  // does NOT want to see history — they want each event to appear at the moment the device
+  // pushes it. We never call /api/devices/events here, so nothing from the backend's recent-
+  // events buffer is loaded on mount. The only path into `events` is the SignalR
+  // `LiveDeviceEvent` handler in the effect below, which fires only for events that arrive
+  // AFTER the page is open (and which the backend has already filtered to drop replayed
+  // device-side history via the alertStream connect-time cutoff).
   useEffect(() => {
     loadAccessLevels()
     loadOnlineDoors()
-  }, [loadAccessLevels, loadOnlineDoors])
+    loadDevices()
+  }, [loadAccessLevels, loadOnlineDoors, loadDevices])
 
+  // Fallback-поллинг на случай, если SignalR-хаб упал и не успел переподняться:
+  // 30 сек безопасно — push через DeviceStatusChanged всё равно покрывает ~5-секундную задержку.
   useEffect(() => {
-    loadEvents()
-    const interval = setInterval(() => loadEventsRef.current(), 8000)
-    return () => clearInterval(interval)
-  }, [loadEvents])
+    if (!token) return
+    const id = window.setInterval(() => { loadOnlineDoors() }, 30_000)
+    return () => window.clearInterval(id)
+  }, [token, loadOnlineDoors])
+
+  // deviceIdentifier ("192.168.88.191:8000") -> { id, name } so the activity card can show
+  // the friendly device name from our DB instead of the raw IP:port that the device pushes.
+  const deviceByIdentifier = useMemo(() => {
+    const m = new Map<string, DeviceSummary>()
+    for (const d of devices) m.set(d.deviceIdentifier, d)
+    return m
+  }, [devices])
+
+
+  // device.id (GUID) -> access level NAME. We pick the first access level that includes a
+  // door for this device, because each device door is typically scoped to a single level.
+  const accessLevelByDeviceId = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const lvl of accessLevels)
+      for (const door of lvl.doors ?? [])
+        if (!m.has(door.deviceId)) m.set(door.deviceId, lvl.name)
+    return m
+  }, [accessLevels])
 
   useEffect(() => {
     if (!token) return
@@ -182,6 +203,26 @@ export function MonitoringPage() {
             const next = [evt, ...prev]
             return next.slice(0, 400)
           })
+        })
+
+        // Push-триггер на перечитку дверей. Намеренно НЕ верим полю status из push: бэк
+        // определяет Online/Offline через /ISAPI/System/deviceInfo (ARP-сервис), а двери
+        // приходят через /ISAPI/AccessControl/GateStatus|AcsWorkStatus — это разные ISAPI-
+        // эндпоинты и они на Pro Series расходятся (deviceInfo может 404'нуть, при том что
+        // AcsWorkStatus отвечает). Поэтому при ЛЮБОМ изменении статуса просто перечитываем
+        // двери для этого устройства: если устройство реально доступно — двери вернутся; если
+        // нет — придёт пустой список и мы их уберём.
+        hub.on('DeviceStatusChanged', (st: { deviceId: string }) => {
+          if (!st?.deviceId || cancelled) return
+          apiRequest<DeviceDoor[]>(`/api/devices/doors?deviceId=${st.deviceId}`, { token })
+            .then((list) => {
+              if (cancelled) return
+              setOnlineDoors((prev) => {
+                const others = prev.filter((d) => d.deviceId !== st.deviceId)
+                return [...others, ...list]
+              })
+            })
+            .catch(() => { /* сетевые ошибки не должны менять UI */ })
         })
 
         await hub.start()
@@ -215,7 +256,10 @@ export function MonitoringPage() {
         token,
         body: JSON.stringify({ action }),
       })
-      await loadOnlineDoors()
+      // Намеренно НЕ дёргаем loadOnlineDoors() — список онлайн-дверей отражает доступность
+      // устройства и не меняется от open/close. Раньше этот вызов держал кнопки disabled на
+      // 5-10 секунд, пока бэк опрашивал все устройства. Push DeviceStatusChanged всё равно
+      // обновит список, если устройство вдруг отвалится.
     } catch (e) {
       setError(e instanceof Error ? e.message : `Door control failed: ${action}`)
     } finally {
@@ -242,7 +286,6 @@ export function MonitoringPage() {
           ...(action === 'householdCallLadder' ? { callElevatorType: callElevatorType ?? 'up' } : {}),
         }),
       })
-      await loadOnlineDoors()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Elevator control failed')
     } finally {
@@ -263,22 +306,24 @@ export function MonitoringPage() {
     setEventsPage(1)
   }, [eventsFilter])
 
+  // filteredEvents is already newest-first (the SignalR handler prepends with [evt, ...prev]),
+  // so we slice it directly without the previous .reverse() that was flipping the order and
+  // pushing fresh events to the bottom of the visible page.
   const timelinePage = useMemo(() => {
-    const reversed = [...filteredEvents].reverse()
-    const totalPages = Math.max(1, Math.ceil(reversed.length / TIMELINE_PAGE_SIZE))
+    const ordered = filteredEvents
+    const totalPages = Math.max(1, Math.ceil(ordered.length / TIMELINE_PAGE_SIZE))
     const page = Math.min(eventsPage, totalPages)
-    const slice = reversed.slice((page - 1) * TIMELINE_PAGE_SIZE, page * TIMELINE_PAGE_SIZE)
-    return { reversed, totalPages, page, slice }
+    const slice = ordered.slice((page - 1) * TIMELINE_PAGE_SIZE, page * TIMELINE_PAGE_SIZE)
+    return { ordered, totalPages, page, slice }
   }, [filteredEvents, eventsPage])
 
   useEffect(() => {
-    const reversed = [...filteredEvents].reverse()
-    const totalPages = Math.max(1, Math.ceil(reversed.length / TIMELINE_PAGE_SIZE))
+    const totalPages = Math.max(1, Math.ceil(filteredEvents.length / TIMELINE_PAGE_SIZE))
     setEventsPage((p) => Math.min(p, totalPages))
   }, [filteredEvents])
 
   return (
-    <AppLayout onAction={() => { loadAccessLevels(); loadOnlineDoors(); loadEvents(); }}>
+    <AppLayout onAction={() => { loadAccessLevels(); loadOnlineDoors(); loadDevices(); }}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
@@ -286,7 +331,7 @@ export function MonitoringPage() {
             title="Real-time Monitoring"
             description="Live oversight of your entire security infrastructure."
             actions={
-              <Button variant="outline" icon="refresh" onClick={() => { loadAccessLevels(); loadOnlineDoors(); loadEvents(); }}>
+              <Button variant="outline" icon="refresh" onClick={() => { loadAccessLevels(); loadOnlineDoors(); loadDevices(); }}>
                 Sync Fleet
               </Button>
             }
@@ -318,7 +363,9 @@ export function MonitoringPage() {
 
           {/* Access Levels Section */}
           <div className="space-y-4">
-            <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Doors & elevators</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Doors / Floors</h2>
+            </div>
             <div className="space-y-3">
               {accessLevels.length === 0 ? (
                 <div className="py-20 text-center bg-surface rounded-2xl border border-divider-light shadow-sm">
@@ -326,77 +373,106 @@ export function MonitoringPage() {
                   <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">No access levels defined</p>
                 </div>
               ) : (
-                accessLevels.map((level) => (
-                  <div key={level.id} className="bg-surface rounded-2xl shadow-md overflow-hidden transition-all group active:scale-[0.99] border-none">
-                    <div className="px-5 py-4 border-b border-border-light bg-slate-50/30 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                          <span className="material-symbols-outlined text-xl">shield_lock</span>
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-black text-text-dark leading-tight">{level.name}</h3>
-                          {level.description && <p className="text-[10px] font-bold text-text-light uppercase tracking-tight">{level.description}</p>}
-                        </div>
-                      </div>
-                      <Badge variant="neutral">{level.doors?.length || 0} points</Badge>
-                    </div>
-                    <div className="p-2 space-y-1">
-                      {(level.doors ?? []).map((d) => {
-                        const online = isDoorOnline(d.deviceId, d.doorIndex)
-                        const controlKey = `${d.deviceId}-${d.doorIndex}`
-                        return (
-                          <div key={controlKey} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors">
-                            <div>
-                              <p className="text-xs font-bold text-text-dark">{d.deviceName}</p>
-                              <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{floorOrDoorLine(d)}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {online ? (
-                                d.isElevator ? (
-                                  <div className="flex flex-wrap gap-1 justify-end max-w-[220px]">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      icon="badge"
-                                      title="Call elevator (visitor)"
-                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'visitorCallLadder')}
-                                      disabled={!!doorControlLoading}
-                                    />
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      icon="north"
-                                      title="Call elevator (resident, up)"
-                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'up')}
-                                      disabled={!!doorControlLoading}
-                                    />
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      icon="south"
-                                      title="Call elevator (resident, down)"
-                                      onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'down')}
-                                      disabled={!!doorControlLoading}
-                                    />
-                                  </div>
-                                ) : (
-                                  <div className="flex gap-1">
-                                    <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
-                                    <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
-                                    <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
-                                    <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
-                                  </div>
-                                )
-                              ) : (
-                                <span className="text-[8px] font-black text-error-text uppercase tracking-widest px-2 py-1 bg-error-bg/30 rounded-full">Offline</span>
-                              )}
-                            </div>
+                accessLevels.map((level) => {
+                  const filtered = level.doors ?? []
+                  if (filtered.length === 0) return null
+                  return (
+                    <div key={level.id} className="bg-surface rounded-2xl shadow-md overflow-hidden transition-all group active:scale-[0.99] border-none">
+                      <div className="px-5 py-4 border-b border-border-light bg-slate-50/30 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                            <span className="material-symbols-outlined text-xl">shield_lock</span>
                           </div>
-                        )
-                      })}
+                          <div>
+                            <h3 className="text-sm font-black text-text-dark leading-tight">{level.name}</h3>
+                            {level.description && <p className="text-[10px] font-bold text-text-light uppercase tracking-tight">{level.description}</p>}
+                          </div>
+                        </div>
+                        <Badge variant="neutral">{filtered.length} point{filtered.length !== 1 ? 's' : ''}</Badge>
+                      </div>
+                      <div className="p-2 space-y-1">
+                        {filtered.map((d) => {
+                          const online = isDoorOnline(d.deviceId, d.doorIndex)
+                          const controlKey = `${d.deviceId}-${d.doorIndex}`
+                          const floorNo = d.doorIndex + 1
+                          return (
+                            <div key={controlKey} className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors">
+                              <div>
+                                <p className="text-xs font-bold text-text-dark">{d.deviceName}</p>
+                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">
+                                  {d.isElevator ? `Floor ${floorNo}` : `Door ${floorNo}`}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {online ? (
+                                  d.isElevator ? (
+                                    <div className="flex flex-wrap gap-1 justify-end">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        icon="lock_open"
+                                        title="Open relay"
+                                        onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')}
+                                        disabled={!!doorControlLoading}
+                                      />
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        icon="lock"
+                                        title="Close relay"
+                                        onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')}
+                                        disabled={!!doorControlLoading}
+                                      />
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        icon="badge"
+                                        title="Call elevator (visitor)"
+                                        onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'visitorCallLadder')}
+                                        disabled={!!doorControlLoading}
+                                      />
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        icon="north"
+                                        title="Call elevator (resident, up)"
+                                        onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'up')}
+                                        disabled={!!doorControlLoading}
+                                      />
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        icon="south"
+                                        title="Call elevator (resident, down)"
+                                        onClick={() => handleElevatorControl(d.deviceId, d.doorIndex, 'householdCallLadder', 'down')}
+                                        disabled={!!doorControlLoading}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div className="flex gap-1">
+                                      <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+                                      <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+                                      <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+                                      <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+                                    </div>
+                                  )
+                                ) : (
+                                  <span className="text-[8px] font-black text-error-text uppercase tracking-widest px-2 py-1 bg-error-bg/30 rounded-full">Offline</span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  )
+                })
+              )}
+              {accessLevels.length > 0 && accessLevels.every(l => (l.doors ?? []).length === 0) && (
+                <div className="py-12 text-center bg-surface rounded-2xl border border-dashed border-divider-light">
+                  <span className="material-symbols-outlined text-3xl text-text-light mb-2 block">door_front</span>
+                  <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">No access points configured</p>
+                </div>
               )}
             </div>
           </div>
@@ -428,14 +504,14 @@ export function MonitoringPage() {
               ) : (
                 <>
                   {timelinePage.slice.map((evt, idx) => {
-                    const pres = buildActivityPresentation(evt)
+                    const pres = buildActivityPresentation(evt, deviceByIdentifier, accessLevelByDeviceId)
                     const isGranted = evt.eventType === 2
                     const isDenied = evt.eventType === 3
                     const isTimeout = evt.eventType === 6
                     const isDoorClose = evt.eventType === 5
                     const isHeartbeat = evt.eventType === 4
                     const isDeviceOp = evt.eventType === 7
-                    const timeStr = new Date(evt.occurredUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    const timeStr = new Date(evt.occurredUtc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
                     const icon =
                       isDenied ? 'block'
                         : isGranted ? 'verified_user'
@@ -493,9 +569,6 @@ export function MonitoringPage() {
                                   ) : (
                                     <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Unknown person</p>
                                   )}
-                                  {evt.employeeNo ? (
-                                    <p className="text-[10px] font-mono text-text-light mt-0.5">{evt.employeeNo}</p>
-                                  ) : null}
                                 </div>
                               </div>
                             )}
@@ -509,13 +582,6 @@ export function MonitoringPage() {
                                 ))}
                               </dl>
                             ) : null}
-                            <p className="text-[10px] font-black text-text-light uppercase tracking-tighter opacity-70 border-t border-divider-light/60 pt-2">
-                              Station: {evt.deviceIdentifier}
-                            </p>
-                            <details className="text-[9px] text-text-light">
-                              <summary className="cursor-pointer font-bold uppercase tracking-widest opacity-70 hover:opacity-100">Raw JSON</summary>
-                              <pre className="mt-2 p-2 bg-slate-50 rounded-lg overflow-x-auto max-h-40 text-[9px] font-mono whitespace-pre-wrap break-all">{evt.payload || '—'}</pre>
-                            </details>
                           </div>
                         </div>
                       </div>

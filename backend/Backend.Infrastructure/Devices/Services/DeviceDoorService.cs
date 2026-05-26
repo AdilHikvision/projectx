@@ -27,31 +27,37 @@ public sealed class DeviceDoorService(
             .OrderBy(d => d.Name)
             .ToListAsync(cancellationToken);
 
-        var result = new List<DeviceDoor>();
         var username = configuration["Hikvision:Username"] ?? "admin";
         var password = (configuration["Hikvision:Password"] ?? "12345").Trim();
         if (string.IsNullOrEmpty(password)) password = "12345";
 
-        foreach (var device in devices)
+        // Опрашиваем устройства параллельно (с ограничением 8 одновременно), иначе при N офлайн-устройствах
+        // время ответа = N * 6с таймаута. dbContext уже не используется ниже — все http-вызовы независимы.
+        using var gate = new SemaphoreSlim(8, 8);
+        var perDevice = await Task.WhenAll(devices.Select(async device =>
         {
             var cred = new NetworkCredential(
                 string.IsNullOrWhiteSpace(device.Username) ? username : device.Username,
                 string.IsNullOrWhiteSpace(device.Password) ? password : device.Password);
 
-            var (doors, offlineReason) = await TryGetDoorsViaIsapiAsync(device, cred, cancellationToken);
-
-            if (doors.Count > 0)
+            await gate.WaitAsync(cancellationToken);
+            try
             {
-                result.AddRange(doors);
+                var (doors, offlineReason) = await TryGetDoorsViaIsapiAsync(device, cred, cancellationToken);
+                if (doors.Count == 0)
+                {
+                    logger.LogWarning("Doors for {Device} ({Ip}:{Port}): {Reason}. Двери не показываем (офлайн).",
+                        device.Name, device.IpAddress, device.Port, offlineReason ?? "Устройство недоступно");
+                }
+                return doors;
             }
-            else
+            finally
             {
-                var errorMsg = offlineReason ?? "Устройство недоступно";
-                logger.LogWarning("Doors for {Device} ({Ip}:{Port}): {Reason}. Двери не показываем (офлайн).", device.Name, device.IpAddress, device.Port, errorMsg);
+                gate.Release();
             }
-        }
+        }));
 
-        return result;
+        return perDevice.SelectMany(d => d).ToList();
     }
 
     private async Task<int?> TryGetDoorCountViaSdkAsync(Device device, NetworkCredential cred, CancellationToken cancellationToken)

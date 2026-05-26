@@ -106,30 +106,6 @@ export function DashboardPage() {
                     ))}
                 </div>
 
-                {/* System Overview Section */}
-                <div className="mt-12">
-                    <h2 className="text-xs font-black text-text-muted uppercase tracking-[0.3em] mb-6 px-1">Quick Actions</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex items-center gap-4 p-5 bg-surface rounded-2xl shadow-sm hover:shadow-md transition-all cursor-pointer group">
-                            <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-colors">
-                                <span className="material-symbols-outlined text-xl">add_moderator</span>
-                            </div>
-                            <div>
-                                <p className="text-sm font-black text-text-dark leading-none">Emergency Lockdown</p>
-                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-1">Immediately lock all access points</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4 p-5 bg-surface rounded-2xl shadow-sm hover:shadow-md transition-all cursor-pointer group">
-                            <div className="w-10 h-10 bg-success-text/10 rounded-xl flex items-center justify-center text-success-text group-hover:bg-success-text group-hover:text-white transition-colors">
-                                <span className="material-symbols-outlined text-xl">no_accounts</span>
-                            </div>
-                            <div>
-                                <p className="text-sm font-black text-text-dark leading-none">Evacuation Report</p>
-                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-1">Export list of people in building</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
         </AppLayout>
     )

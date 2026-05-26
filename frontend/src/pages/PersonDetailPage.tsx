@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
+import QRCode from 'qrcode'
 import { FaceThumbnail } from '../components/FaceThumbnail'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
@@ -7,7 +9,28 @@ import { Badge, Button, Input } from '../components/atoms'
 import { ConfirmDialog } from '../components/molecules'
 import { Modal } from '../components/organisms'
 
-import { apiRequest, getApiBaseUrl } from '../lib/api'
+import { apiRequest, getApiBaseUrl, getHubUrl } from '../lib/api'
+
+interface PersonSyncProgressEvent {
+  syncId: string
+  stage: 'syncing' | 'skipped' | 'done' | 'error' | 'complete'
+  current: number
+  total: number
+  deviceId: string
+  deviceName: string
+  message?: string | null
+}
+
+interface SyncProgressState {
+  syncId: string
+  current: number
+  total: number
+  deviceName: string
+  stage: PersonSyncProgressEvent['stage']
+  message: string
+  skipped: number
+  errors: number
+}
 
 interface DepartmentRef {
   id: string
@@ -27,7 +50,7 @@ interface PersonDetail {
   department?: DepartmentRef | null
   companyId?: string | null
   accessLevels: { id: string; name: string }[]
-  cards: { id: string; cardNo: string; cardNumber?: string | null }[]
+  cards: { id: string; cardNo: string; cardNumber?: string | null; cardType?: string | null }[]
   faces: { id: string; fdid: number }[]
   fingerprints: { id: string; fingerIndex: number }[]
   irises: { id: string; irisIndex: number }[]
@@ -118,6 +141,103 @@ export interface DeviceCapabilities {
   isSupportCardInfo?: boolean
 }
 
+function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void }) {
+  const [dataUrl, setDataUrl] = useState<string>('')
+  const [showModal, setShowModal] = useState(false)
+
+  useEffect(() => {
+    QRCode.toDataURL(cardNo, { width: 256, margin: 2, errorCorrectionLevel: 'M' })
+      .then(setDataUrl)
+      .catch(() => setDataUrl(''))
+  }, [cardNo])
+
+  const handleDownload = () => {
+    const a = document.createElement('a')
+    a.href = dataUrl
+    a.download = `visitor-qr-${cardNo}.png`
+    a.click()
+  }
+
+  return (
+    <>
+      <div className="relative bg-background-light p-4 rounded-2xl shadow-md group hover:shadow-xl transition-all border-none col-span-full">
+        <div className="flex items-start gap-4">
+          <button
+            onClick={() => setShowModal(true)}
+            className="shrink-0 w-20 h-20 bg-white rounded-xl shadow-inner flex items-center justify-center overflow-hidden hover:scale-105 transition-transform"
+            title="Click to enlarge QR code"
+          >
+            {dataUrl
+              ? <img src={dataUrl} alt="QR code" className="w-full h-full object-contain" />
+              : <span className="material-symbols-outlined text-3xl text-text-light">qr_code_2</span>
+            }
+          </button>
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">QR Code (visitor entry)</p>
+            <p className="text-xs font-mono text-text-dark truncate">{cardNo}</p>
+            <p className="text-[10px] text-text-light">Present this QR code at the reader to enter. Synced to access control devices.</p>
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleDownload}
+                disabled={!dataUrl}
+                className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/70 transition-colors disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-sm">download</span>
+                Download
+              </button>
+              <button
+                onClick={() => setShowModal(true)}
+                className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-text-dark transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">zoom_in</span>
+                Enlarge
+              </button>
+            </div>
+          </div>
+          <button
+            onClick={onDelete}
+            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-error-text"
+            title="Delete QR card"
+          >
+            <span className="material-symbols-outlined text-xl">delete</span>
+          </button>
+        </div>
+      </div>
+
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowModal(false)}
+        >
+          <div
+            className="bg-white rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-4 max-w-xs w-full mx-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <p className="text-[10px] font-black uppercase tracking-widest text-text-light">Visitor QR Code</p>
+            {dataUrl && <img src={dataUrl} alt="QR code" className="w-56 h-56 object-contain" />}
+            <p className="text-xs font-mono text-text-dark text-center break-all">{cardNo}</p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={handleDownload}
+                className="flex-1 py-2.5 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-sm">download</span>
+                Download
+              </button>
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex-1 py-2.5 rounded-xl bg-background-light text-text-dark text-[10px] font-black uppercase tracking-widest"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export function PersonDetailPage() {
   const { type, id } = useParams<{ type: 'employee' | 'visitor'; id: string }>()
   const navigate = useNavigate()
@@ -141,12 +261,13 @@ export function PersonDetailPage() {
     selfServiceEmail: '',
     workScheduleId: null as string | null,
   })
-  const [workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
+  const [_workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
   const [selfServiceTempPassword, setSelfServiceTempPassword] = useState<string | null>(null)
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [saveLoading, setSaveLoading] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [addModal, setAddModal] = useState<'card' | 'face' | 'fingerprint' | null>(null)
   const [faceSourceMode, setFaceSourceMode] = useState<'device' | 'enroller' | 'computer' | 'webcam'>('computer')
@@ -837,13 +958,70 @@ export function PersonDetailPage() {
       setError('First and last name are required')
       return
     }
+
+    // Generate a unique sync correlation ID. The backend echoes it back in every
+    // PersonSyncProgress SignalR event so we know which messages belong to THIS save
+    // (and ignore syncs from other tabs / users).
+    const syncId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `sync-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
     setSaveLoading(true)
     setError(null)
+    setSyncProgress({
+      syncId,
+      current: 0,
+      total: 0,
+      deviceName: '',
+      stage: 'syncing',
+      message: 'Сохранение профиля...',
+      skipped: 0,
+      errors: 0,
+    })
+
+    // Open a dedicated hub connection for the duration of this save. We deliberately
+    // do NOT reuse a long-lived connection — this keeps the cleanup trivial and the
+    // listener scoped to a single save operation.
+    const hub = new HubConnectionBuilder()
+      .withUrl(`${getHubUrl()}/hubs/devices`, {
+        accessTokenFactory: () => token!,
+        skipNegotiation: true,
+        transport: HttpTransportType.WebSockets,
+      })
+      .configureLogging(LogLevel.Error)
+      .build()
+
+    hub.on('PersonSyncProgress', (evt: PersonSyncProgressEvent) => {
+      if (!evt || evt.syncId !== syncId) return
+      setSyncProgress((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          current: evt.current,
+          total: evt.total,
+          deviceName: evt.deviceName || prev.deviceName,
+          stage: evt.stage,
+          message: evt.message ?? prev.message,
+          skipped: evt.stage === 'skipped' ? prev.skipped + 1 : prev.skipped,
+          errors: evt.stage === 'error' ? prev.errors + 1 : prev.errors,
+        }
+      })
+    })
+
     try {
+      try {
+        await hub.start()
+      } catch {
+        // SignalR failed to connect — proceed without progress UI rather than block save.
+      }
+
+      const commonHeaders = { 'X-Sync-Id': syncId }
       if (type === 'employee') {
         const res = await apiRequest<PersonDetail & { syncWarnings?: string[] }>(`${apiPath}/${id}`, {
           method: 'PUT',
           token,
+          headers: commonHeaders,
           body: JSON.stringify({
             firstName: formData.firstName.trim(),
             lastName: formData.lastName.trim(),
@@ -869,6 +1047,7 @@ export function PersonDetailPage() {
         const res = await apiRequest<PersonDetail & { syncWarnings?: string[] }>(`${apiPath}/${id}`, {
           method: 'PUT',
           token,
+          headers: commonHeaders,
           body: JSON.stringify({
             firstName: formData.firstName.trim(),
             lastName: formData.lastName.trim(),
@@ -888,6 +1067,12 @@ export function PersonDetailPage() {
       setError(e instanceof Error ? e.message : 'Save failed')
     } finally {
       setSaveLoading(false)
+      setSyncProgress(null)
+      try {
+        await hub.stop()
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -1139,24 +1324,28 @@ export function PersonDetailPage() {
                         <div className="col-span-full py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">No proximity tokens enrolled</div>
                       ) : (
                         detail.cards.map((c) => (
-                          <div key={c.id} className="relative bg-background-light p-4 rounded-2xl shadow-md group hover:shadow-xl transition-all border-none">
-                            <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-white rounded-xl shadow-inner flex items-center justify-center text-primary">
-                                <span className="material-symbols-outlined text-2xl">nfc</span>
+                          c.cardType === 'qrCode'
+                            ? <QrCardItem key={c.id} cardNo={c.cardNo} onDelete={() => handleDeleteCard(c.id)} />
+                            : (
+                              <div key={c.id} className="relative bg-background-light p-4 rounded-2xl shadow-md group hover:shadow-xl transition-all border-none">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 bg-white rounded-xl shadow-inner flex items-center justify-center text-primary">
+                                    <span className="material-symbols-outlined text-2xl">nfc</span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50 mb-0.5">Token ID</p>
+                                    <p className="text-sm font-mono font-black text-text-dark truncate tracking-wider">{c.cardNo}</p>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    icon="delete"
+                                    className="text-error-text opacity-0 group-hover:opacity-100"
+                                    onClick={() => handleDeleteCard(c.id)}
+                                  />
+                                </div>
                               </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50 mb-0.5">Token ID</p>
-                                <p className="text-sm font-mono font-black text-text-dark truncate tracking-wider">{c.cardNo}</p>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                icon="delete"
-                                className="text-error-text opacity-0 group-hover:opacity-100"
-                                onClick={() => handleDeleteCard(c.id)}
-                              />
-                            </div>
-                          </div>
+                            )
                         ))
                       )}
                     </div>
@@ -1293,21 +1482,6 @@ export function PersonDetailPage() {
                 <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100 space-y-4">
                   <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Schedule & self-service</h3>
 
-                  {/* Work Schedule */}
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Work schedule</label>
-                    <select
-                      value={formData.workScheduleId ?? ''}
-                      onChange={(e) => setFormData((p) => ({ ...p, workScheduleId: e.target.value || null }))}
-                      className="w-full rounded-xl bg-white border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none shadow-sm"
-                    >
-                      <option value="">— Not assigned —</option>
-                      {workSchedules.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
                   {/* Self-Service Toggle */}
                   <label className="flex items-start gap-3 p-4 bg-white rounded-2xl cursor-pointer hover:bg-indigo-50 transition-colors border border-indigo-100">
                     <input
@@ -1363,6 +1537,81 @@ export function PersonDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Sync progress overlay — shown while handleSave streams device-by-device progress
+          via SignalR PersonSyncProgress events. Devices that are offline show as "skipped"
+          almost instantly because the backend filters them out before attempting any HTTP
+          call (no more 30-second-per-device hangs). */}
+      {syncProgress && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-surface w-full max-w-md rounded-3xl shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                <span className="material-symbols-outlined text-xl animate-spin">sync</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-black text-text-dark">Saving profile</h3>
+                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">
+                  {syncProgress.total > 0
+                    ? `Device ${syncProgress.current} of ${syncProgress.total}`
+                    : 'Preparing...'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-text-dark truncate pr-3">
+                  {syncProgress.deviceName || '—'}
+                </span>
+                <span
+                  className={`text-[9px] font-black uppercase tracking-widest shrink-0 px-2 py-0.5 rounded-full ${
+                    syncProgress.stage === 'done'
+                      ? 'bg-emerald-50 text-emerald-600'
+                      : syncProgress.stage === 'skipped'
+                        ? 'bg-amber-50 text-amber-700'
+                        : syncProgress.stage === 'error'
+                          ? 'bg-error-bg text-error-text'
+                          : syncProgress.stage === 'complete'
+                            ? 'bg-emerald-50 text-emerald-600'
+                            : 'bg-primary/10 text-primary'
+                  }`}
+                >
+                  {syncProgress.stage}
+                </span>
+              </div>
+              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-200"
+                  style={{
+                    width: `${
+                      syncProgress.total > 0
+                        ? Math.min(100, Math.round((syncProgress.current / syncProgress.total) * 100))
+                        : syncProgress.stage === 'complete'
+                          ? 100
+                          : 5
+                    }%`,
+                  }}
+                />
+              </div>
+              {syncProgress.message && (
+                <p className="text-[10px] text-text-light leading-snug">{syncProgress.message}</p>
+              )}
+            </div>
+
+            {(syncProgress.skipped > 0 || syncProgress.errors > 0) && (
+              <div className="flex gap-3 text-[10px] font-bold text-text-light pt-2 border-t border-divider-light">
+                {syncProgress.skipped > 0 && (
+                  <span className="text-amber-700">⊘ Skipped (offline): {syncProgress.skipped}</span>
+                )}
+                {syncProgress.errors > 0 && (
+                  <span className="text-error-text">✕ Errors: {syncProgress.errors}</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Enrollment Modals with Premium Mobile Layout */}
       {addModal === 'card' && (

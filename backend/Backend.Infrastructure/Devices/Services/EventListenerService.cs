@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Backend.Application.Devices;
+using Backend.Domain.Entities;
 using Backend.Infrastructure.Devices;
-using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,17 +13,34 @@ namespace Backend.Infrastructure.Devices.Services;
 
 public sealed class EventListenerService(
     IDeviceConnectionManager connectionManager,
-    IHikvisionSdkClient sdkClient,
     IServiceScopeFactory scopeFactory,
     IDeviceActivityBroadcaster activityBroadcaster,
     ILogger<EventListenerService> logger) : BackgroundService, IEventListenerService
 {
     private readonly ConcurrentQueue<DeviceEvent> _buffer = new();
-    private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxBufferSize = 1000;
-    private const int FailuresBeforeDisconnect = 3;
-    private static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(20);
+
+    // Sliding-window deduplication. We now run TWO push channels in parallel
+    // (IsapiAlertStreamService + IsapiSubscribeEventService) because some Hikvision
+    // firmwares are silent on one or the other. A device that's chatty on both will emit
+    // identical events through both pipes — we keep only the first.
+    //
+    // Key: deviceIdentifier|eventTypeInt|occurredUtcTicks|payloadHash
+    // Value: UTC timestamp the dedup entry was created (used for TTL eviction).
+    private readonly ConcurrentDictionary<string, DateTime> _recentEventKeys = new(StringComparer.Ordinal);
+    private static readonly TimeSpan DedupWindow = TimeSpan.FromSeconds(30);
+    private const int DedupCacheSoftLimit = 2000;
+
+    // Real-time events come from IsapiAlertStreamService and/or IsapiSubscribeEventService
+    // (device-pushed via ISAPI /Event/notification/alertStream and /subscribeEvent).
+    // EventListenerService no longer polls the device SDK on a 1-second timer — that was
+    // the "downloading all logs" behaviour: it pulled a 20-minute backward AcsEvent window
+    // every second and re-emitted everything. Now this service only owns the in-memory
+    // buffer + dedup cache + reconnect/stale-mark housekeeping. The heartbeat timeout is
+    // generous because push connections are long-lived and touched by both push services.
+    private static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ReconnectInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromSeconds(5);
 
     public Task<IReadOnlyCollection<DeviceEvent>> ReadRecentEventsAsync(int take = 100, CancellationToken cancellationToken = default)
     {
@@ -40,64 +57,47 @@ public sealed class EventListenerService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("EventListenerService started.");
+        logger.LogInformation("EventListenerService started (push-only; alertStream + subscribeEvent are the real-time event sources).");
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var active = await connectionManager.GetActiveConnectionsAsync(stoppingToken);
-                if (active.Count > 0)
-                {
-                    var deviceIds = active.Select(x => x.DeviceIdentifier).ToArray();
-                    var result = await sdkClient.PullEventsAsync(deviceIds, stoppingToken);
-                    var unreachableSet = result.UnreachableDeviceIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var successIds = deviceIds.Where(id => !unreachableSet.Contains(id)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    foreach (var id in successIds)
-                    {
-                        _consecutiveFailures.TryRemove(id, out _);
-                        await connectionManager.TouchHeartbeatAsync(id, DateTime.UtcNow, stoppingToken);
-                    }
-                    foreach (var rawEvent in result.Events)
-                    {
-                        await IngestAsync(MapEvent(rawEvent), stoppingToken);
-                    }
-                    foreach (var unreachableId in result.UnreachableDeviceIds)
-                    {
-                        var failCount = _consecutiveFailures.AddOrUpdate(unreachableId, 1, (_, c) => c + 1);
-                        if (failCount >= FailuresBeforeDisconnect)
-                        {
-                            _consecutiveFailures.TryRemove(unreachableId, out _);
-                            await connectionManager.DisconnectAsync(unreachableId, stoppingToken);
-                            logger.LogInformation("Устройство {Identifier} отключено — {Count} подряд неудачных опросов", unreachableId, failCount);
-                        }
-                        else
-                        {
-                            logger.LogDebug("Устройство {Identifier} недоступно при опросе ({Count}/{Threshold})", unreachableId, failCount, FailuresBeforeDisconnect);
-                        }
-                    }
-                }
-
                 await connectionManager.MarkStaleConnectionsOfflineAsync(HeartbeatTimeout, stoppingToken);
-
                 await TryReconnectOfflineDevicesAsync(stoppingToken);
+                EvictExpiredDedupKeys();
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to pull device events from SDK.");
+                logger.LogError(ex, "EventListenerService housekeeping failed.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+            await Task.Delay(HousekeepingInterval, stoppingToken);
         }
     }
 
     private async Task IngestAsync(DeviceEvent mapped, CancellationToken cancellationToken)
     {
+        // Dual push-channel dedup: skip if the same device emitted an identical event
+        // (same type, same occurredUtc, same payload) within the last DedupWindow.
+        // Heartbeats are also deduped — the two channels both heartbeat ~every 30s.
+        var key = BuildDedupKey(mapped);
+        var now = DateTime.UtcNow;
+        if (_recentEventKeys.TryGetValue(key, out var seenAt) && now - seenAt < DedupWindow)
+        {
+            // Already published via the other channel; silently drop.
+            return;
+        }
+        _recentEventKeys[key] = now;
+
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             mapped = await DeviceEventPersonEnricher.EnrichAsync(mapped, db, cancellationToken);
+            // Persist'а в attendance в realtime больше нет: T&A собирает только Log Sync
+            // (manual или авто-расписание), пишет в device_auth_logs. Это нужно чтобы
+            // повторный sync не дублировал и пользователь явно контролировал что попадает в отчёт.
         }
         catch (Exception ex)
         {
@@ -108,36 +108,49 @@ public sealed class EventListenerService(
         await EmitBroadcastAsync(mapped, cancellationToken);
     }
 
+private static string BuildDedupKey(DeviceEvent evt)
+    {
+        // Cheap stable hash of the payload's first 256 chars — collisions inside the same
+        // device + same eventType + same occurredUtc would mean two truly distinct events
+        // happened at the exact same instant, which we accept as a non-issue.
+        var payload = evt.Payload ?? string.Empty;
+        var snippet = payload.Length > 256 ? payload[..256] : payload;
+        var hash = (uint)snippet.GetHashCode(StringComparison.Ordinal);
+        return $"{evt.DeviceIdentifier}|{(int)evt.EventType}|{evt.OccurredUtc.Ticks}|{hash:x8}";
+    }
+
+    private void EvictExpiredDedupKeys()
+    {
+        if (_recentEventKeys.IsEmpty) return;
+
+        var cutoff = DateTime.UtcNow - DedupWindow;
+        foreach (var kv in _recentEventKeys)
+        {
+            if (kv.Value < cutoff)
+                _recentEventKeys.TryRemove(kv.Key, out _);
+        }
+
+        // Hard cap: if traffic is so heavy that the cache grew past the soft limit even
+        // after TTL eviction (unlikely but cheap to guard), drop the oldest entries.
+        if (_recentEventKeys.Count > DedupCacheSoftLimit)
+        {
+            foreach (var kv in _recentEventKeys.OrderBy(x => x.Value).Take(_recentEventKeys.Count - DedupCacheSoftLimit))
+                _recentEventKeys.TryRemove(kv.Key, out _);
+        }
+    }
+
     private async Task EmitBroadcastAsync(DeviceEvent mapped, CancellationToken cancellationToken)
     {
         try
         {
+            logger.LogInformation("SignalR LiveDeviceEvent → {Id} type={Type} occurred={Occurred:O}",
+                mapped.DeviceIdentifier, mapped.EventType, mapped.OccurredUtc);
             await activityBroadcaster.NotifyLiveEventAsync(mapped, cancellationToken);
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "LiveDeviceEvent broadcast failed for {Identifier}", mapped.DeviceIdentifier);
+            logger.LogWarning(ex, "LiveDeviceEvent broadcast failed for {Identifier}", mapped.DeviceIdentifier);
         }
-    }
-
-    private static DeviceEvent MapEvent(SdkDeviceEvent sdkEvent)
-    {
-        if (AcsEventMapper.TryParseAcsCode(sdkEvent.EventCode, out var major, out var minor))
-        {
-            var (type, summary) = AcsEventMapper.Classify(major, minor);
-            return new DeviceEvent(sdkEvent.DeviceIdentifier, type, sdkEvent.OccurredUtc, sdkEvent.Payload, summary);
-        }
-
-        var legacyType = sdkEvent.EventCode.ToUpperInvariant() switch
-        {
-            "DOOR_OPENED" => DeviceEventType.DoorOpened,
-            "ACCESS_GRANTED" => DeviceEventType.AccessGranted,
-            "ACCESS_DENIED" => DeviceEventType.AccessDenied,
-            "HEARTBEAT" => DeviceEventType.Heartbeat,
-            _ => DeviceEventType.Unknown
-        };
-
-        return new DeviceEvent(sdkEvent.DeviceIdentifier, legacyType, sdkEvent.OccurredUtc, sdkEvent.Payload, null);
     }
 
     private void Enqueue(DeviceEvent deviceEvent)

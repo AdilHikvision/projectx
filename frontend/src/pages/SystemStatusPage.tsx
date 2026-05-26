@@ -194,7 +194,7 @@ export function SystemStatusPage() {
                     { label: 'Latency', value: status.dbLatencyMs ? `${status.dbLatencyMs.toFixed(1)}ms` : '—', icon: 'speed' },
                     { label: 'Platform', value: status.serviceState, icon: 'deployed_code' },
                     { label: 'Database', value: status.dbStatus, icon: 'database' },
-                    { label: 'Check-in', value: new Date(status.utc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), icon: 'schedule' },
+                    { label: 'Check-in', value: new Date(status.utc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }), icon: 'schedule' },
                   ].map((item) => (
                     <div key={item.label} className="p-3 bg-background-light rounded-2xl shadow-sm border-none">
                       <div className="flex items-center gap-2 mb-1 opacity-50">

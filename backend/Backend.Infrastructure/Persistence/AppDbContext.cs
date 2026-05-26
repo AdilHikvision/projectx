@@ -34,6 +34,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<WorkSchedule> WorkSchedules => Set<WorkSchedule>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
+    public DbSet<DeviceAuthLog> DeviceAuthLogs => Set<DeviceAuthLog>();
+    public DbSet<AttendanceCorrection> AttendanceCorrections => Set<AttendanceCorrection>();
+    public DbSet<GeoZone> GeoZones => Set<GeoZone>();
+    public DbSet<EmployeeDayPattern> EmployeeDayPatterns => Set<EmployeeDayPattern>();
+    public DbSet<PayrollComponent> PayrollComponents => Set<PayrollComponent>();
+    public DbSet<EmployeeSalaryConfig> EmployeeSalaryConfigs => Set<EmployeeSalaryConfig>();
+    public DbSet<EmployeePayrollComponent> EmployeePayrollComponents => Set<EmployeePayrollComponent>();
+    public DbSet<PayrollPeriod> PayrollPeriods => Set<PayrollPeriod>();
+    public DbSet<PayrollEntry> PayrollEntries => Set<PayrollEntry>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -163,6 +172,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.CardNo).HasMaxLength(64).IsRequired();
             entity.Property(x => x.CardNumber).HasMaxLength(120);
+            entity.Property(x => x.CardType).HasMaxLength(32);
             entity.HasOne(x => x.Employee).WithMany(x => x.Cards).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Cards).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => x.CardNo).IsUnique();
@@ -206,6 +216,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
             entity.Property(x => x.Type).HasConversion<int>().IsRequired();
             entity.Property(x => x.RequiredHoursPerDay).HasPrecision(5, 2);
+            entity.Property(x => x.Color).HasMaxLength(7).HasDefaultValue("#6366f1");
         });
 
         builder.Entity<AttendanceRecord>(entity =>
@@ -227,6 +238,107 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Comment).HasMaxLength(1000);
             entity.Property(x => x.ReviewComment).HasMaxLength(1000);
             entity.HasOne(x => x.Employee).WithMany(x => x.AttendanceRequests).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<DeviceAuthLog>(entity =>
+        {
+            entity.ToTable("device_auth_logs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EmployeeNoString).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(256);
+            entity.HasOne(x => x.Device).WithMany().HasForeignKey(x => x.DeviceId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.DeviceId, x.EmployeeNoString, x.EventTimeUtc }).IsUnique();
+            entity.HasIndex(x => x.EventTimeUtc);
+            entity.HasIndex(x => x.EmployeeNoString);
+        });
+
+        builder.Entity<AttendanceCorrection>(entity =>
+        {
+            entity.ToTable("attendance_corrections");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Comment).HasMaxLength(1000);
+            entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.EmployeeId, x.DateUtc }).IsUnique();
+        });
+
+        builder.Entity<GeoZone>(entity =>
+        {
+            entity.ToTable("geo_zones");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(128).IsRequired();
+        });
+
+        builder.Entity<EmployeeDayPattern>(entity =>
+        {
+            entity.ToTable("employee_day_patterns");
+            entity.HasKey(x => x.Id);
+            entity.HasOne(x => x.Employee).WithMany(x => x.DayPatterns).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.WorkSchedule).WithMany().HasForeignKey(x => x.WorkScheduleId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.EmployeeId, x.Date }).IsUnique();
+        });
+
+        builder.Entity<PayrollComponent>(entity =>
+        {
+            entity.ToTable("payroll_components");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ComponentType).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Amount).HasPrecision(14, 2);
+            entity.Property(x => x.Percentage).HasPrecision(7, 4);
+            entity.Property(x => x.Description).HasMaxLength(500);
+        });
+
+        builder.Entity<EmployeeSalaryConfig>(entity =>
+        {
+            entity.ToTable("employee_salary_configs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.SalaryType).HasConversion<int>().IsRequired();
+            entity.Property(x => x.BaseAmount).HasPrecision(14, 2).IsRequired();
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.OvertimeMultiplier).HasPrecision(5, 2).HasDefaultValue(1.5m);
+            entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.EmployeeId);
+        });
+
+        builder.Entity<EmployeePayrollComponent>(entity =>
+        {
+            entity.ToTable("employee_payroll_components");
+            entity.HasKey(x => new { x.SalaryConfigId, x.ComponentId });
+            entity.HasOne(x => x.SalaryConfig).WithMany(x => x.Components).HasForeignKey(x => x.SalaryConfigId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Component).WithMany(x => x.EmployeeComponents).HasForeignKey(x => x.ComponentId).OnDelete(DeleteBehavior.Cascade);
+            entity.Property(x => x.OverrideAmount).HasPrecision(14, 2);
+            entity.Property(x => x.OverridePercentage).HasPrecision(7, 4);
+        });
+
+        builder.Entity<PayrollPeriod>(entity =>
+        {
+            entity.ToTable("payroll_periods");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.Year, x.Month }).IsUnique();
+        });
+
+        builder.Entity<PayrollEntry>(entity =>
+        {
+            entity.ToTable("payroll_entries");
+            entity.HasKey(x => x.Id);
+            entity.HasOne(x => x.Period).WithMany(x => x.Entries).HasForeignKey(x => x.PeriodId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.Property(x => x.WorkedHours).HasPrecision(8, 2);
+            entity.Property(x => x.OvertimeHours).HasPrecision(8, 2);
+            entity.Property(x => x.BasePay).HasPrecision(14, 2);
+            entity.Property(x => x.OvertimePay).HasPrecision(14, 2);
+            entity.Property(x => x.AllowancesTotal).HasPrecision(14, 2);
+            entity.Property(x => x.BonusesTotal).HasPrecision(14, 2);
+            entity.Property(x => x.GrossPay).HasPrecision(14, 2);
+            entity.Property(x => x.DeductionsTotal).HasPrecision(14, 2);
+            entity.Property(x => x.TaxRate).HasPrecision(5, 2);
+            entity.Property(x => x.TaxAmount).HasPrecision(14, 2);
+            entity.Property(x => x.NetPay).HasPrecision(14, 2);
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.PeriodId, x.EmployeeId }).IsUnique();
         });
     }
 }

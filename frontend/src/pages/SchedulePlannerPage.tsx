@@ -1,0 +1,626 @@
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { AppLayout } from '../components/templates'
+import { apiRequest } from '../lib/api'
+import { useAuth } from '../auth/AuthContext'
+
+const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December']
+
+function toDateStr(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function getMondayOfWeek(d: Date): Date {
+    const date = new Date(d)
+    const day = date.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    date.setDate(date.getDate() + diff)
+    return date
+}
+
+function timeToMins(t: string): number {
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Schedule {
+    id: string
+    name: string
+    type: string
+    shiftStart: string | null
+    shiftEnd: string | null
+    requiredHoursPerDay: number
+    color: string
+}
+
+interface DateData {
+    date: string  // "yyyy-MM-dd"
+    scheduleId: string | null
+    scheduleName: string | null
+    shiftStart: string | null
+    shiftEnd: string | null
+    isDayOff: boolean
+}
+
+interface Employee {
+    employeeId: string
+    employeeName: string
+    dates: DateData[]
+}
+
+interface PlannerData {
+    schedules: Schedule[]
+    employees: Employee[]
+}
+
+interface PendingChange {
+    date: string  // "yyyy-MM-dd"
+    scheduleId: string | null
+    isDayOff: boolean
+    reset: boolean
+}
+
+interface CalCol {
+    key: string
+    dateStr: string  // "yyyy-MM-dd"
+    date: Date
+    dayNum: number
+    dayLabel: string
+    isWeekend: boolean
+    isToday: boolean
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export function SchedulePlannerPage() {
+    const { token } = useAuth()
+    const [data, setData] = useState<PlannerData | null>(null)
+    const [loading, setLoading] = useState(true)
+    const [viewMode, setViewMode] = useState<'week' | 'month'>('month')
+
+    // In month mode: first day of month. In week mode: Monday of the week.
+    const [viewDate, setViewDate] = useState(() => {
+        const n = new Date()
+        return new Date(n.getFullYear(), n.getMonth(), 1)
+    })
+
+    const [search, setSearch] = useState('')
+    const [pendingByEmp, setPendingByEmp] = useState<Record<string, PendingChange[]>>({})
+    const [savingEmpId, setSavingEmpId] = useState<string | null>(null)
+
+    // Modal
+    const [modal, setModal] = useState<{ empId: string; dateStr: string; dayLabel: string; dayNum: number } | null>(null)
+    const [mScheduleId, setMScheduleId] = useState<string | null>(null)
+    const [mDayOff, setMDayOff] = useState(false)
+    const [mReset, setMReset] = useState(false)
+    const [mHasExisting, setMHasExisting] = useState(false)
+
+    // ─── Date range from columns ───────────────────────────────────────────────
+
+    const columns = useMemo((): CalCol[] => {
+        const today = new Date()
+        const todayStr = toDateStr(today)
+
+        if (viewMode === 'month') {
+            const y = viewDate.getFullYear(), mo = viewDate.getMonth()
+            const dim = new Date(y, mo + 1, 0).getDate()
+            return Array.from({ length: dim }, (_, i) => {
+                const date = new Date(y, mo, i + 1)
+                const dow = date.getDay()  // 0=Sun
+                const dateStr = toDateStr(date)
+                return {
+                    key: dateStr, dateStr, date, dayNum: i + 1,
+                    dayLabel: DOW_SHORT[dow === 0 ? 6 : dow - 1],
+                    isWeekend: dow === 0 || dow === 6,
+                    isToday: dateStr === todayStr,
+                }
+            })
+        } else {
+            // Week mode: viewDate is Monday
+            return Array.from({ length: 7 }, (_, i) => {
+                const date = new Date(viewDate)
+                date.setDate(viewDate.getDate() + i)
+                const dow = date.getDay()
+                const dateStr = toDateStr(date)
+                return {
+                    key: dateStr, dateStr, date, dayNum: date.getDate(),
+                    dayLabel: DOW_SHORT[i],
+                    isWeekend: dow === 0 || dow === 6,
+                    isToday: dateStr === todayStr,
+                }
+            })
+        }
+    }, [viewMode, viewDate])
+
+    const rangeFrom = columns[0]?.dateStr ?? toDateStr(new Date())
+    const rangeTo = columns[columns.length - 1]?.dateStr ?? rangeFrom
+
+    // ─── Fetch ────────────────────────────────────────────────────────────────
+
+    const fetchData = useCallback(async () => {
+        setLoading(true)
+        try {
+            const d = await apiRequest<PlannerData>(
+                `/api/schedule-planner?from=${rangeFrom}&to=${rangeTo}`, { token }
+            )
+            setData(d)
+        } catch { /* ignore */ }
+        finally { setLoading(false) }
+    }, [token, rangeFrom, rangeTo])
+
+    useEffect(() => { fetchData() }, [fetchData])
+
+    // ─── Navigation ───────────────────────────────────────────────────────────
+
+    const navigate = (dir: -1 | 1) => {
+        if (viewMode === 'week') {
+            setViewDate(d => { const n = new Date(d); n.setDate(n.getDate() + dir * 7); return n })
+        } else {
+            setViewDate(d => new Date(d.getFullYear(), d.getMonth() + dir, 1))
+        }
+    }
+
+    const goToday = () => {
+        const n = new Date()
+        if (viewMode === 'week') {
+            setViewDate(getMondayOfWeek(n))
+        } else {
+            setViewDate(new Date(n.getFullYear(), n.getMonth(), 1))
+        }
+    }
+
+    const switchMode = (m: 'week' | 'month') => {
+        if (m === viewMode) return
+        if (m === 'week') {
+            // Switch to week containing first visible day of current month view
+            setViewDate(getMondayOfWeek(viewDate))
+        } else {
+            // Switch to month of current week's Monday
+            setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1))
+        }
+        setViewMode(m)
+    }
+
+    // ─── Effective state ──────────────────────────────────────────────────────
+
+    const getEffective = (emp: Employee, dateStr: string) => {
+        const pending = (pendingByEmp[emp.employeeId] ?? []).find(p => p.date === dateStr)
+        if (pending) {
+            const sched = data?.schedules.find(s => s.id === pending.scheduleId) ?? null
+            return {
+                scheduleId: pending.scheduleId,
+                scheduleName: sched?.name ?? null,
+                shiftStart: sched?.shiftStart ?? null,
+                shiftEnd: sched?.shiftEnd ?? null,
+                isDayOff: pending.isDayOff,
+                color: sched?.color ?? '#6366f1',
+                isPending: true,
+                isReset: pending.reset,
+            }
+        }
+        const base = emp.dates.find(d => d.date === dateStr)
+        if (base) {
+            const sched = data?.schedules.find(s => s.id === base.scheduleId) ?? null
+            return { ...base, color: sched?.color ?? '#6366f1', isPending: false, isReset: false }
+        }
+        return { scheduleId: null, scheduleName: null, shiftStart: null, shiftEnd: null, isDayOff: false, color: '#6366f1', isPending: false, isReset: false }
+    }
+
+    // ─── Totals ───────────────────────────────────────────────────────────────
+
+    const computeTotals = (emp: Employee) => {
+        let days = 0, mins = 0
+        for (const col of columns) {
+            const p = getEffective(emp, col.dateStr)
+            if (!p.isDayOff && p.scheduleId && p.shiftStart && p.shiftEnd) {
+                days++
+                mins += timeToMins(p.shiftEnd) - timeToMins(p.shiftStart)
+            }
+        }
+        return { days, hours: Math.round(mins / 60) }
+    }
+
+    // ─── Modal ────────────────────────────────────────────────────────────────
+
+    const openModal = (empId: string, dateStr: string, dayLabel: string, dayNum: number) => {
+        const emp = data?.employees.find(e => e.employeeId === empId)
+        if (!emp) return
+        const p = getEffective(emp, dateStr)
+        setMScheduleId(p.scheduleId)
+        setMDayOff(p.isDayOff)
+        setMReset(false)
+        setMHasExisting(!!(p.scheduleId || p.isDayOff))
+        setModal({ empId, dateStr, dayLabel, dayNum })
+    }
+
+    const applyModal = () => {
+        if (!modal) return
+        const change: PendingChange = {
+            date: modal.dateStr,
+            scheduleId: mReset || mDayOff ? null : mScheduleId,
+            isDayOff: !mReset && mDayOff,
+            reset: mReset,
+        }
+        setPendingByEmp(prev => {
+            const existing = (prev[modal.empId] ?? []).filter(p => p.date !== modal.dateStr)
+            return { ...prev, [modal.empId]: [...existing, change] }
+        })
+        setModal(null)
+    }
+
+    // ─── Save / Discard ───────────────────────────────────────────────────────
+
+    const saveEmployee = async (empId: string) => {
+        const changes = pendingByEmp[empId] ?? []
+        if (!changes.length) return
+        setSavingEmpId(empId)
+        try {
+            const payload = changes.map(c => ({
+                date: c.date,
+                scheduleId: c.scheduleId ?? null,
+                isDayOff: c.isDayOff,
+                reset: c.reset,
+            }))
+            await apiRequest(`/api/schedule-planner/${empId}/days`, {
+                method: 'PUT', token,
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' },
+            })
+            setPendingByEmp(prev => { const n = { ...prev }; delete n[empId]; return n })
+            await fetchData()
+        } catch { /* ignore */ }
+        finally { setSavingEmpId(null) }
+    }
+
+    const discard = (empId: string) =>
+        setPendingByEmp(prev => { const n = { ...prev }; delete n[empId]; return n })
+
+    // ─── Derived ──────────────────────────────────────────────────────────────
+
+    const filtered = (data?.employees ?? []).filter(e =>
+        e.employeeName.toLowerCase().includes(search.toLowerCase())
+    )
+
+    const schedules = data?.schedules ?? []
+
+    const headerLabel = viewMode === 'month'
+        ? `${MONTHS[viewDate.getMonth()]} ${viewDate.getFullYear()}`
+        : (() => {
+            const end = new Date(viewDate)
+            end.setDate(end.getDate() + 6)
+            if (viewDate.getMonth() === end.getMonth())
+                return `${viewDate.getDate()}–${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`
+            return `${viewDate.getDate()} ${MONTHS[viewDate.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`
+        })()
+
+    const EMP_W = 220, TOT_W = 76, CELL_W = viewMode === 'week' ? 110 : 80
+
+    // ─── Render ───────────────────────────────────────────────────────────────
+
+    return (
+        <AppLayout>
+            <div className="flex flex-col h-full overflow-hidden">
+
+                {/* ── Top bar ── */}
+                <div className="shrink-0 flex items-center justify-between gap-4 px-5 py-3 bg-surface border-b border-black/[0.07]">
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-base font-black text-text-dark">Schedule Planner</h1>
+
+                        <div className="flex items-center gap-0.5 ml-2">
+                            <button onClick={() => navigate(-1)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-black/[0.06] text-text-muted transition-colors">
+                                <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                            </button>
+                            <span className="text-sm font-bold text-text-dark px-2 min-w-[220px] text-center">{headerLabel}</span>
+                            <button onClick={() => navigate(1)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-black/[0.06] text-text-muted transition-colors">
+                                <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                            </button>
+                        </div>
+
+                        <button onClick={goToday}
+                            className="text-xs font-bold text-primary border border-primary/40 px-3 py-1 rounded-lg hover:bg-primary/5 transition-colors">
+                            Today
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <div className="relative">
+                            <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[15px]">search</span>
+                            <input type="text" placeholder="Search employees…" value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                className="pl-8 pr-3 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20 w-44" />
+                        </div>
+                        <div className="flex bg-black/[0.04] rounded-xl p-0.5 gap-0.5">
+                            {(['week', 'month'] as const).map(m => (
+                                <button key={m} onClick={() => switchMode(m)}
+                                    className={`px-4 py-1.5 text-[11px] font-bold rounded-[10px] capitalize transition-all
+                                        ${viewMode === m ? 'bg-surface shadow text-text-dark' : 'text-text-muted hover:text-text-dark'}`}>
+                                    {m === 'week' ? 'Week' : 'Month'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* ── Grid ── */}
+                {loading ? (
+                    <div className="flex-1 flex items-center justify-center text-text-muted text-sm gap-2">
+                        <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>Loading…
+                    </div>
+                ) : schedules.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-3">
+                        <span className="material-symbols-outlined text-5xl">calendar_month</span>
+                        <p className="text-sm font-bold">No work schedules found</p>
+                        <p className="text-xs">Create schedules in Work Hours → Schedules tab first</p>
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-auto">
+                        <table className="border-collapse"
+                            style={{ tableLayout: 'fixed', minWidth: EMP_W + TOT_W + columns.length * CELL_W }}>
+                            <colgroup>
+                                <col style={{ width: EMP_W }} />
+                                <col style={{ width: TOT_W }} />
+                                {columns.map(c => <col key={c.key} style={{ width: CELL_W }} />)}
+                            </colgroup>
+
+                            {/* ── Header ── */}
+                            <thead>
+                                <tr className="bg-surface" style={{ boxShadow: '0 1px 0 rgba(0,0,0,0.08)' }}>
+                                    <th className="text-left px-4 py-3 border-r border-black/[0.07]"
+                                        style={{ position: 'sticky', left: 0, background: '#fff', zIndex: 20 }}>
+                                        <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">
+                                            Employees
+                                            {filtered.length > 0 && (
+                                                <span className="ml-2 text-primary bg-primary/10 px-1.5 py-0.5 rounded-md font-black">
+                                                    {filtered.length}
+                                                </span>
+                                            )}
+                                        </span>
+                                    </th>
+                                    <th className="text-center py-3 border-r border-black/[0.07]"
+                                        style={{ position: 'sticky', left: EMP_W, background: '#fff', zIndex: 20 }}>
+                                        <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Total</span>
+                                    </th>
+                                    {columns.map(col => (
+                                        <th key={col.key}
+                                            className={`text-center py-2.5 px-1 border-r border-black/[0.05] last:border-r-0
+                                                ${col.isWeekend ? 'bg-rose-50/70' : 'bg-surface'}
+                                                ${col.isToday ? '!bg-primary/10' : ''}`}>
+                                            <span className={`block text-base font-black leading-tight
+                                                ${col.isToday ? 'text-primary' : col.isWeekend ? 'text-rose-400' : 'text-text-dark'}`}>
+                                                {col.dayNum}
+                                            </span>
+                                            <span className={`text-[9px] font-black uppercase tracking-[0.15em]
+                                                ${col.isToday ? 'text-primary' : col.isWeekend ? 'text-rose-400' : 'text-text-muted'}`}>
+                                                {col.dayLabel}
+                                            </span>
+                                            {col.isToday && (
+                                                <span className="block w-1 h-1 rounded-full bg-primary mx-auto mt-0.5" />
+                                            )}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+
+                            {/* ── Body ── */}
+                            <tbody>
+                                {filtered.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={2 + columns.length} className="text-center py-16 text-text-muted text-sm">
+                                            {(data?.employees.length ?? 0) === 0
+                                                ? 'No active employees found.'
+                                                : 'No employees match your search.'}
+                                        </td>
+                                    </tr>
+                                ) : filtered.map((emp, idx) => {
+                                    const { days: wDays, hours: wHours } = computeTotals(emp)
+                                    const hasPending = (pendingByEmp[emp.employeeId]?.length ?? 0) > 0
+                                    const isSaving = savingEmpId === emp.employeeId
+                                    const rowBg = idx % 2 === 0 ? '#ffffff' : '#fafafa'
+
+                                    return (
+                                        <tr key={emp.employeeId} style={{ backgroundColor: rowBg }}
+                                            className={`border-b border-black/[0.05] group/row
+                                                ${hasPending ? 'outline outline-2 outline-primary/20 outline-offset-[-1px]' : ''}`}>
+
+                                            {/* Employee */}
+                                            <td className="px-3 py-2 border-r border-black/[0.07]"
+                                                style={{ position: 'sticky', left: 0, backgroundColor: rowBg, zIndex: 10 }}>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-primary font-black text-[10px] shrink-0 uppercase">
+                                                        {emp.employeeName.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                                                    </div>
+                                                    <p className="text-xs font-bold text-text-dark truncate flex-1 min-w-0">
+                                                        {emp.employeeName}
+                                                    </p>
+                                                    {hasPending && (
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <button onClick={() => discard(emp.employeeId)}
+                                                                className="w-5 h-5 flex items-center justify-center rounded text-text-muted hover:text-rose-500 hover:bg-rose-50 transition-colors text-[10px]">
+                                                                ✕
+                                                            </button>
+                                                            <button onClick={() => saveEmployee(emp.employeeId)}
+                                                                disabled={isSaving}
+                                                                className="text-[10px] font-black text-white bg-primary px-2 py-0.5 rounded-md hover:bg-primary/80 disabled:opacity-50 transition-colors flex items-center gap-1">
+                                                                {isSaving && <span className="material-symbols-outlined text-[10px] animate-spin">progress_activity</span>}
+                                                                Save
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+
+                                            {/* Total */}
+                                            <td className="px-2 py-2 text-center border-r border-black/[0.07]"
+                                                style={{ position: 'sticky', left: EMP_W, backgroundColor: rowBg, zIndex: 10 }}>
+                                                <p className="text-sm font-black text-text-dark">{wDays}</p>
+                                                <p className="text-[10px] text-text-muted">{wHours} h</p>
+                                            </td>
+
+                                            {/* Day cells */}
+                                            {columns.map(col => {
+                                                const p = getEffective(emp, col.dateStr)
+                                                const hasShift = !p.isDayOff && !!p.scheduleId
+
+                                                let cellBg = col.isWeekend ? 'rgba(255,240,240,0.4)' : 'transparent'
+                                                if (col.isToday) cellBg = 'rgba(170,154,212,0.08)'
+
+                                                const chipStyle = p.isPending
+                                                    ? { backgroundColor: '#fef3c7', borderColor: '#fcd34d', color: '#92400e', border: '1px solid' }
+                                                    : hasShift
+                                                    ? { backgroundColor: p.color + '1a', borderColor: p.color + '66', color: p.color, border: '1px solid' }
+                                                    : {}
+
+                                                return (
+                                                    <td key={col.key}
+                                                        onClick={() => openModal(emp.employeeId, col.dateStr, col.dayLabel, col.dayNum)}
+                                                        className="border-r border-black/[0.05] last:border-r-0 cursor-pointer p-1 transition-all hover:brightness-95"
+                                                        style={{ backgroundColor: cellBg }}>
+                                                        <div className="flex items-center justify-center" style={{ minHeight: 52 }}>
+                                                            {hasShift ? (
+                                                                <div className="w-full rounded-lg px-1.5 py-1.5 text-center" style={chipStyle}>
+                                                                    <p className="text-[10px] font-black leading-none truncate">{p.scheduleName}</p>
+                                                                    {p.shiftStart && p.shiftEnd && (
+                                                                        <p className="text-[9px] opacity-70 leading-none mt-1">
+                                                                            {p.shiftStart}–{p.shiftEnd}
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            ) : p.isDayOff ? (
+                                                                <span className="text-[11px] text-rose-300 font-bold select-none">OFF</span>
+                                                            ) : (
+                                                                <span className="text-[20px] text-text-muted/15 group-hover/row:text-text-muted/35 transition-colors select-none">+</span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                )
+                                            })}
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* ── Edit Modal ── */}
+            {modal && (() => {
+                const emp = data?.employees.find(e => e.employeeId === modal.empId)
+                return (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 backdrop-blur-[2px]"
+                        onClick={() => setModal(null)}>
+                        <div className="bg-surface rounded-3xl shadow-2xl w-[400px] p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+                            onClick={e => e.stopPropagation()}>
+
+                            {/* Header */}
+                            <div className="flex items-start justify-between">
+                                <div>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-text-muted bg-black/[0.05] px-2 py-0.5 rounded-md">
+                                        {modal.dayLabel} {modal.dayNum} · {modal.dateStr}
+                                    </span>
+                                    <h3 className="text-base font-black text-text-dark mt-1">{emp?.employeeName}</h3>
+                                    <p className="text-[11px] text-text-muted">Only this specific date</p>
+                                </div>
+                                <button onClick={() => setModal(null)}
+                                    className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-black/[0.06] text-text-muted transition-colors">
+                                    <span className="material-symbols-outlined text-[18px]">close</span>
+                                </button>
+                            </div>
+
+                            {/* Day off toggle */}
+                            <label className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors border
+                                ${mDayOff ? 'bg-rose-50 border-rose-200' : 'border-transparent hover:bg-black/[0.04]'}`}>
+                                <input type="checkbox" checked={mDayOff}
+                                    onChange={e => { setMDayOff(e.target.checked); if (e.target.checked) { setMScheduleId(null); setMReset(false) } }}
+                                    className="w-4 h-4 rounded accent-rose-500" />
+                                <div>
+                                    <p className="text-sm font-bold text-text-dark">Mark as day off</p>
+                                    <p className="text-[10px] text-text-muted">No schedule for this date</p>
+                                </div>
+                            </label>
+
+                            {/* Schedule picker */}
+                            {!mDayOff && (
+                                <div className="space-y-2">
+                                    <p className="text-[10px] font-black text-text-muted uppercase tracking-widest px-1">
+                                        Select schedule
+                                    </p>
+                                    <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                                        {schedules.map(s => {
+                                            const selected = mScheduleId === s.id
+                                            return (
+                                                <label key={s.id}
+                                                    className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border
+                                                        ${selected
+                                                            ? 'bg-primary/10 border-primary/40'
+                                                            : 'border-transparent hover:bg-black/[0.04] hover:border-black/10'}`}>
+                                                    <input type="radio" name="schedule" checked={selected}
+                                                        onChange={() => { setMScheduleId(s.id); setMReset(false) }}
+                                                        className="w-4 h-4 accent-primary shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                                                            <p className={`text-sm font-bold truncate ${selected ? 'text-primary' : 'text-text-dark'}`}>
+                                                                {s.name}
+                                                            </p>
+                                                        </div>
+                                                        {s.shiftStart && s.shiftEnd ? (
+                                                            <p className="text-[10px] text-text-muted">
+                                                                {s.shiftStart} – {s.shiftEnd}
+                                                                {' · '}
+                                                                {Math.round((timeToMins(s.shiftEnd) - timeToMins(s.shiftStart)) / 60 * 10) / 10} h
+                                                            </p>
+                                                        ) : (
+                                                            <p className="text-[10px] text-text-muted">
+                                                                Flexible · {s.requiredHoursPerDay} h/day
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    {selected && (
+                                                        <span className="material-symbols-outlined text-primary text-[18px] shrink-0">check_circle</span>
+                                                    )}
+                                                </label>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Reset */}
+                            {mHasExisting && (
+                                <label className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border
+                                    ${mReset ? 'bg-primary/10 border-primary/40' : 'border-transparent hover:bg-black/[0.04]'}`}>
+                                    <input type="checkbox" checked={mReset}
+                                        onChange={e => { setMReset(e.target.checked); if (e.target.checked) { setMDayOff(false); setMScheduleId(null) } }}
+                                        className="w-4 h-4 rounded accent-primary" />
+                                    <div>
+                                        <p className="text-sm font-bold text-text-dark">Clear assignment</p>
+                                        <p className="text-[10px] text-text-muted">Remove schedule for this date</p>
+                                    </div>
+                                </label>
+                            )}
+
+                            {/* Buttons */}
+                            <div className="flex gap-2 pt-1">
+                                <button onClick={() => setModal(null)}
+                                    className="flex-1 py-2.5 text-sm font-bold text-text-muted bg-black/[0.05] rounded-2xl hover:bg-black/[0.08] transition-colors">
+                                    Cancel
+                                </button>
+                                <button onClick={applyModal}
+                                    disabled={!mDayOff && !mScheduleId && !mReset}
+                                    className="flex-1 py-2.5 text-sm font-bold text-white bg-primary rounded-2xl hover:bg-primary/85 disabled:opacity-40 transition-colors">
+                                    Apply
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })()}
+        </AppLayout>
+    )
+}

@@ -63,6 +63,16 @@ public static class DependencyInjection
         services.AddSingleton<IEventListenerService>(provider => provider.GetRequiredService<EventListenerService>());
         services.AddHostedService(provider => provider.GetRequiredService<EventListenerService>());
         services.AddHostedService<IsapiAlertStreamService>();
+        // Polling fallback для устройств у которых alertStream забит многодневным backlog'ом и
+        // realtime событие физически не пробивается. POST /ISAPI/AccessControl/AcsEvent с фильтром
+        // по времени каждые 2 сек. Дубли с alertStream дедуплицируются в EventListenerService.
+        services.AddHostedService<AcsEventPollingService>();
+        // NOTE: IsapiSubscribeEventService is intentionally NOT registered.
+        // Hikvision devices have a single deploy slot per arming mode (deployID=1). The alertStream
+        // service above already holds that slot, so subscribeEvent always returns
+        // HTTP 400 / subStatusCode=deployExceedMax. The two channels cannot coexist.
+        // The class file is kept under Devices/Services/IsapiSubscribeEventService.cs as documented
+        // dead code in case a future refactor needs the subscribeEvent body shapes / variant fallback.
         services.AddSingleton<DeviceArpStatusService>();
         services.AddSingleton<IDeviceArpStatusService>(provider => provider.GetRequiredService<DeviceArpStatusService>());
         services.AddHostedService(provider => provider.GetRequiredService<DeviceArpStatusService>());
@@ -80,6 +90,8 @@ public static class DependencyInjection
         services.AddScoped<IDeviceFaceCaptureService, DeviceFaceCaptureService>();
         services.AddScoped<IDeviceCardCaptureService, DeviceCardCaptureService>();
         services.AddScoped<IDeviceFingerprintCaptureService, DeviceFingerprintCaptureService>();
+        services.AddScoped<IDeviceLocalizationService, DeviceLocalizationService>();
+        services.AddHostedService<TimeSyncSchedulerService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();

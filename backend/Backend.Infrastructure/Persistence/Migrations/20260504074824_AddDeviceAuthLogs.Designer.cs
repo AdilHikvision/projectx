@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260504074824_AddDeviceAuthLogs")]
+    partial class AddDeviceAuthLogs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -69,45 +72,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("access_level_doors", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.AttendanceCorrection", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CheckInUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime?>("CheckOutUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Comment")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid?>("CorrectedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("DateUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EmployeeId", "DateUtc")
-                        .IsUnique();
-
-                    b.ToTable("attendance_corrections", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.AttendanceRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -161,15 +125,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("GeoZoneName")
-                        .HasColumnType("text");
-
-                    b.Property<double?>("Latitude")
-                        .HasColumnType("double precision");
-
-                    b.Property<double?>("Longitude")
-                        .HasColumnType("double precision");
-
                     b.Property<DateTime?>("RequestedEndTimeUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -216,10 +171,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<string>("CardNumber")
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
-
-                    b.Property<string>("CardType")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -570,108 +521,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("employee_access_levels", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeDayPattern", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateOnly>("Date")
-                        .HasColumnType("date");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<bool>("IsDayOff")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("WorkScheduleId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("WorkScheduleId");
-
-                    b.HasIndex("EmployeeId", "Date")
-                        .IsUnique();
-
-                    b.ToTable("employee_day_patterns", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeePayrollComponent", b =>
-                {
-                    b.Property<Guid>("SalaryConfigId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ComponentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal?>("OverrideAmount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal?>("OverridePercentage")
-                        .HasPrecision(7, 4)
-                        .HasColumnType("numeric(7,4)");
-
-                    b.HasKey("SalaryConfigId", "ComponentId");
-
-                    b.HasIndex("ComponentId");
-
-                    b.ToTable("employee_payroll_components", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeSalaryConfig", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("BaseAmount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasDefaultValue("AZN");
-
-                    b.Property<DateOnly>("EffectiveFrom")
-                        .HasColumnType("date");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("OvertimeMultiplier")
-                        .ValueGeneratedOnAdd()
-                        .HasPrecision(5, 2)
-                        .HasColumnType("numeric(5,2)")
-                        .HasDefaultValue(1.5m);
-
-                    b.Property<int>("SalaryType")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EmployeeId");
-
-                    b.ToTable("employee_salary_configs", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.Face", b =>
                 {
                     b.Property<Guid>("Id")
@@ -747,40 +596,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         });
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GeoZone", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<double>("Latitude")
-                        .HasColumnType("double precision");
-
-                    b.Property<double>("Longitude")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<int>("RadiusMeters")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("geo_zones", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.Iris", b =>
                 {
                     b.Property<Guid>("Id")
@@ -816,182 +631,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_Irises_Owner", "(\"EmployeeId\" IS NOT NULL AND \"VisitorId\" IS NULL) OR (\"EmployeeId\" IS NULL AND \"VisitorId\" IS NOT NULL)");
                         });
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<int>("ComponentType")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsFixed")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<decimal>("Percentage")
-                        .HasPrecision(7, 4)
-                        .HasColumnType("numeric(7,4)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("payroll_components", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("AbsentDays")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("AllowancesTotal")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal>("BasePay")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal>("BonusesTotal")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<string>("ComponentsJson")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("DeductionsTotal")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<Guid>("EmployeeId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("GrossPay")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal>("NetPay")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<decimal>("OvertimeHours")
-                        .HasPrecision(8, 2)
-                        .HasColumnType("numeric(8,2)");
-
-                    b.Property<decimal>("OvertimePay")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<Guid>("PeriodId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("TaxAmount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal>("TaxRate")
-                        .HasPrecision(5, 2)
-                        .HasColumnType("numeric(5,2)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("WorkedDays")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("WorkedHours")
-                        .HasPrecision(8, 2)
-                        .HasColumnType("numeric(8,2)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EmployeeId");
-
-                    b.HasIndex("PeriodId", "EmployeeId")
-                        .IsUnique();
-
-                    b.ToTable("payroll_entries", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollPeriod", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("ApprovedByUserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("CalculatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Month")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Year")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Year", "Month")
-                        .IsUnique();
-
-                    b.ToTable("payroll_periods", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.SystemSetting", b =>
@@ -1103,13 +742,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
-
-                    b.Property<string>("Color")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(7)
-                        .HasColumnType("character varying(7)")
-                        .HasDefaultValue("#6366f1");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1368,17 +1000,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Device");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.AttendanceCorrection", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.Employee", "Employee")
-                        .WithMany()
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Employee");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.AttendanceRecord", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.Employee", "Employee")
@@ -1499,54 +1120,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Employee");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeDayPattern", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.Employee", "Employee")
-                        .WithMany("DayPatterns")
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Backend.Domain.Entities.WorkSchedule", "WorkSchedule")
-                        .WithMany()
-                        .HasForeignKey("WorkScheduleId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Employee");
-
-                    b.Navigation("WorkSchedule");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeePayrollComponent", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.PayrollComponent", "Component")
-                        .WithMany("EmployeeComponents")
-                        .HasForeignKey("ComponentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Backend.Domain.Entities.EmployeeSalaryConfig", "SalaryConfig")
-                        .WithMany("Components")
-                        .HasForeignKey("SalaryConfigId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Component");
-
-                    b.Navigation("SalaryConfig");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeSalaryConfig", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.Employee", "Employee")
-                        .WithMany()
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Employee");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.Face", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.Employee", "Employee")
@@ -1596,25 +1169,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Employee");
 
                     b.Navigation("Visitor");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.Employee", "Employee")
-                        .WithMany()
-                        .HasForeignKey("EmployeeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Backend.Domain.Entities.PayrollPeriod", "Period")
-                        .WithMany("Entries")
-                        .HasForeignKey("PeriodId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Employee");
-
-                    b.Navigation("Period");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.Visitor", b =>
@@ -1751,28 +1305,11 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Cards");
 
-                    b.Navigation("DayPatterns");
-
                     b.Navigation("Faces");
 
                     b.Navigation("Fingerprints");
 
                     b.Navigation("Irises");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.EmployeeSalaryConfig", b =>
-                {
-                    b.Navigation("Components");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>
-                {
-                    b.Navigation("EmployeeComponents");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.PayrollPeriod", b =>
-                {
-                    b.Navigation("Entries");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.Visitor", b =>

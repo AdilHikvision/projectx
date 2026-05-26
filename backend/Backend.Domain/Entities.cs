@@ -141,6 +141,7 @@ public sealed class Employee : BaseEntity
     public ICollection<Iris> Irises { get; set; } = new List<Iris>();
     public ICollection<AttendanceRecord> AttendanceRecords { get; set; } = new List<AttendanceRecord>();
     public ICollection<AttendanceRequest> AttendanceRequests { get; set; } = new List<AttendanceRequest>();
+    public ICollection<EmployeeDayPattern> DayPatterns { get; set; } = new List<EmployeeDayPattern>();
 }
 
 public sealed class Visitor : BaseEntity
@@ -179,6 +180,8 @@ public sealed class Card : BaseEntity
     public string CardNo { get; set; } = string.Empty;
     /// <summary>Сырой номер карты (Wiegand и т.п.), опционально.</summary>
     public string? CardNumber { get; set; }
+    /// <summary>Тип карты для ISAPI: normalCard, qrCode и т.д. Null = normalCard.</summary>
+    public string? CardType { get; set; }
 }
 
 /// <summary>Лицо для распознавания, привязанное к сотруднику или посетителю.</summary>
@@ -252,7 +255,58 @@ public sealed class WorkSchedule : BaseEntity
     public TimeSpan? ShiftEnd { get; set; }
     /// <summary>Норма часов в день (для Flexible).</summary>
     public decimal RequiredHoursPerDay { get; set; } = 8;
+    /// <summary>Hex-цвет для отображения в планнере, например #6366f1.</summary>
+    public string Color { get; set; } = "#6366f1";
     public ICollection<Employee> Employees { get; set; } = [];
+}
+
+/// <summary>
+/// Назначение рабочего графика сотруднику на конкретную дату.
+/// Уникален по (EmployeeId, Date).
+/// </summary>
+public sealed class EmployeeDayPattern : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    /// <summary>Конкретная дата назначения (UTC, время = 00:00:00).</summary>
+    public DateOnly Date { get; set; }
+    /// <summary>Назначенный график (если null — выходной или не назначен).</summary>
+    public Guid? WorkScheduleId { get; set; }
+    public WorkSchedule? WorkSchedule { get; set; }
+    public bool IsDayOff { get; set; }
+}
+
+/// <summary>
+/// Сырой лог успешной аутентификации с устройства. Не привязан FK к Employee — храним
+/// то, что прислало устройство (employeeNoString + name), независимо от регистрации в
+/// нашей таблице сотрудников. Daily-отчёт уже на чтении джоинит с Employees по
+/// EmployeeNoString и фильтрует по WorkSchedule.
+/// </summary>
+public sealed class DeviceAuthLog : BaseEntity
+{
+    public Guid? DeviceId { get; set; }
+    public Device? Device { get; set; }
+    public string EmployeeNoString { get; set; } = "";
+    public string? Name { get; set; }
+    public DateTime EventTimeUtc { get; set; }
+    public int Major { get; set; }
+    public int Minor { get; set; }
+}
+
+/// <summary>
+/// Ручная корректировка check-in/check-out за конкретный день для конкретного сотрудника.
+/// Перекрывает значения, посчитанные из device_auth_logs. Уникальна по (EmployeeId, Date).
+/// </summary>
+public sealed class AttendanceCorrection : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    /// <summary>UTC midnight выбранного дня.</summary>
+    public DateTime DateUtc { get; set; }
+    public DateTime? CheckInUtc { get; set; }
+    public DateTime? CheckOutUtc { get; set; }
+    public string? Comment { get; set; }
+    public Guid? CorrectedByUserId { get; set; }
 }
 
 public enum AttendanceEventType { In, Out }
@@ -269,7 +323,21 @@ public sealed class AttendanceRecord : BaseEntity
     public string Source { get; set; } = "device";
 }
 
-public enum AttendanceRequestType { CheckIn, CheckOut, Absence, Vacation, Overtime }
+public enum AttendanceRequestType { CheckIn, CheckOut, Absence, Vacation, Overtime, Correction }
+
+/// <summary>
+/// Гео-зона для регистрации входа/выхода. Если координаты сотрудника попадают в радиус
+/// любой активной зоны при отправке Check-in/Check-out request — заявка авто-аппрувится.
+/// Иначе уходит в Pending на решение админа.
+/// </summary>
+public sealed class GeoZone : BaseEntity
+{
+    public string Name { get; set; } = "";
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+    public int RadiusMeters { get; set; } = 100;
+    public bool IsActive { get; set; } = true;
+}
 public enum AttendanceRequestStatus { Pending, Approved, Rejected }
 
 /// <summary>Заявка сотрудника: приход/уход/отсутствие/отпуск/переработка.</summary>
@@ -285,6 +353,11 @@ public sealed class AttendanceRequest : BaseEntity
     public Guid? ReviewedByUserId { get; set; }
     public DateTime? ReviewedAtUtc { get; set; }
     public string? ReviewComment { get; set; }
+    /// <summary>Координаты, отправленные сотрудником из браузера (опционально).</summary>
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    /// <summary>Имя GeoZone, в которую попали координаты (если попали).</summary>
+    public string? GeoZoneName { get; set; }
 }
 
 public sealed class VisitorAccessLevel
@@ -297,4 +370,91 @@ public sealed class VisitorAccessLevel
 
     public DateTime GrantedFromUtc { get; set; } = DateTime.UtcNow;
     public DateTime? GrantedToUtc { get; set; }
+}
+
+// ─── Payroll ───────────────────────────────────────────────────────────────────
+
+public enum PayrollComponentType { Allowance, Bonus, Deduction }
+public enum SalaryType { Monthly, Hourly, Daily }
+public enum PayrollPeriodStatus { Draft, Calculated, Approved, Paid }
+public enum PayrollEntryStatus { Pending, Approved, Rejected }
+
+/// <summary>Шаблон компонента начисления/удержания (применяется ко всем или конкретным сотрудникам).</summary>
+public sealed class PayrollComponent : BaseEntity
+{
+    public string Name { get; set; } = "";
+    public PayrollComponentType ComponentType { get; set; }
+    /// <summary>true — фиксированная сумма, false — процент от базовой зарплаты.</summary>
+    public bool IsFixed { get; set; } = true;
+    public decimal Amount { get; set; }
+    public decimal Percentage { get; set; }
+    /// <summary>Применять автоматически ко всем сотрудникам при расчёте.</summary>
+    public bool IsDefault { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string? Description { get; set; }
+    public ICollection<EmployeePayrollComponent> EmployeeComponents { get; set; } = [];
+}
+
+/// <summary>Конфигурация зарплаты конкретного сотрудника.</summary>
+public sealed class EmployeeSalaryConfig : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public SalaryType SalaryType { get; set; } = SalaryType.Monthly;
+    /// <summary>Базовый оклад (в месяц или в час, в зависимости от SalaryType).</summary>
+    public decimal BaseAmount { get; set; }
+    public string Currency { get; set; } = "AZN";
+    public decimal OvertimeMultiplier { get; set; } = 1.5m;
+    public DateOnly EffectiveFrom { get; set; }
+    public ICollection<EmployeePayrollComponent> Components { get; set; } = [];
+}
+
+/// <summary>Компонент зарплаты, индивидуально назначенный сотруднику (возможен override суммы).</summary>
+public sealed class EmployeePayrollComponent
+{
+    public Guid SalaryConfigId { get; set; }
+    public EmployeeSalaryConfig SalaryConfig { get; set; } = null!;
+    public Guid ComponentId { get; set; }
+    public PayrollComponent Component { get; set; } = null!;
+    public decimal? OverrideAmount { get; set; }
+    public decimal? OverridePercentage { get; set; }
+}
+
+/// <summary>Расчётный период (один календарный месяц).</summary>
+public sealed class PayrollPeriod : BaseEntity
+{
+    public int Year { get; set; }
+    public int Month { get; set; }
+    public PayrollPeriodStatus Status { get; set; } = PayrollPeriodStatus.Draft;
+    public DateTime? CalculatedAt { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+    public Guid? ApprovedByUserId { get; set; }
+    public string? Notes { get; set; }
+    public ICollection<PayrollEntry> Entries { get; set; } = [];
+}
+
+/// <summary>Строка расчёта зарплаты для одного сотрудника за период.</summary>
+public sealed class PayrollEntry : BaseEntity
+{
+    public Guid PeriodId { get; set; }
+    public PayrollPeriod Period { get; set; } = null!;
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public int WorkedDays { get; set; }
+    public decimal WorkedHours { get; set; }
+    public decimal OvertimeHours { get; set; }
+    public int AbsentDays { get; set; }
+    public decimal BasePay { get; set; }
+    public decimal OvertimePay { get; set; }
+    public decimal AllowancesTotal { get; set; }
+    public decimal BonusesTotal { get; set; }
+    public decimal GrossPay { get; set; }
+    public decimal DeductionsTotal { get; set; }
+    public decimal TaxRate { get; set; }
+    public decimal TaxAmount { get; set; }
+    public decimal NetPay { get; set; }
+    public PayrollEntryStatus Status { get; set; } = PayrollEntryStatus.Pending;
+    public string? Notes { get; set; }
+    /// <summary>JSON-снимок применённых компонентов на момент расчёта.</summary>
+    public string? ComponentsJson { get; set; }
 }

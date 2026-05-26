@@ -8,8 +8,8 @@ export default defineConfig({
   // host: true — все интерфейсы (доступ с LAN по IP сервера). Порт 80 на Windows часто нужны права администратора.
   server: {
     host: true,
-    port: 80,
-    strictPort: true,
+    port: 5173,
+    strictPort: false,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5154',

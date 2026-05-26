@@ -1,4 +1,3 @@
-import { Button } from '../../atoms';
 import { NavItem } from '../../molecules';
 
 export function Sidebar() {
@@ -20,6 +19,9 @@ export function Sidebar() {
                 <NavItem to="/monitoring" icon="monitor_heart" label="Monitoring" />
                 <NavItem to="/access-levels" icon="admin_panel_settings" label="Access Levels" />
                 <NavItem to="/work-hours" icon="schedule" label="Work Hours" />
+                <NavItem to="/schedule-planner" icon="calendar_month" label="Schedule Planner" />
+                <NavItem to="/approvals" icon="approval" label="Approvals" />
+                <NavItem to="/geo-zones" icon="my_location" label="Geo-zones" />
                 <NavItem to="/payroll" icon="payments" label="Payroll" />
             </nav>
 
@@ -31,14 +33,6 @@ export function Sidebar() {
                 </nav>
             </div>
 
-            {/* Pro Plan Badge */}
-            <div className="mx-3 p-4 bg-primary/5 rounded-xl border-none shadow-sm">
-                <p className="text-xs font-extrabold text-primary-dark uppercase tracking-wider mb-2">PRO PLAN</p>
-                <p className="text-xs text-text-muted leading-relaxed mb-3">Access advanced scheduling & visitor management.</p>
-                <Button fullWidth size="sm" icon="rocket_launch">
-                    Upgrade Now
-                </Button>
-            </div>
         </aside>
     );
 }

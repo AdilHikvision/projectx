@@ -61,10 +61,9 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:5174", "http://localhost:5154", "http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://127.0.0.1:5154")
+        policy.AllowAnyOrigin()
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
     });
 });
 builder.Services.AddSignalR().AddJsonProtocol(options =>
@@ -263,13 +262,10 @@ app.MapPost("/api/auth/login", async (
 
 app.MapGet("/api/auth/setup-required", async (UserManager<ApplicationUser> userManager, CancellationToken cancellationToken) =>
 {
-    var hasUsers = await userManager.Users.AnyAsync(cancellationToken);
-    if (!hasUsers)
+    var adminUsers = await userManager.GetUsersInRoleAsync(SystemRoles.Admin);
+    if (adminUsers.Count == 0)
         return Results.Ok(new { required = true, email = "" });
-    var adminWithSetup = await userManager.Users
-        .Where(u => u.RequiresPasswordSetup)
-        .Select(u => new { u.Email })
-        .FirstOrDefaultAsync(cancellationToken);
+    var adminWithSetup = adminUsers.FirstOrDefault(u => u.RequiresPasswordSetup);
     if (adminWithSetup is null)
         return Results.Ok(new { required = false });
     return Results.Ok(new { required = true, email = adminWithSetup.Email ?? "" });
@@ -496,6 +492,82 @@ app.MapPost("/api/devices/{deviceId:guid}/doors/{doorIndex:int}/control", async 
     var (success, message) = await doorControlService.ControlDoorAsync(
         deviceId, doorIndex, action.Value, request.CallNumber, request.CallElevatorType, cancellationToken);
     return success ? Results.Ok(new { success = true }) : Results.BadRequest(new { message = message ?? "Command failed." });
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/{deviceId:guid}/time", async (
+    Guid deviceId,
+    IDeviceLocalizationService localizationService,
+    CancellationToken cancellationToken) =>
+{
+    var info = await localizationService.GetDeviceTimeAsync(deviceId, cancellationToken);
+    return Results.Ok(info);
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/{deviceId:guid}/time/sync", async (
+    Guid deviceId,
+    DeviceTimeSyncRequest request,
+    IDeviceLocalizationService localizationService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.TimeZone))
+        return Results.BadRequest(new { message = "TimeZone is required." });
+    var result = await localizationService.SyncDeviceAsync(deviceId, DateTime.UtcNow, request.TimeZone, cancellationToken);
+    return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/time/sync-all", async (
+    DeviceTimeSyncRequest request,
+    IDeviceLocalizationService localizationService,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.TimeZone))
+        return Results.BadRequest(new { message = "TimeZone is required." });
+    var results = await localizationService.SyncAllDevicesAsync(DateTime.UtcNow, request.TimeZone, cancellationToken);
+    var successCount = results.Count(r => r.Success);
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncLastRunUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture), cancellationToken);
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncLastSuccessCount", successCount.ToString(CultureInfo.InvariantCulture), cancellationToken);
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncLastTotal", results.Count.ToString(CultureInfo.InvariantCulture), cancellationToken);
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncLastRunKind", "manual", cancellationToken);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { total = results.Count, successCount, results });
+}).RequireAuthorization();
+
+app.MapGet("/api/devices/time/schedule", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var keys = new[] { "TimeSyncAutoEnabled", "TimeSyncDailyTime", "TimeSyncTimeZone", "TimeSyncLastRunUtc", "TimeSyncLastSuccessCount", "TimeSyncLastTotal", "TimeSyncLastRunKind" };
+    var list = await dbContext.SystemSettings.AsNoTracking().Where(x => keys.Contains(x.Key)).ToListAsync(cancellationToken);
+    var map = list.ToDictionary(x => x.Key, x => x.Value);
+    var auto = string.Equals(map.GetValueOrDefault("TimeSyncAutoEnabled"), "true", StringComparison.OrdinalIgnoreCase);
+    var daily = map.GetValueOrDefault("TimeSyncDailyTime") ?? "03:00";
+    var tz = map.GetValueOrDefault("TimeSyncTimeZone");
+    DateTime? lastRunUtc = null;
+    if (map.TryGetValue("TimeSyncLastRunUtc", out var lru) && !string.IsNullOrWhiteSpace(lru) && DateTime.TryParse(lru, null, DateTimeStyles.RoundtripKind, out var dt))
+        lastRunUtc = dt.ToUniversalTime();
+    int? lastSuccess = null;
+    if (map.TryGetValue("TimeSyncLastSuccessCount", out var ls) && int.TryParse(ls, NumberStyles.Integer, CultureInfo.InvariantCulture, out var lsi))
+        lastSuccess = lsi;
+    int? lastTotal = null;
+    if (map.TryGetValue("TimeSyncLastTotal", out var lt) && int.TryParse(lt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var lti))
+        lastTotal = lti;
+    var kind = map.GetValueOrDefault("TimeSyncLastRunKind");
+    return Results.Ok(new TimeSyncScheduleResponse(auto, daily, tz, lastRunUtc, lastSuccess, lastTotal, kind));
+}).RequireAuthorization();
+
+app.MapPost("/api/devices/time/schedule", async (TimeSyncScheduleRequest req, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var daily = (req.DailyTimeLocal ?? "03:00").Trim();
+    if (!TryParseHHmmLogSync(daily, out _, out _))
+        return Results.BadRequest(new { message = "DailyTimeLocal: формат HH:mm (24 часа)." });
+    daily = NormalizeHHmmLogSync(daily);
+    if (req.AutoEnabled && string.IsNullOrWhiteSpace(req.TimeZone))
+        return Results.BadRequest(new { message = "TimeZone обязателен при включённом расписании." });
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncAutoEnabled", req.AutoEnabled ? "true" : "false", cancellationToken);
+    await UpsertLogSyncSettingAsync(dbContext, "TimeSyncDailyTime", daily, cancellationToken);
+    if (!string.IsNullOrWhiteSpace(req.TimeZone))
+        await UpsertLogSyncSettingAsync(dbContext, "TimeSyncTimeZone", req.TimeZone.Trim(), cancellationToken);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { message = "Сохранено." });
 }).RequireAuthorization();
 
 app.MapGet("/api/devices", async (
@@ -1503,13 +1575,30 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     return Results.Created($"/api/employees/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.EmployeeNo, createdResp.Gender, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.OnlyVerify, createdResp.Department, createdResp.CompanyId, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, createdResp.Irises, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
-app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, UserManager<ApplicationUser> userManager, ILogger<Program> logger, CancellationToken cancellationToken) =>
+app.MapPut("/api/employees/{id:guid}", async (
+    Guid id,
+    UpdateEmployeeRequest request,
+    AppDbContext dbContext,
+    IDevicePersonSyncService syncService,
+    IDeviceConnectionManager connectionManager,
+    IDeviceActivityBroadcaster activityBroadcaster,
+    UserManager<ApplicationUser> userManager,
+    HttpRequest httpRequest,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
 {
     var entity = await dbContext.Employees
         .Include(e => e.AccessLevels)
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
+
+    // The frontend generates an X-Sync-Id per save operation so it can match SignalR
+    // PersonSyncProgress events to its own progress bar (and ignore syncs from other tabs).
+    // If absent we still run the sync; the broadcasts just won't be paired with a UI.
+    var syncId = httpRequest.Headers.TryGetValue("X-Sync-Id", out var sidVals) && !string.IsNullOrWhiteSpace(sidVals.ToString())
+        ? sidVals.ToString()
+        : Guid.NewGuid().ToString("N");
 
     var firstName = (request.FirstName ?? "").Trim();
     var lastName = (request.LastName ?? "").Trim();
@@ -1549,7 +1638,9 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
                 EmailConfirmed = true,
                 FirstName = entity.FirstName,
                 LastName = entity.LastName,
-                EmployeeId = entity.Id
+                EmployeeId = entity.Id,
+                // Сгенерированный пароль — при первом входе сотрудник обязан сменить.
+                RequiresPasswordSetup = true
             };
             var createResult = await userManager.CreateAsync(newUser, tempPassword);
             if (createResult.Succeeded)
@@ -1594,39 +1685,25 @@ app.MapPut("/api/employees/{id:guid}", async (Guid id, UpdateEmployeeRequest req
             .Distinct()
             .ToListAsync(cancellationToken)
         : [];
-    var syncWarnings = new List<string>();
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
     // Sync employee + credentials (face, fingerprints, cards) to devices from access levels
     var empFaces = await dbContext.Faces.Where(f => f.EmployeeId == id).ToListAsync(cancellationToken);
     var empFingerprints = await dbContext.Fingerprints.Where(f => f.EmployeeId == id).ToListAsync(cancellationToken);
     var empCards = await dbContext.Cards.Where(c => c.EmployeeId == id).ToListAsync(cancellationToken);
-    foreach (var deviceId in deviceIds)
-    {
-        var result = await syncService.SyncEmployeeAsync(id, deviceId, cancellationToken);
-        if (!result.Success && devices.TryGetValue(deviceId, out var dev))
-        {
-            syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
-            logger.LogWarning("Синхронизация сотрудника {EmployeeId} на устройство {DeviceId}: {Message}", id, deviceId, result.Message);
-        }
-        foreach (var face in empFaces)
-        {
-            var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
-            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Лицо → \"{d.Name}\": {fr.Message}");
-        }
-        foreach (var fp in empFingerprints)
-        {
-            var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
-            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Отпечаток → \"{d.Name}\": {fr.Message}");
-        }
-        foreach (var card in empCards)
-        {
-            var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
-            if (!cr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Карта → \"{d.Name}\": {cr.Message}");
-        }
-    }
+    var syncWarnings = await SyncPersonToDevicesWithProgressAsync(
+        syncId,
+        id,
+        isEmployee: true,
+        deviceIds,
+        empFaces,
+        empFingerprints,
+        empCards,
+        devices,
+        syncService,
+        connectionManager,
+        activityBroadcaster,
+        logger,
+        cancellationToken);
 
     var updated = await dbContext.Employees
         .Include(e => e.AccessLevels).ThenInclude(a => a.AccessLevel)
@@ -1838,6 +1915,16 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
                 dbContext.VisitorAccessLevels.Add(new VisitorAccessLevel { VisitorId = entity.Id, AccessLevelId = alId });
         }
     }
+    // Авто-генерация QR-карты для входа через устройства Hikvision
+    var qrCard = new Card
+    {
+        Id = Guid.NewGuid(),
+        VisitorId = entity.Id,
+        CardNo = Guid.NewGuid().ToString("N")[..20],
+        CardType = "qrCode",
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.Cards.Add(qrCard);
     await dbContext.SaveChangesAsync(cancellationToken);
 
     var deviceIds = request.AccessLevelIds?.Length > 0
@@ -1857,6 +1944,13 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
             syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
             logger.LogWarning("Синхронизация посетителя {VisitorId} на устройство {DeviceId}: {Message}", entity.Id, deviceId, result.Message);
         }
+        else
+        {
+            // Синхронизируем QR-карту на устройство
+            var cardResult = await syncService.SyncCardAsync(qrCard.Id, deviceId, cancellationToken);
+            if (!cardResult.Success && devices.TryGetValue(deviceId, out var cardDev))
+                logger.LogWarning("Синхронизация QR-карты посетителя {VisitorId} на устройство {DeviceId}: {Message}", entity.Id, deviceId, cardResult.Message);
+        }
     }
 
     var created = await dbContext.Visitors
@@ -1868,13 +1962,26 @@ app.MapPost("/api/visitors", async (CreateVisitorRequest request, AppDbContext d
     return Results.Created($"/api/visitors/{entity.Id}", new { createdResp.Id, createdResp.FirstName, createdResp.LastName, createdResp.DocumentNumber, createdResp.ValidFromUtc, createdResp.ValidToUtc, createdResp.IsActive, createdResp.Department, createdResp.CompanyId, createdResp.AccessLevels, createdResp.Cards, createdResp.Faces, createdResp.Fingerprints, createdResp.Irises, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null });
 }).RequireAuthorization();
 
-app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, ILogger<Program> logger, CancellationToken cancellationToken) =>
+app.MapPut("/api/visitors/{id:guid}", async (
+    Guid id,
+    UpdateVisitorRequest request,
+    AppDbContext dbContext,
+    IDevicePersonSyncService syncService,
+    IDeviceConnectionManager connectionManager,
+    IDeviceActivityBroadcaster activityBroadcaster,
+    HttpRequest httpRequest,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
 {
     var entity = await dbContext.Visitors
         .Include(v => v.AccessLevels)
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null)
         return Results.NotFound();
+
+    var syncId = httpRequest.Headers.TryGetValue("X-Sync-Id", out var sidVals) && !string.IsNullOrWhiteSpace(sidVals.ToString())
+        ? sidVals.ToString()
+        : Guid.NewGuid().ToString("N");
 
     var firstName = (request.FirstName ?? "").Trim();
     var lastName = (request.LastName ?? "").Trim();
@@ -1912,39 +2019,25 @@ app.MapPut("/api/visitors/{id:guid}", async (Guid id, UpdateVisitorRequest reque
             .Distinct()
             .ToListAsync(cancellationToken)
         : [];
-    var syncWarnings = new List<string>();
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
     // Sync visitor + credentials (face, fingerprints, cards) to devices from access levels
     var visFaces = await dbContext.Faces.Where(f => f.VisitorId == id).ToListAsync(cancellationToken);
     var visFingerprints = await dbContext.Fingerprints.Where(f => f.VisitorId == id).ToListAsync(cancellationToken);
     var visCards = await dbContext.Cards.Where(c => c.VisitorId == id).ToListAsync(cancellationToken);
-    foreach (var deviceId in deviceIds)
-    {
-        var result = await syncService.SyncVisitorAsync(id, deviceId, cancellationToken);
-        if (!result.Success && devices.TryGetValue(deviceId, out var dev))
-        {
-            syncWarnings.Add($"Устройство \"{dev.Name}\": {result.Message}");
-            logger.LogWarning("Синхронизация посетителя {VisitorId} на устройство {DeviceId}: {Message}", id, deviceId, result.Message);
-        }
-        foreach (var face in visFaces)
-        {
-            var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
-            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Лицо → \"{d.Name}\": {fr.Message}");
-        }
-        foreach (var fp in visFingerprints)
-        {
-            var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
-            if (!fr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Отпечаток → \"{d.Name}\": {fr.Message}");
-        }
-        foreach (var card in visCards)
-        {
-            var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
-            if (!cr.Success && devices.TryGetValue(deviceId, out var d))
-                syncWarnings.Add($"Карта → \"{d.Name}\": {cr.Message}");
-        }
-    }
+    var syncWarnings = await SyncPersonToDevicesWithProgressAsync(
+        syncId,
+        id,
+        isEmployee: false,
+        deviceIds,
+        visFaces,
+        visFingerprints,
+        visCards,
+        devices,
+        syncService,
+        connectionManager,
+        activityBroadcaster,
+        logger,
+        cancellationToken);
 
     var updated = await dbContext.Visitors
         .Include(v => v.AccessLevels).ThenInclude(a => a.AccessLevel)
@@ -2038,7 +2131,7 @@ app.MapGet("/api/cards", async (Guid? employeeId, Guid? visitorId, AppDbContext 
     if (employeeId.HasValue) query = query.Where(c => c.EmployeeId == employeeId);
     if (visitorId.HasValue) query = query.Where(c => c.VisitorId == visitorId);
     var list = await query.OrderBy(c => c.CardNo).ToListAsync(cancellationToken);
-    return Results.Ok(list.Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)));
+    return Results.Ok(list.Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber, c.CardType)));
 }).RequireAuthorization();
 
 app.MapGet("/api/cards/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2533,7 +2626,7 @@ app.MapGet("/api/work-schedules", async (AppDbContext dbContext, CancellationTok
 {
     var schedules = await dbContext.WorkSchedules.AsNoTracking()
         .OrderBy(s => s.Name)
-        .Select(s => new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.CreatedUtc))
+        .Select(s => new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc))
         .ToListAsync(cancellationToken);
     return Results.Ok(schedules);
 }).RequireAuthorization();
@@ -2542,7 +2635,7 @@ app.MapGet("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbConte
 {
     var s = await dbContext.WorkSchedules.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (s is null) return Results.NotFound();
-    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.CreatedUtc));
+    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc));
 }).RequireAuthorization();
 
 app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2555,11 +2648,12 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
         Type = scheduleType,
         ShiftStart = request.ShiftStart,
         ShiftEnd = request.ShiftEnd,
-        RequiredHoursPerDay = request.RequiredHoursPerDay ?? 8m
+        RequiredHoursPerDay = request.RequiredHoursPerDay ?? 8m,
+        Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : "#6366f1"
     };
     dbContext.WorkSchedules.Add(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.CreatedUtc));
+    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc));
 }).RequireAuthorization();
 
 app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2573,9 +2667,10 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     entity.ShiftStart = request.ShiftStart;
     entity.ShiftEnd = request.ShiftEnd;
     entity.RequiredHoursPerDay = request.RequiredHoursPerDay ?? 8m;
+    entity.Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : entity.Color;
     entity.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.CreatedUtc));
+    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc));
 }).RequireAuthorization();
 
 app.MapDelete("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2583,6 +2678,92 @@ app.MapDelete("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbCo
     var entity = await dbContext.WorkSchedules.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null) return Results.NotFound();
     dbContext.WorkSchedules.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Schedule Planner ─────────────────────────────────────────────────────────
+
+app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromDate = from ?? new DateOnly(today.Year, today.Month, 1);
+    var toDate = to ?? new DateOnly(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+
+    var schedules = await dbContext.WorkSchedules.AsNoTracking()
+        .OrderBy(s => s.Name)
+        .Select(s => new
+        {
+            id = s.Id,
+            name = s.Name,
+            type = s.Type.ToString(),
+            shiftStart = s.ShiftStart != null ? s.ShiftStart.Value.ToString(@"hh\:mm") : null,
+            shiftEnd = s.ShiftEnd != null ? s.ShiftEnd.Value.ToString(@"hh\:mm") : null,
+            requiredHoursPerDay = s.RequiredHoursPerDay,
+            color = s.Color
+        })
+        .ToListAsync(cancellationToken);
+
+    var employees = await dbContext.Employees.AsNoTracking()
+        .Where(e => e.IsActive)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate))
+            .ThenInclude(dp => dp.WorkSchedule)
+        .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
+        .ToListAsync(cancellationToken);
+
+    var empResult = employees.Select(e => new
+    {
+        employeeId = e.Id,
+        employeeName = e.FirstName + " " + e.LastName,
+        dates = e.DayPatterns.Select(p => new
+        {
+            date = p.Date.ToString("yyyy-MM-dd"),
+            scheduleId = p.WorkScheduleId,
+            scheduleName = p.WorkSchedule?.Name,
+            shiftStart = p.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"),
+            shiftEnd = p.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
+            isDayOff = p.IsDayOff
+        }).ToArray()
+    });
+
+    return Results.Ok(new { schedules, employees = empResult });
+}).RequireAuthorization();
+
+app.MapPut("/api/schedule-planner/{employeeId:guid}/days", async (
+    Guid employeeId,
+    SchedulePlannerDayRequest[] request,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var employee = await dbContext.Employees.FirstOrDefaultAsync(e => e.Id == employeeId, cancellationToken);
+    if (employee is null) return Results.NotFound();
+
+    var dates = request.Select(r => r.Date).ToArray();
+    var existing = await dbContext.EmployeeDayPatterns
+        .Where(p => p.EmployeeId == employeeId && dates.Contains(p.Date))
+        .ToListAsync(cancellationToken);
+
+    foreach (var req in request)
+    {
+        var pattern = existing.FirstOrDefault(p => p.Date == req.Date);
+
+        if (req.Reset)
+        {
+            if (pattern is not null) dbContext.EmployeeDayPatterns.Remove(pattern);
+            continue;
+        }
+
+        if (pattern is null)
+        {
+            pattern = new EmployeeDayPattern { Id = Guid.NewGuid(), EmployeeId = employeeId, Date = req.Date, CreatedUtc = DateTime.UtcNow };
+            dbContext.EmployeeDayPatterns.Add(pattern);
+        }
+
+        pattern.IsDayOff = req.IsDayOff;
+        pattern.WorkScheduleId = req.IsDayOff ? null : req.ScheduleId;
+        pattern.UpdatedUtc = DateTime.UtcNow;
+    }
+
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
 }).RequireAuthorization();
@@ -2601,6 +2782,261 @@ app.MapGet("/api/attendance", async (Guid? employeeId, DateTime? from, DateTime?
         .Select(r => new AttendanceRecordResponse(r.Id, r.EmployeeId, r.Employee.FirstName + " " + r.Employee.LastName, r.EventTimeUtc, r.EventType.ToString(), r.DeviceId, r.Source, r.CreatedUtc))
         .ToListAsync(cancellationToken);
     return Results.Ok(records);
+}).RequireAuthorization();
+
+// Daily report за ОДИН день. Показывает сотрудников у которых назначен WorkSchedule
+// или есть хотя бы один день в Schedule Planner.
+app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var dayStartUtc = (date ?? DateTime.UtcNow).ToUniversalTime().Date;
+    var dayEndUtc = dayStartUtc.AddDays(1);
+    var dayDate = DateOnly.FromDateTime(dayStartUtc);
+
+    var employeesQuery = dbContext.Employees.AsNoTracking()
+        .Include(e => e.WorkSchedule)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+    if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
+    var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
+
+    // EmployeeNo (string) — это id из устройства. Джоиним DeviceAuthLogs по нему.
+    var empNos = employees
+        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeNo))
+        .Select(e => e.EmployeeNo!.Trim())
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+        .Where(r => r.EventTimeUtc >= dayStartUtc && r.EventTimeUtc < dayEndUtc)
+        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .ToListAsync(cancellationToken);
+
+    var byEmpNo = logs
+        .Where(r => empNos.Contains(r.EmployeeNoString.Trim()))
+        .GroupBy(r => r.EmployeeNoString.Trim(), StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(
+            g => g.Key,
+            g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc), Count = g.Count() },
+            StringComparer.OrdinalIgnoreCase);
+
+    var byEmployee = employees
+        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeNo))
+        .Select(e => new { e.Id, EmpNo = e.EmployeeNo!.Trim() })
+        .Where(x => byEmpNo.ContainsKey(x.EmpNo))
+        .ToDictionary(
+            x => x.Id,
+            x => byEmpNo[x.EmpNo]);
+
+    // Корректировки админа: перекрывают check-in/check-out поверх raw логов.
+    var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
+        .Where(c => c.DateUtc == dayStartUtc)
+        .ToDictionaryAsync(c => c.EmployeeId, cancellationToken);
+
+    var rows = employees.Select(e =>
+    {
+        byEmployee.TryGetValue(e.Id, out var stat);
+        var first = stat?.First;
+        var last = stat?.Last;
+        var name = (e.FirstName + " " + e.LastName).Trim();
+
+        // Перекрываем коррекцией если есть. Поля nullable: можно фиксить только check-in,
+        // только check-out, или оба.
+        var hasCorrection = corrections.TryGetValue(e.Id, out var corr);
+        if (hasCorrection)
+        {
+            if (corr!.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
+            if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
+        }
+
+        // Определяем эффективный шедул: сначала из DayPattern на конкретную дату, иначе базовый
+        var dayPattern = e.DayPatterns.FirstOrDefault(dp => dp.Date == dayDate);
+        var effectiveSchedule = (dayPattern is not null && !dayPattern.IsDayOff)
+            ? (dayPattern.WorkSchedule ?? e.WorkSchedule)
+            : e.WorkSchedule;
+
+        int? lateMinutes = null;
+        int? earlyLeaveMinutes = null;
+        if (effectiveSchedule is not null && effectiveSchedule.ShiftStart is TimeSpan shiftStart && first.HasValue)
+        {
+            var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
+            lateMinutes = (int)Math.Max(0, Math.Round(diff));
+        }
+        if (effectiveSchedule is not null && effectiveSchedule.ShiftEnd is TimeSpan shiftEnd && last.HasValue)
+        {
+            var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            var diff = (shiftEnd - lastLocal.TimeOfDay).TotalMinutes;
+            earlyLeaveMinutes = (int)Math.Max(0, Math.Round(diff));
+        }
+
+        return new
+        {
+            employeeId = e.Id,
+            employeeName = string.IsNullOrEmpty(name) ? null : name,
+            date = dayStartUtc,
+            scheduleName = effectiveSchedule?.Name,
+            shiftStart = effectiveSchedule?.ShiftStart?.ToString(@"hh\:mm"),
+            shiftEnd = effectiveSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
+            checkInUtc = first,
+            checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
+            totalHours = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+            eventCount = stat?.Count ?? 0,
+            lateMinutes,
+            earlyLeaveMinutes,
+            corrected = hasCorrection,
+            correctionComment = hasCorrection ? corr!.Comment : null
+        };
+    }).ToList();
+
+    return Results.Ok(rows);
+}).RequireAuthorization();
+
+// Период (week/month): для каждого дня в диапазоне даёт ту же daily-строку, что и /daily.
+// Возвращает плоский массив (по сотруднику × по дню), фронт группирует/агрегирует на своей стороне.
+app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-7)).ToUniversalTime().Date;
+    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
+    if (toUtc < fromUtc) toUtc = fromUtc;
+    if ((toUtc - fromUtc).TotalDays > 366) toUtc = fromUtc.AddDays(366);
+
+    var fromDate = DateOnly.FromDateTime(fromUtc);
+    var toDate = DateOnly.FromDateTime(toUtc);
+
+    var employeesQuery = dbContext.Employees.AsNoTracking()
+        .Include(e => e.WorkSchedule)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+    if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
+    var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
+
+    var empNos = employees
+        .Where(e => !string.IsNullOrWhiteSpace(e.EmployeeNo))
+        .Select(e => e.EmployeeNo!.Trim())
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var rangeEndExclusive = toUtc.AddDays(1);
+    var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+        .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEndExclusive)
+        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .ToListAsync(cancellationToken);
+
+    var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
+        .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc)
+        .ToListAsync(cancellationToken);
+    var corrByEmpDate = corrections.ToDictionary(c => (c.EmployeeId, c.DateUtc));
+
+    var byEmpNoDay = logs
+        .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
+        .ToDictionary(
+            g => g.Key,
+            g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc), Count = g.Count() });
+
+    var rows = new List<object>();
+    foreach (var e in employees)
+    {
+        var empKeyLower = (e.EmployeeNo ?? "").Trim().ToLowerInvariant();
+        var name = (e.FirstName + " " + e.LastName).Trim();
+        var patternsByDate = e.DayPatterns.ToDictionary(dp => dp.Date);
+        for (var day = fromUtc; day <= toUtc; day = day.AddDays(1))
+        {
+            var dayKey = DateOnly.FromDateTime(day);
+            patternsByDate.TryGetValue(dayKey, out var dayPat);
+            var effectiveSched = (dayPat is not null && !dayPat.IsDayOff)
+                ? (dayPat.WorkSchedule ?? e.WorkSchedule)
+                : e.WorkSchedule;
+
+            DateTime? first = null;
+            DateTime? last = null;
+            var count = 0;
+            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat))
+            {
+                first = stat.First; last = stat.Last; count = stat.Count;
+            }
+            var hasCorrection = corrByEmpDate.TryGetValue((e.Id, day), out var corr);
+            if (hasCorrection)
+            {
+                if (corr!.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
+                if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
+            }
+
+            int? lateMinutes = null;
+            if (effectiveSched is not null && effectiveSched.ShiftStart is TimeSpan shiftStart && first.HasValue)
+            {
+                var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+                var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
+                lateMinutes = (int)Math.Max(0, Math.Round(diff));
+            }
+
+            rows.Add(new
+            {
+                employeeId = e.Id,
+                employeeName = string.IsNullOrEmpty(name) ? null : name,
+                date = day,
+                scheduleName = effectiveSched?.Name,
+                shiftStart = effectiveSched?.ShiftStart?.ToString(@"hh\:mm"),
+                shiftEnd = effectiveSched?.ShiftEnd?.ToString(@"hh\:mm"),
+                checkInUtc = first,
+                checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
+                totalHours = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+                lateMinutes,
+                corrected = hasCorrection
+            });
+        }
+    }
+
+    return Results.Ok(rows);
+}).RequireAuthorization();
+
+// Создать/обновить корректировку check-in/check-out за день. Уникальна по (employeeId, date).
+app.MapPost("/api/attendance/daily/correction", async (
+    AttendanceCorrectionRequest req,
+    AppDbContext dbContext,
+    HttpContext httpContext,
+    CancellationToken cancellationToken) =>
+{
+    var dayStartUtc = req.Date.ToUniversalTime().Date;
+    var existing = await dbContext.AttendanceCorrections
+        .FirstOrDefaultAsync(c => c.EmployeeId == req.EmployeeId && c.DateUtc == dayStartUtc, cancellationToken);
+
+    Guid? userId = null;
+    var userIdStr = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+    if (Guid.TryParse(userIdStr, out var u)) userId = u;
+
+    if (existing is null)
+    {
+        existing = new AttendanceCorrection
+        {
+            EmployeeId = req.EmployeeId,
+            DateUtc = dayStartUtc,
+            CheckInUtc = req.CheckInUtc,
+            CheckOutUtc = req.CheckOutUtc,
+            Comment = req.Comment,
+            CorrectedByUserId = userId
+        };
+        dbContext.AttendanceCorrections.Add(existing);
+    }
+    else
+    {
+        existing.CheckInUtc = req.CheckInUtc;
+        existing.CheckOutUtc = req.CheckOutUtc;
+        existing.Comment = req.Comment;
+        existing.CorrectedByUserId = userId;
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { id = existing.Id });
+}).RequireAuthorization();
+
+// Удалить корректировку — Daily-отчёт вернётся к raw-логам.
+app.MapDelete("/api/attendance/daily/correction", async (
+    Guid employeeId, DateTime date, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var dayStartUtc = date.ToUniversalTime().Date;
+    var existing = await dbContext.AttendanceCorrections
+        .FirstOrDefaultAsync(c => c.EmployeeId == employeeId && c.DateUtc == dayStartUtc, cancellationToken);
+    if (existing is null) return Results.NotFound();
+    dbContext.AttendanceCorrections.Remove(existing);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
 }).RequireAuthorization();
 
 // Синхронизация ACS → attendance_records (настройки и ручной диапазон; пути под /api/attendance — как sync-from-device)
@@ -2751,7 +3187,7 @@ app.MapGet("/api/attendance-requests", async (Guid? employeeId, string? status, 
     if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<AttendanceRequestStatus>(status, true, out var statusEnum))
         query = query.Where(r => r.Status == statusEnum);
     var items = await query.OrderByDescending(r => r.CreatedUtc)
-        .Select(r => new AttendanceRequestResponse(r.Id, r.EmployeeId, r.Employee.FirstName + " " + r.Employee.LastName, r.Type.ToString(), r.RequestedTimeUtc, r.RequestedEndTimeUtc, r.Comment, r.Status.ToString(), r.ReviewedByUserId, r.ReviewedAtUtc, r.ReviewComment, r.CreatedUtc))
+        .Select(r => new AttendanceRequestResponse(r.Id, r.EmployeeId, r.Employee.FirstName + " " + r.Employee.LastName, r.Type.ToString(), r.RequestedTimeUtc, r.RequestedEndTimeUtc, r.Comment, r.Status.ToString(), r.ReviewedByUserId, r.ReviewedAtUtc, r.ReviewComment, r.CreatedUtc, r.Latitude, r.Longitude, r.GeoZoneName))
         .ToListAsync(cancellationToken);
     return Results.Ok(items);
 }).RequireAuthorization();
@@ -2806,17 +3242,33 @@ app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewA
     entity.ReviewComment = request?.Comment;
     entity.UpdatedUtc = DateTime.UtcNow;
 
-    var eventType = entity.Type == AttendanceRequestType.CheckOut ? AttendanceEventType.Out : AttendanceEventType.In;
-    var alreadyExists = await dbContext.AttendanceRecords.AnyAsync(r => r.EmployeeId == entity.EmployeeId && r.EventTimeUtc == entity.RequestedTimeUtc, cancellationToken);
-    if (!alreadyExists)
+    if (entity.Type == AttendanceRequestType.CheckIn || entity.Type == AttendanceRequestType.CheckOut)
     {
-        dbContext.AttendanceRecords.Add(new AttendanceRecord
+        // Check-in/Check-out request = correction за день: только одно из (check-in, check-out).
+        // Создаём/обновляем AttendanceCorrection (overlay над device_auth_logs).
+        var dateUtc = entity.RequestedTimeUtc.ToUniversalTime().Date;
+        var existingCorr = await dbContext.AttendanceCorrections
+            .FirstOrDefaultAsync(c => c.EmployeeId == entity.EmployeeId && c.DateUtc == dateUtc, cancellationToken);
+        if (existingCorr is null)
         {
-            EmployeeId = entity.EmployeeId,
-            EventTimeUtc = entity.RequestedTimeUtc,
-            EventType = eventType,
-            Source = "manual"
-        });
+            existingCorr = new AttendanceCorrection
+            {
+                EmployeeId = entity.EmployeeId,
+                DateUtc = dateUtc,
+                Comment = entity.Comment,
+                CorrectedByUserId = reviewerId
+            };
+            dbContext.AttendanceCorrections.Add(existingCorr);
+        }
+        else
+        {
+            existingCorr.Comment = entity.Comment ?? existingCorr.Comment;
+            existingCorr.CorrectedByUserId = reviewerId;
+        }
+        if (entity.Type == AttendanceRequestType.CheckIn)
+            existingCorr.CheckInUtc = entity.RequestedTimeUtc;
+        else
+            existingCorr.CheckOutUtc = entity.RequestedTimeUtc;
     }
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.Ok(new { entity.Id, entity.Status, entity.ReviewedAtUtc });
@@ -2849,8 +3301,35 @@ app.MapPost("/api/self-service/login", async (SelfServiceLoginRequest request, U
     var roles = await userManager.GetRolesAsync(user);
     if (!roles.Contains(SystemRoles.Employee)) return Results.Unauthorized();
     var token = jwtService.CreateToken(user.Id, user.UserName ?? user.Email!, user.Email!, roles.ToList().AsReadOnly());
-    return Results.Ok(new { token, employeeId = user.EmployeeId });
+    return Results.Ok(new { token, employeeId = user.EmployeeId, requiresPasswordSetup = user.RequiresPasswordSetup });
 });
+
+// Смена пароля сотрудника. Используется при первом входе с временным паролем.
+app.MapPost("/api/self-service/change-password", async (
+    SelfServiceChangePasswordRequest request,
+    ClaimsPrincipal principal,
+    UserManager<ApplicationUser> userManager,
+    CancellationToken cancellationToken) =>
+{
+    var userIdStr = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!Guid.TryParse(userIdStr, out var userId)) return Results.Unauthorized();
+    var user = await userManager.FindByIdAsync(userId.ToString());
+    if (user is null || !user.EmployeeId.HasValue) return Results.Unauthorized();
+
+    if (string.IsNullOrEmpty(request.NewPassword) || request.NewPassword.Length < 6)
+        return Results.BadRequest(new { message = "Password must be at least 6 characters." });
+
+    if (!await userManager.CheckPasswordAsync(user, request.CurrentPassword ?? string.Empty))
+        return Results.BadRequest(new { message = "Current password is incorrect." });
+
+    var result = await userManager.ChangePasswordAsync(user, request.CurrentPassword ?? string.Empty, request.NewPassword);
+    if (!result.Succeeded)
+        return Results.BadRequest(new { message = string.Join("; ", result.Errors.Select(e => e.Description)) });
+
+    user.RequiresPasswordSetup = false;
+    await userManager.UpdateAsync(user);
+    return Results.NoContent();
+}).RequireAuthorization();
 
 // ─── Self-Service Portal (role Employee) ──────────────────────────────────────
 
@@ -2897,7 +3376,7 @@ app.MapGet("/api/self-service/requests", async (ClaimsPrincipal user, UserManage
         .Where(r => r.EmployeeId == appUser.EmployeeId)
         .OrderByDescending(r => r.CreatedUtc)
         .Take(50)
-        .Select(r => new AttendanceRequestResponse(r.Id, r.EmployeeId, "", r.Type.ToString(), r.RequestedTimeUtc, r.RequestedEndTimeUtc, r.Comment, r.Status.ToString(), r.ReviewedByUserId, r.ReviewedAtUtc, r.ReviewComment, r.CreatedUtc))
+        .Select(r => new AttendanceRequestResponse(r.Id, r.EmployeeId, "", r.Type.ToString(), r.RequestedTimeUtc, r.RequestedEndTimeUtc, r.Comment, r.Status.ToString(), r.ReviewedByUserId, r.ReviewedAtUtc, r.ReviewComment, r.CreatedUtc, r.Latitude, r.Longitude, r.GeoZoneName))
         .ToListAsync(cancellationToken);
     return Results.Ok(requests);
 }).RequireAuthorization();
@@ -2910,7 +3389,21 @@ app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody req
     if (appUser?.EmployeeId is null) return Results.Unauthorized();
 
     if (!Enum.TryParse<AttendanceRequestType>(request.Type, true, out var reqType))
-        return Results.BadRequest(new { message = "Неверный тип заявки." });
+        return Results.BadRequest(new { message = "Invalid request type." });
+
+    // Гео-проверка: если CheckIn/CheckOut и координаты в радиусе активной зоны → авто-аппрув.
+    string? matchedZone = null;
+    var inZone = false;
+    if ((reqType == AttendanceRequestType.CheckIn || reqType == AttendanceRequestType.CheckOut)
+        && request.Latitude.HasValue && request.Longitude.HasValue)
+    {
+        var zones = await dbContext.GeoZones.AsNoTracking().Where(z => z.IsActive).ToListAsync(cancellationToken);
+        foreach (var z in zones)
+        {
+            var d = HaversineMeters(z.Latitude, z.Longitude, request.Latitude.Value, request.Longitude.Value);
+            if (d <= z.RadiusMeters) { inZone = true; matchedZone = z.Name; break; }
+        }
+    }
 
     var entity = new AttendanceRequest
     {
@@ -2919,11 +3412,502 @@ app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody req
         RequestedTimeUtc = request.RequestedTimeUtc.ToUniversalTime(),
         RequestedEndTimeUtc = request.RequestedEndTimeUtc?.ToUniversalTime(),
         Comment = request.Comment,
-        Status = AttendanceRequestStatus.Pending
+        Latitude = request.Latitude,
+        Longitude = request.Longitude,
+        GeoZoneName = matchedZone,
+        Status = inZone ? AttendanceRequestStatus.Approved : AttendanceRequestStatus.Pending,
+        ReviewedAtUtc = inZone ? DateTime.UtcNow : null,
+        ReviewComment = inZone ? $"Auto-approved (in zone: {matchedZone})" : null
     };
     dbContext.AttendanceRequests.Add(entity);
+
+    // Если auto-approved CheckIn/CheckOut — сразу пишем в AttendanceCorrection.
+    if (inZone)
+    {
+        var dateUtc = entity.RequestedTimeUtc.Date;
+        var existingCorr = await dbContext.AttendanceCorrections
+            .FirstOrDefaultAsync(c => c.EmployeeId == entity.EmployeeId && c.DateUtc == dateUtc, cancellationToken);
+        if (existingCorr is null)
+        {
+            existingCorr = new AttendanceCorrection
+            {
+                EmployeeId = entity.EmployeeId,
+                DateUtc = dateUtc,
+                Comment = $"Auto-approved geo check-{(reqType == AttendanceRequestType.CheckIn ? "in" : "out")} ({matchedZone})"
+            };
+            dbContext.AttendanceCorrections.Add(existingCorr);
+        }
+        if (reqType == AttendanceRequestType.CheckIn)
+            existingCorr.CheckInUtc = entity.RequestedTimeUtc;
+        else
+            existingCorr.CheckOutUtc = entity.RequestedTimeUtc;
+    }
+
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/self-service/requests/{entity.Id}", new { entity.Id, entity.Type, entity.RequestedTimeUtc, entity.Status });
+    return Results.Created($"/api/self-service/requests/{entity.Id}", new { entity.Id, entity.Type, entity.RequestedTimeUtc, entity.Status, autoApproved = inZone, matchedZone });
+}).RequireAuthorization();
+
+// Haversine: расстояние между двумя WGS84-координатами в метрах. R=6371000.
+static double HaversineMeters(double lat1, double lon1, double lat2, double lon2)
+{
+    var R = 6371000.0;
+    var toRad = Math.PI / 180.0;
+    var dLat = (lat2 - lat1) * toRad;
+    var dLon = (lon2 - lon1) * toRad;
+    var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+            Math.Cos(lat1 * toRad) * Math.Cos(lat2 * toRad) *
+            Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+    return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+}
+
+// CRUD geo-zones
+app.MapGet("/api/geo-zones", async (AppDbContext db, CancellationToken ct) =>
+    Results.Ok(await db.GeoZones.AsNoTracking().OrderBy(z => z.Name).ToListAsync(ct))
+).RequireAuthorization();
+
+app.MapPost("/api/geo-zones", async (GeoZoneRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name required." });
+    if (req.RadiusMeters <= 0) return Results.BadRequest(new { message = "Radius must be positive." });
+    var z = new GeoZone { Name = req.Name.Trim(), Latitude = req.Latitude, Longitude = req.Longitude, RadiusMeters = req.RadiusMeters, IsActive = req.IsActive };
+    db.GeoZones.Add(z);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(z);
+}).RequireAuthorization();
+
+app.MapPut("/api/geo-zones/{id:guid}", async (Guid id, GeoZoneRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var z = await db.GeoZones.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (z is null) return Results.NotFound();
+    z.Name = req.Name.Trim();
+    z.Latitude = req.Latitude;
+    z.Longitude = req.Longitude;
+    z.RadiusMeters = req.RadiusMeters;
+    z.IsActive = req.IsActive;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(z);
+}).RequireAuthorization();
+
+app.MapDelete("/api/geo-zones/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var z = await db.GeoZones.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (z is null) return Results.NotFound();
+    db.GeoZones.Remove(z);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Payroll: Components ────────────────────────────────────────────────────────
+
+app.MapGet("/api/payroll/components", async (AppDbContext db, CancellationToken ct) =>
+    Results.Ok(await db.PayrollComponents.AsNoTracking().OrderBy(c => c.ComponentType).ThenBy(c => c.Name).ToListAsync(ct))
+).RequireAuthorization();
+
+app.MapPost("/api/payroll/components", async (PayrollComponentRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name required." });
+    if (!Enum.TryParse<PayrollComponentType>(req.ComponentType, true, out var compType))
+        return Results.BadRequest(new { message = "Invalid componentType." });
+    var c = new PayrollComponent
+    {
+        Name = req.Name.Trim(), ComponentType = compType, IsFixed = req.IsFixed,
+        Amount = req.Amount ?? 0, Percentage = req.Percentage ?? 0,
+        IsDefault = req.IsDefault, IsActive = req.IsActive, Description = req.Description
+    };
+    db.PayrollComponents.Add(c);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(c);
+}).RequireAuthorization();
+
+app.MapPut("/api/payroll/components/{id:guid}", async (Guid id, PayrollComponentRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.PayrollComponents.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    if (!Enum.TryParse<PayrollComponentType>(req.ComponentType, true, out var compType))
+        return Results.BadRequest(new { message = "Invalid componentType." });
+    c.Name = req.Name.Trim(); c.ComponentType = compType; c.IsFixed = req.IsFixed;
+    c.Amount = req.Amount ?? 0; c.Percentage = req.Percentage ?? 0;
+    c.IsDefault = req.IsDefault; c.IsActive = req.IsActive; c.Description = req.Description;
+    c.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(c);
+}).RequireAuthorization();
+
+app.MapDelete("/api/payroll/components/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.PayrollComponents.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    db.PayrollComponents.Remove(c);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Payroll: Employee Salary Config ───────────────────────────────────────────
+
+app.MapGet("/api/payroll/employees", async (AppDbContext db, CancellationToken ct) =>
+{
+    var employees = await db.Employees
+        .AsNoTracking()
+        .Where(e => e.IsActive)
+        .Include(e => e.Department)
+        .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
+        .ToListAsync(ct);
+    var configs = await db.EmployeeSalaryConfigs
+        .AsNoTracking()
+        .Include(c => c.Components).ThenInclude(ec => ec.Component)
+        .ToListAsync(ct);
+    var configMap = configs.ToDictionary(c => c.EmployeeId);
+    return Results.Ok(employees.Select(e =>
+    {
+        configMap.TryGetValue(e.Id, out var cfg);
+        return new
+        {
+            e.Id, e.FirstName, e.LastName, e.EmployeeNo,
+            department = e.Department?.Name,
+            salaryConfig = cfg is null ? null : new
+            {
+                cfg.Id, salaryType = cfg.SalaryType.ToString(), cfg.BaseAmount, cfg.Currency,
+                cfg.OvertimeMultiplier, cfg.EffectiveFrom,
+                components = cfg.Components.Select(ec => new
+                {
+                    componentId = ec.ComponentId,
+                    name = ec.Component.Name,
+                    componentType = ec.Component.ComponentType.ToString(),
+                    isFixed = ec.Component.IsFixed,
+                    amount = ec.OverrideAmount ?? ec.Component.Amount,
+                    percentage = ec.OverridePercentage ?? ec.Component.Percentage
+                })
+            }
+        };
+    }));
+}).RequireAuthorization();
+
+app.MapPut("/api/payroll/employees/{employeeId:guid}/salary", async (
+    Guid employeeId, EmployeeSalaryConfigRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var employee = await db.Employees.FirstOrDefaultAsync(e => e.Id == employeeId, ct);
+    if (employee is null) return Results.NotFound();
+    if (!Enum.TryParse<SalaryType>(req.SalaryType, true, out var salType))
+        return Results.BadRequest(new { message = "Invalid salaryType." });
+
+    var cfg = await db.EmployeeSalaryConfigs
+        .Include(c => c.Components)
+        .FirstOrDefaultAsync(c => c.EmployeeId == employeeId, ct);
+
+    if (cfg is null)
+    {
+        cfg = new EmployeeSalaryConfig { EmployeeId = employeeId };
+        db.EmployeeSalaryConfigs.Add(cfg);
+    }
+    else
+    {
+        cfg.UpdatedUtc = DateTime.UtcNow;
+        cfg.Components.Clear();
+    }
+
+    cfg.SalaryType = salType;
+    cfg.BaseAmount = req.BaseAmount;
+    cfg.Currency = req.Currency ?? "AZN";
+    cfg.OvertimeMultiplier = req.OvertimeMultiplier ?? 1.5m;
+    cfg.EffectiveFrom = req.EffectiveFrom;
+
+    if (req.ComponentIds is not null)
+    {
+        foreach (var cid in req.ComponentIds)
+        {
+            var comp = await db.PayrollComponents.FirstOrDefaultAsync(c => c.Id == cid, ct);
+            if (comp is not null)
+                cfg.Components.Add(new EmployeePayrollComponent { ComponentId = cid, SalaryConfigId = cfg.Id });
+        }
+    }
+
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { cfg.Id, cfg.EmployeeId, cfg.SalaryType, cfg.BaseAmount, cfg.Currency, cfg.OvertimeMultiplier, cfg.EffectiveFrom });
+}).RequireAuthorization();
+
+// ─── Payroll: Periods ───────────────────────────────────────────────────────────
+
+app.MapGet("/api/payroll/periods", async (AppDbContext db, CancellationToken ct) =>
+{
+    var periods = await db.PayrollPeriods.AsNoTracking()
+        .Include(p => p.Entries)
+        .OrderByDescending(p => p.Year).ThenByDescending(p => p.Month)
+        .ToListAsync(ct);
+    return Results.Ok(periods.Select(p => new
+    {
+        p.Id, p.Year, p.Month, status = p.Status.ToString(),
+        p.CalculatedAt, p.ApprovedAt, p.Notes,
+        employeeCount = p.Entries.Count,
+        totalGross = p.Entries.Sum(e => e.GrossPay),
+        totalNet = p.Entries.Sum(e => e.NetPay),
+        totalTax = p.Entries.Sum(e => e.TaxAmount)
+    }));
+}).RequireAuthorization();
+
+app.MapPost("/api/payroll/periods", async (CreatePayrollPeriodRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Year < 2020 || req.Year > 2100) return Results.BadRequest(new { message = "Invalid year." });
+    if (req.Month < 1 || req.Month > 12) return Results.BadRequest(new { message = "Invalid month." });
+    var exists = await db.PayrollPeriods.AnyAsync(p => p.Year == req.Year && p.Month == req.Month, ct);
+    if (exists) return Results.Conflict(new { message = "Period already exists." });
+    var period = new PayrollPeriod { Year = req.Year, Month = req.Month, Notes = req.Notes };
+    db.PayrollPeriods.Add(period);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { period.Id, period.Year, period.Month, status = period.Status.ToString() });
+}).RequireAuthorization();
+
+app.MapGet("/api/payroll/periods/{id:guid}/entries", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, ct);
+    if (period is null) return Results.NotFound();
+    var entries = await db.PayrollEntries.AsNoTracking()
+        .Where(e => e.PeriodId == id)
+        .Include(e => e.Employee).ThenInclude(e => e.Department)
+        .OrderBy(e => e.Employee.LastName)
+        .ToListAsync(ct);
+    return Results.Ok(new
+    {
+        period = new { period.Id, period.Year, period.Month, status = period.Status.ToString(), period.CalculatedAt, period.ApprovedAt, period.Notes },
+        entries = entries.Select(e => new
+        {
+            e.Id, e.EmployeeId,
+            employeeName = $"{e.Employee.FirstName} {e.Employee.LastName}",
+            employeeNo = e.Employee.EmployeeNo,
+            department = e.Employee.Department?.Name,
+            e.WorkedDays, e.WorkedHours, e.OvertimeHours, e.AbsentDays,
+            e.BasePay, e.OvertimePay, e.AllowancesTotal, e.BonusesTotal,
+            e.GrossPay, e.DeductionsTotal, e.TaxRate, e.TaxAmount, e.NetPay,
+            status = e.Status.ToString(), e.Notes, e.ComponentsJson
+        })
+    });
+}).RequireAuthorization();
+
+app.MapPost("/api/payroll/periods/{id:guid}/calculate", async (
+    Guid id, CalculatePayrollRequest? req, AppDbContext db, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.Include(p => p.Entries).FirstOrDefaultAsync(p => p.Id == id, ct);
+    if (period is null) return Results.NotFound();
+    if (period.Status == PayrollPeriodStatus.Approved || period.Status == PayrollPeriodStatus.Paid)
+        return Results.BadRequest(new { message = "Cannot recalculate an approved/paid period." });
+
+    var taxRate = req?.TaxRate ?? 14m;
+
+    var periodStart = new DateTime(period.Year, period.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    var periodEnd = periodStart.AddMonths(1);
+
+    // Count working days in period (Mon-Fri)
+    var totalWorkingDays = Enumerable.Range(0, (periodEnd - periodStart).Days)
+        .Select(d => periodStart.AddDays(d))
+        .Count(d => d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday);
+
+    // Get all salary configs with components
+    var configs = await db.EmployeeSalaryConfigs
+        .Include(c => c.Components).ThenInclude(ec => ec.Component)
+        .Include(c => c.Employee)
+        .ToListAsync(ct);
+
+    // Get default components (apply to everyone)
+    var defaultComponents = await db.PayrollComponents
+        .AsNoTracking().Where(c => c.IsDefault && c.IsActive).ToListAsync(ct);
+
+    // Get auth logs for the period grouped by employee
+    var logs = await db.DeviceAuthLogs.AsNoTracking()
+        .Where(l => l.EventTimeUtc >= periodStart && l.EventTimeUtc < periodEnd)
+        .ToListAsync(ct);
+
+    // Get employees (for matching logs by EmployeeNo)
+    var allEmployees = await db.Employees.AsNoTracking()
+        .Where(e => e.IsActive)
+        .ToListAsync(ct);
+    var empByNo = allEmployees.Where(e => e.EmployeeNo != null)
+        .ToDictionary(e => e.EmployeeNo!, e => e);
+
+    // Clear existing entries for recalculation
+    db.PayrollEntries.RemoveRange(period.Entries);
+    period.Entries.Clear();
+
+    foreach (var cfg in configs)
+    {
+        var emp = cfg.Employee;
+        var empNo = emp.EmployeeNo;
+
+        // Match logs to this employee
+        var empLogs = empNo != null
+            ? logs.Where(l => l.EmployeeNoString == empNo).ToList()
+            : [];
+
+        // Group by calendar date and find check-in/check-out per day
+        var logsByDate = empLogs.GroupBy(l => DateOnly.FromDateTime(l.EventTimeUtc.ToLocalTime()))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var workedDays = 0;
+        var totalWorkedHours = 0.0;
+        var totalOvertimeHours = 0.0;
+
+        // Get employee's work schedule for overtime calc
+        var schedule = await db.WorkSchedules.AsNoTracking()
+            .FirstOrDefaultAsync(ws => ws.Id == emp.WorkScheduleId, ct);
+        var scheduledHoursPerDay = schedule?.ShiftStart.HasValue == true && schedule?.ShiftEnd.HasValue == true
+            ? (schedule.ShiftEnd.Value - schedule.ShiftStart.Value).TotalHours
+            : (double)(schedule?.RequiredHoursPerDay ?? 8);
+
+        foreach (var (date, dayLogs) in logsByDate)
+        {
+            // Only count Mon-Fri as working days (unless schedule says otherwise)
+            var checkIn = dayLogs.Min(l => l.EventTimeUtc);
+            var checkOut = dayLogs.Max(l => l.EventTimeUtc);
+            var hoursWorked = (checkOut - checkIn).TotalHours;
+
+            // Clamp unrealistic values (>16 hours = likely multi-day issue)
+            if (hoursWorked > 16) hoursWorked = scheduledHoursPerDay;
+            if (hoursWorked > 0)
+            {
+                workedDays++;
+                totalWorkedHours += hoursWorked;
+                var overtime = Math.Max(0, hoursWorked - scheduledHoursPerDay);
+                totalOvertimeHours += overtime;
+            }
+        }
+
+        var absentDays = Math.Max(0, totalWorkingDays - workedDays);
+
+        // Calculate pay
+        decimal basePay;
+        decimal overtimePay;
+        decimal hourlyRate;
+
+        switch (cfg.SalaryType)
+        {
+            case SalaryType.Monthly:
+                hourlyRate = totalWorkingDays > 0 ? cfg.BaseAmount / (totalWorkingDays * 8) : 0;
+                basePay = totalWorkingDays > 0
+                    ? cfg.BaseAmount * workedDays / totalWorkingDays
+                    : 0;
+                overtimePay = (decimal)totalOvertimeHours * hourlyRate * cfg.OvertimeMultiplier;
+                break;
+            case SalaryType.Hourly:
+                basePay = (decimal)totalWorkedHours * cfg.BaseAmount;
+                overtimePay = (decimal)totalOvertimeHours * cfg.BaseAmount * (cfg.OvertimeMultiplier - 1);
+                break;
+            case SalaryType.Daily:
+                basePay = workedDays * cfg.BaseAmount;
+                overtimePay = 0;
+                break;
+            default:
+                basePay = 0; overtimePay = 0;
+                break;
+        }
+
+        // Build effective component list: defaults + employee-specific
+        var appliedComponents = new List<(string Name, string Type, decimal Amount)>();
+        var allApplicable = defaultComponents.Select(d => (component: d, overrideAmt: (decimal?)null, overridePct: (decimal?)null))
+            .Concat(cfg.Components.Select(ec => (component: ec.Component, overrideAmt: ec.OverrideAmount, overridePct: ec.OverridePercentage)))
+            .DistinctBy(x => x.component.Id);
+
+        var allowancesTotal = 0m;
+        var bonusesTotal = 0m;
+        var deductionsTotal = 0m;
+
+        foreach (var (comp, overrideAmt, overridePct) in allApplicable)
+        {
+            if (!comp.IsActive) continue;
+            decimal compAmount;
+            if (comp.IsFixed)
+                compAmount = overrideAmt ?? comp.Amount;
+            else
+                compAmount = basePay * (overridePct ?? comp.Percentage) / 100m;
+
+            appliedComponents.Add((comp.Name, comp.ComponentType.ToString(), compAmount));
+            switch (comp.ComponentType)
+            {
+                case PayrollComponentType.Allowance: allowancesTotal += compAmount; break;
+                case PayrollComponentType.Bonus: bonusesTotal += compAmount; break;
+                case PayrollComponentType.Deduction: deductionsTotal += compAmount; break;
+            }
+        }
+
+        var grossPay = basePay + overtimePay + allowancesTotal + bonusesTotal;
+        var taxAmount = grossPay * taxRate / 100m;
+        var netPay = grossPay - deductionsTotal - taxAmount;
+
+        var entry = new PayrollEntry
+        {
+            PeriodId = id,
+            EmployeeId = emp.Id,
+            WorkedDays = workedDays,
+            WorkedHours = (decimal)Math.Round(totalWorkedHours, 2),
+            OvertimeHours = (decimal)Math.Round(totalOvertimeHours, 2),
+            AbsentDays = absentDays,
+            BasePay = Math.Round(basePay, 2),
+            OvertimePay = Math.Round(overtimePay, 2),
+            AllowancesTotal = Math.Round(allowancesTotal, 2),
+            BonusesTotal = Math.Round(bonusesTotal, 2),
+            GrossPay = Math.Round(grossPay, 2),
+            DeductionsTotal = Math.Round(deductionsTotal, 2),
+            TaxRate = taxRate,
+            TaxAmount = Math.Round(taxAmount, 2),
+            NetPay = Math.Round(netPay, 2),
+            ComponentsJson = System.Text.Json.JsonSerializer.Serialize(appliedComponents)
+        };
+        db.PayrollEntries.Add(entry);
+    }
+
+    period.Status = PayrollPeriodStatus.Calculated;
+    period.CalculatedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Calculation complete.", entriesCount = configs.Count });
+}).RequireAuthorization();
+
+app.MapPost("/api/payroll/periods/{id:guid}/approve", async (
+    Guid id, AppDbContext db, ClaimsPrincipal user, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.FirstOrDefaultAsync(p => p.Id == id, ct);
+    if (period is null) return Results.NotFound();
+    if (period.Status != PayrollPeriodStatus.Calculated)
+        return Results.BadRequest(new { message = "Only calculated periods can be approved." });
+    var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+    Guid.TryParse(userIdStr, out var userId);
+    period.Status = PayrollPeriodStatus.Approved;
+    period.ApprovedAt = DateTime.UtcNow;
+    period.ApprovedByUserId = userId;
+    // Approve all pending entries
+    var entries = await db.PayrollEntries.Where(e => e.PeriodId == id && e.Status == PayrollEntryStatus.Pending).ToListAsync(ct);
+    foreach (var e in entries) e.Status = PayrollEntryStatus.Approved;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Period approved." });
+}).RequireAuthorization();
+
+app.MapPost("/api/payroll/periods/{id:guid}/mark-paid", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.FirstOrDefaultAsync(p => p.Id == id, ct);
+    if (period is null) return Results.NotFound();
+    if (period.Status != PayrollPeriodStatus.Approved)
+        return Results.BadRequest(new { message = "Only approved periods can be marked as paid." });
+    period.Status = PayrollPeriodStatus.Paid;
+    period.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Period marked as paid." });
+}).RequireAuthorization();
+
+app.MapPut("/api/payroll/periods/{id:guid}/entries/{entryId:guid}/approve", async (
+    Guid id, Guid entryId, AppDbContext db, CancellationToken ct) =>
+{
+    var entry = await db.PayrollEntries.FirstOrDefaultAsync(e => e.PeriodId == id && e.Id == entryId, ct);
+    if (entry is null) return Results.NotFound();
+    entry.Status = PayrollEntryStatus.Approved;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { entry.Id, status = entry.Status.ToString() });
+}).RequireAuthorization();
+
+app.MapPut("/api/payroll/periods/{id:guid}/entries/{entryId:guid}/reject", async (
+    Guid id, Guid entryId, NoteRequest? req, AppDbContext db, CancellationToken ct) =>
+{
+    var entry = await db.PayrollEntries.FirstOrDefaultAsync(e => e.PeriodId == id && e.Id == entryId, ct);
+    if (entry is null) return Results.NotFound();
+    entry.Status = PayrollEntryStatus.Rejected;
+    entry.Notes = req?.Note;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { entry.Id, status = entry.Status.ToString() });
 }).RequireAuthorization();
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
@@ -2933,6 +3917,127 @@ if (File.Exists(indexHtmlPath))
 }
 
 app.Run();
+
+/// <summary>
+/// Push a person and all of their credentials (face / fingerprint / card) to a list of devices,
+/// emitting SignalR <c>PersonSyncProgress</c> events as we go so the frontend can render a
+/// per-device progress bar. Devices that are not currently in the active connection set
+/// (<see cref="IDeviceConnectionManager.GetActiveConnectionsAsync"/>) are SKIPPED IMMEDIATELY
+/// instead of waiting for HTTP/SDK timeouts — this is the main fix for slow saves.
+/// </summary>
+static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
+    string syncId,
+    Guid personId,
+    bool isEmployee,
+    IList<Guid> deviceIds,
+    IList<Face> faces,
+    IList<Fingerprint> fingerprints,
+    IList<Card> cards,
+    IDictionary<Guid, Device> devices,
+    IDevicePersonSyncService syncService,
+    IDeviceConnectionManager connectionManager,
+    IDeviceActivityBroadcaster broadcaster,
+    Microsoft.Extensions.Logging.ILogger logger,
+    CancellationToken cancellationToken)
+{
+    var warnings = new List<string>();
+    var total = deviceIds.Count;
+
+    if (total == 0)
+    {
+        await broadcaster.NotifyPersonSyncProgressAsync(
+            syncId, "complete", 0, 0, Guid.Empty, "", "Нет устройств для синхронизации", cancellationToken);
+        return warnings;
+    }
+
+    // Snapshot the active-connection set ONCE up front. Devices not present here are
+    // currently offline (no SDK login + no recent heartbeat from alertStream). Trying to
+    // POST to them would block on the IsapiClient 30-second-per-port HttpClient timeout.
+    IReadOnlyCollection<DeviceConnection> active;
+    try
+    {
+        active = await connectionManager.GetActiveConnectionsAsync(cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not query active device connections; sync will attempt all devices anyway");
+        active = [];
+    }
+
+    var onlineIdentifiers = new HashSet<string>(
+        active.Select(c => c.DeviceIdentifier),
+        StringComparer.OrdinalIgnoreCase);
+
+    var current = 0;
+    foreach (var deviceId in deviceIds)
+    {
+        current++;
+        var device = devices.TryGetValue(deviceId, out var d) ? d : null;
+        var deviceName = device?.Name ?? deviceId.ToString();
+        var deviceIdentifier = device?.DeviceIdentifier ?? "";
+
+        // OFFLINE FAST-PATH: skip the device entirely instead of hanging on a timeout.
+        if (string.IsNullOrEmpty(deviceIdentifier) || !onlineIdentifiers.Contains(deviceIdentifier))
+        {
+            warnings.Add($"Устройство \"{deviceName}\" офлайн — пропущено");
+            await broadcaster.NotifyPersonSyncProgressAsync(
+                syncId, "skipped", current, total, deviceId, deviceName, "Офлайн — пропущено", cancellationToken);
+            continue;
+        }
+
+        await broadcaster.NotifyPersonSyncProgressAsync(
+            syncId, "syncing", current, total, deviceId, deviceName, "Запись на устройство...", cancellationToken);
+
+        try
+        {
+            var result = isEmployee
+                ? await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken)
+                : await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
+            if (!result.Success)
+            {
+                warnings.Add($"Устройство \"{deviceName}\": {result.Message}");
+                logger.LogWarning(
+                    "Sync person {PersonId} to device {DeviceId} ({DeviceName}): {Message}",
+                    personId, deviceId, deviceName, result.Message);
+            }
+
+            foreach (var face in faces)
+            {
+                var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
+                if (!fr.Success) warnings.Add($"Лицо → \"{deviceName}\": {fr.Message}");
+            }
+            foreach (var fp in fingerprints)
+            {
+                var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
+                if (!fr.Success) warnings.Add($"Отпечаток → \"{deviceName}\": {fr.Message}");
+            }
+            foreach (var card in cards)
+            {
+                var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
+                if (!cr.Success) warnings.Add($"Карта → \"{deviceName}\": {cr.Message}");
+            }
+
+            await broadcaster.NotifyPersonSyncProgressAsync(
+                syncId, "done", current, total, deviceId, deviceName, "Готово", cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Устройство \"{deviceName}\": {ex.Message}");
+            logger.LogWarning(ex, "Sync to device {DeviceId} ({DeviceName}) threw", deviceId, deviceName);
+            await broadcaster.NotifyPersonSyncProgressAsync(
+                syncId, "error", current, total, deviceId, deviceName, ex.Message, cancellationToken);
+        }
+    }
+
+    await broadcaster.NotifyPersonSyncProgressAsync(
+        syncId, "complete", total, total, Guid.Empty, "", null, cancellationToken);
+
+    return warnings;
+}
 
 static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? lastSeenUtc, string? statusMessage = null)
 {
@@ -2969,7 +4074,7 @@ static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
 {
     var dept = e.Department != null ? new DepartmentRef(e.Department.Id, e.Department.Name) : null;
     var accessLevels = (e.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
-    var cards = (e.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
+    var cards = (e.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber, c.CardType)).ToArray();
     var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
     var irises = (e.Irises ?? []).Select(i => new IrisRef(i.Id, i.IrisIndex)).ToArray();
@@ -2990,7 +4095,7 @@ static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
 {
     var dept = v.Department != null ? new DepartmentRef(v.Department.Id, v.Department.Name) : null;
     var accessLevels = (v.AccessLevels ?? []).Where(a => a.AccessLevel != null).Select(a => new AccessLevelRef(a.AccessLevel!.Id, a.AccessLevel.Name)).ToArray();
-    var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber)).ToArray();
+    var cards = (v.Cards ?? []).Select(c => new CardRef(c.Id, c.CardNo, c.CardNumber, c.CardType)).ToArray();
     var faces = (v.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (v.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
     var irises = (v.Irises ?? []).Select(i => new IrisRef(i.Id, i.IrisIndex)).ToArray();
@@ -3169,6 +4274,9 @@ public sealed record DepartmentResponse(Guid Id, string Name, string? Descriptio
 public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int EmployeesCount, int VisitorsCount);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string? Action, int? CallNumber = null, string? CallElevatorType = null);
+public sealed record DeviceTimeSyncRequest(string TimeZone);
+public sealed record TimeSyncScheduleRequest(bool AutoEnabled, string DailyTimeLocal, string? TimeZone);
+public sealed record TimeSyncScheduleResponse(bool AutoEnabled, string DailyTimeLocal, string? TimeZone, DateTime? LastRunUtc, int? LastSuccessCount, int? LastTotal, string? LastRunKind);
 public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId);
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
@@ -3185,7 +4293,7 @@ public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string La
 public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount);
 public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises);
 public sealed record AccessLevelRef(Guid Id, string Name);
-public sealed record CardRef(Guid Id, string CardNo, string? CardNumber);
+public sealed record CardRef(Guid Id, string CardNo, string? CardNumber, string? CardType = null);
 public sealed record FaceRef(Guid Id, int FDID);
 public sealed record FingerprintRef(Guid Id, int FingerIndex);
 public sealed record IrisRef(Guid Id, int IrisIndex);
@@ -3221,13 +4329,22 @@ public sealed record ManagedServiceResponse(
     string Message);
 
 // Time Attendance records
-public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, DateTime CreatedUtc);
-public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay);
+public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc);
+public sealed record SchedulePlannerDayRequest(DateOnly Date, Guid? ScheduleId, bool IsDayOff, bool Reset = false);
+public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color);
 public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string EmployeeName, DateTime EventTimeUtc, string EventType, Guid? DeviceId, string Source, DateTime CreatedUtc);
-public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc);
-public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId);
+public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
+public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
+public sealed record AttendanceCorrectionRequest(Guid EmployeeId, DateTime Date, DateTime? CheckInUtc, DateTime? CheckOutUtc, string? Comment);
+public sealed record GeoZoneRequest(string Name, double Latitude, double Longitude, int RadiusMeters, bool IsActive);
 public sealed record ReviewAttendanceRequestBody(string? Comment);
 public sealed record SelfServiceLoginRequest(string Email, string Password);
+public sealed record SelfServiceChangePasswordRequest(string CurrentPassword, string NewPassword);
+public sealed record PayrollComponentRequest(string Name, string ComponentType, bool IsFixed, decimal? Amount, decimal? Percentage, bool IsDefault, bool IsActive, string? Description);
+public sealed record EmployeeSalaryConfigRequest(string SalaryType, decimal BaseAmount, string? Currency, decimal? OvertimeMultiplier, DateOnly EffectiveFrom, Guid[]? ComponentIds);
+public sealed record CreatePayrollPeriodRequest(int Year, int Month, string? Notes);
+public sealed record CalculatePayrollRequest(decimal TaxRate);
+public sealed record NoteRequest(string? Note);
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub) : IDeviceStatusBroadcaster
 {
@@ -3241,6 +4358,20 @@ public sealed class DeviceActivityBroadcaster(IHubContext<DevicesHub> hub) : IDe
 {
     public Task NotifyLiveEventAsync(DeviceEvent deviceEvent, CancellationToken cancellationToken = default) =>
         hub.Clients.All.SendAsync("LiveDeviceEvent", deviceEvent, cancellationToken);
+
+    public Task NotifyPersonSyncProgressAsync(
+        string syncId,
+        string stage,
+        int current,
+        int total,
+        Guid deviceId,
+        string deviceName,
+        string? message,
+        CancellationToken cancellationToken = default) =>
+        hub.Clients.All.SendAsync(
+            "PersonSyncProgress",
+            new { syncId, stage, current, total, deviceId, deviceName, message },
+            cancellationToken);
 }
 
 public sealed class DevicesHub : Hub

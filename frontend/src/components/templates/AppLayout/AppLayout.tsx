@@ -13,6 +13,8 @@ const routeMeta: Record<string, { title: string; breadcrumb?: string; actionText
     '/people': { title: 'People', breadcrumb: 'Dashboard', actionText: 'Add People', actionIcon: 'person_add', searchPlaceholder: 'Search People & Visitors...' },
     '/access-levels': { title: 'Access Levels', breadcrumb: 'Dashboard', actionText: 'Create Policy', actionIcon: 'add', searchPlaceholder: 'Search policies...' },
     '/work-hours': { title: 'Work Hours', breadcrumb: 'Dashboard', actionText: 'Export Report', actionIcon: 'download', searchPlaceholder: 'Search attendance...' },
+    '/approvals': { title: 'Approvals', breadcrumb: 'Dashboard', searchPlaceholder: 'Search requests...' },
+    '/geo-zones': { title: 'Geo-zones', breadcrumb: 'Dashboard', searchPlaceholder: 'Search zones...' },
     '/payroll': { title: 'Payroll', breadcrumb: 'Dashboard', actionText: 'Process All', actionIcon: 'payments', searchPlaceholder: 'Search payroll...' },
     '/settings': { title: 'Settings', breadcrumb: 'Dashboard', actionText: 'Save Changes', actionIcon: 'save', searchPlaceholder: 'Search settings...' },
     '/status': { title: 'System Status', breadcrumb: 'Dashboard', searchPlaceholder: 'Search logs...' },

@@ -142,7 +142,7 @@ public sealed class DevicePersonSyncService(
         if (!syncPerson.Success)
             return syncPerson;
 
-        // ISAPI: в CardInfo обязателен узел cardType (см. capabilities: normalCard, patrolCard, …).
+        // ISAPI: в CardInfo обязателен узел cardType (см. capabilities: normalCard, patrolCard, qrCode …).
         var body = JsonSerializer.Serialize(new
         {
             CardInfo = new
@@ -150,7 +150,7 @@ public sealed class DevicePersonSyncService(
                 cardNo = card.CardNo,
                 cardNumber = string.IsNullOrWhiteSpace(card.CardNumber) ? card.CardNo : card.CardNumber,
                 employeeNo,
-                cardType = "normalCard"
+                cardType = card.CardType ?? "normalCard"
             }
         });
 
@@ -213,6 +213,12 @@ public sealed class DevicePersonSyncService(
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
+
+        if (device.DeviceType == DeviceType.ElevatorController)
+        {
+            logger.LogDebug("SyncFace: skipping elevator controller {Device} — face recognition not supported", device.Name);
+            return new DeviceSyncResult(true, null);
+        }
 
         var employeeNo = face.Employee != null
             ? TruncateEmployeeNo(GetEmployeeNo(face.Employee))
@@ -324,6 +330,12 @@ public sealed class DevicePersonSyncService(
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
+
+        if (device.DeviceType == DeviceType.ElevatorController)
+        {
+            logger.LogDebug("SyncFingerprint: skipping elevator controller {Device} — fingerprint not supported", device.Name);
+            return new DeviceSyncResult(true, null);
+        }
 
         var employeeNo = fp.Employee != null
             ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
