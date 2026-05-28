@@ -1106,17 +1106,28 @@ export function PersonDetailPage() {
   if (!detail) {
     return (
       <AppLayout onAction={() => navigate('/people')}>
-        <div className="flex-1 flex items-center justify-center bg-background-light">
-          {error ? (
-            <div className="text-error-text font-black uppercase tracking-widest text-[10px] animate-pulse">
-              Error Protocol: {error}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Initializing Profile Data...</p>
-            </div>
-          )}
+        <div className="flex-1 flex flex-col bg-background-light">
+          <div className="p-6 md:p-10">
+            <button
+              onClick={() => navigate('/people')}
+              className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-base">arrow_back</span>
+              {type === 'employee' ? 'Employees' : 'Visitors'}
+            </button>
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            {error ? (
+              <div className="text-error-text font-black uppercase tracking-widest text-[10px] animate-pulse">
+                Error Protocol: {error}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-4">
+                <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Initializing Profile Data...</p>
+              </div>
+            )}
+          </div>
         </div>
       </AppLayout>
     )
@@ -1129,6 +1140,13 @@ export function PersonDetailPage() {
     <AppLayout onAction={() => navigate('/people')}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
         <div className="p-6 md:p-10 space-y-8">
+          <button
+            onClick={() => navigate('/people')}
+            className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-primary transition-colors"
+          >
+            <span className="material-symbols-outlined text-base">arrow_back</span>
+            {type === 'employee' ? 'Employees' : 'Visitors'}
+          </button>
           {error && (
             <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest border border-error-text/10 shadow-sm animate-in zoom-in-95 duration-300">
               <div className="flex items-center gap-2">

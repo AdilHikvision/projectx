@@ -66,9 +66,9 @@ export function TopBar({ title, breadcrumb, searchPlaceholder }: TopBarProps) {
                     />
 
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" size="icon" className="rounded-full bg-slate-75">
-                            <span className="material-symbols-outlined text-xl">notifications</span>
-                        </Button>
+                        <button type="button" className="w-9 h-9 rounded-full border border-border-base bg-white hover:bg-slate-75 transition-colors flex items-center justify-center">
+                            <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
+                        </button>
                         <div className="relative" ref={ref}>
                             <button
                                 type="button"
@@ -103,7 +103,9 @@ export function TopBar({ title, breadcrumb, searchPlaceholder }: TopBarProps) {
                     <span className="text-text-dark">{title}</span>
                 </div>
                 <div className="flex items-center gap-4">
-                    <span className="material-symbols-outlined text-text-light">notifications</span>
+                    <button type="button" className="w-9 h-9 rounded-full border border-border-base bg-white hover:bg-slate-75 transition-colors flex items-center justify-center">
+                        <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
+                    </button>
                     <div className="relative" ref={ref}>
                         <button
                             type="button"

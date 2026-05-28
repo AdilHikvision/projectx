@@ -143,15 +143,32 @@ public sealed class DeviceDoorService(
             }
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
+                // Elevator controllers: use Door/param per-floor discovery.
+                // AcsWorkStatus returns ALL 128 hardware relay slots with identical status —
+                // can't distinguish configured from unconfigured. Door/param gives the doorName
+                // for each relay and returns an empty name for unconfigured slots.
+                if (device.DeviceType == DeviceType.ElevatorController)
+                {
+                    var elevatorFloors = await TryGetElevatorFloorsViaDoorsParamAsync(device, port, client, cancellationToken);
+                    if (elevatorFloors.Count > 0)
+                    {
+                        logger.LogInformation("Elevator {Device}: Door/param discovery — {Count} configured floors",
+                            device.Name, elevatorFloors.Count);
+                        return (elevatorFloors, null);
+                    }
+                    logger.LogWarning("Elevator {Device}: Door/param discovery returned 0 floors on port {Port}", device.Name, port);
+                }
+
                 // GateStatus не реализован (Pro Series: DS-K1T670MX и др.). Пробуем AcsWorkStatus (Pro Series API).
                 var (proDoors, proReason) = await TryAcsWorkStatusOnPortAsync(device, port, cred, client, cancellationToken);
+                if (proReason != null)
+                    logger.LogDebug("AcsWorkStatus {Device}: {Reason}", device.Name, proReason);
+
                 if (proDoors.Count > 0)
                 {
                     logger.LogInformation("GateStatus {Device}: 404 — Pro Series AcsWorkStatus: {Count} дверей", device.Name, proDoors.Count);
                     return (proDoors, null);
                 }
-                if (proReason != null)
-                    logger.LogDebug("AcsWorkStatus {Device}: {Reason}", device.Name, proReason);
 
                 // Pro Series API тоже недоступен. Пробуем SDK ACS_ABILITY.
                 var doorCount = await TryGetDoorCountViaSdkAsync(device, cred, cancellationToken);
@@ -210,6 +227,136 @@ public sealed class DeviceDoorService(
             logger.LogWarning(ex, "GateStatus {Device} порт {Port}: ошибка", device.Name, port);
             return ([], ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Elevator floor discovery via GET /ISAPI/AccessControl/Door/param/{id}.
+    /// Configured floor relays have a non-empty doorName (e.g. "1F", "2F").
+    /// Unconfigured relay slots return an empty doorName.
+    /// Requests are fired in parallel batches of 16; stops after the first batch with all-empty names.
+    /// </summary>
+    private async Task<List<DeviceDoor>> TryGetElevatorFloorsViaDoorsParamAsync(
+        Device device, int port, HttpClient client, CancellationToken cancellationToken)
+    {
+        const int maxFloors = 128;
+        const int batchSize = 16;
+        var scheme = port == 443 ? "https" : "http";
+        var result = new List<DeviceDoor>();
+
+        for (var batchStart = 1; batchStart <= maxFloors; batchStart += batchSize)
+        {
+            var batchEnd = Math.Min(batchStart + batchSize - 1, maxFloors);
+            var ids = Enumerable.Range(batchStart, batchEnd - batchStart + 1).ToList();
+
+            var tasks = ids.Select(async id =>
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    cts.CancelAfter(TimeSpan.FromSeconds(5));
+                    var uri = new Uri($"{scheme}://{device.IpAddress}:{port}/ISAPI/AccessControl/Door/param/{id}");
+                    using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+                    req.Headers.ConnectionClose = true;
+                    using var resp = await client.SendAsync(req, cts.Token);
+                    if (!resp.IsSuccessStatusCode) return (id, (string?)null);
+                    var body = await resp.Content.ReadAsStringAsync(cts.Token);
+                    return (id, ParseDoorParamName(body));
+                }
+                catch { return (id, (string?)null); }
+            });
+
+            var batchResults = await Task.WhenAll(tasks);
+
+            foreach (var (id, name) in batchResults.OrderBy(r => r.id))
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                    result.Add(new DeviceDoor(device.Id, device.Name, id - 1, name, "normal", true));
+            }
+
+            // Early exit: entire batch had empty names — no more configured floors
+            if (batchResults.All(r => string.IsNullOrWhiteSpace(r.Item2)))
+                break;
+        }
+
+        return result;
+    }
+
+    private static string? ParseDoorParamName(string xml)
+    {
+        try
+        {
+            var doc = XDocument.Parse(xml);
+            var nameEl = doc.Descendants()
+                .FirstOrDefault(x => string.Equals(x.Name.LocalName, "doorName", StringComparison.OrdinalIgnoreCase));
+            var name = nameEl?.Value?.Trim();
+            return string.IsNullOrEmpty(name) ? null : name;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// GET /ISAPI/AccessControl/capabilities?format=json → AcsCapabilities.doorNo.@max — actual configured floor/door count.
+    /// Elevator controllers report hardware max (128) via SDK; capabilities reflects what the user actually configured.
+    /// </summary>
+    private async Task<int?> TryGetDoorCountViaCapabilitiesAsync(Device device, int port, NetworkCredential cred, HttpClient client, CancellationToken cancellationToken)
+    {
+        var scheme = port == 443 ? "https" : "http";
+        var uri = new Uri($"{scheme}://{device.IpAddress}:{port}/ISAPI/AccessControl/capabilities?format=json");
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(6));
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.ConnectionClose = true;
+            request.Headers.Accept.ParseAdd("application/json");
+            request.Headers.Accept.ParseAdd("application/xml");
+            using var response = await client.SendAsync(request, cts.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            var content = await response.Content.ReadAsStringAsync(cts.Token);
+            var count = ParseDoorCountFromCapabilities(content);
+            logger.LogInformation("Capabilities {Device} порт {Port}: doorNo.@max = {Count}", device.Name, port, count.HasValue ? count.Value.ToString() : "null");
+            return count;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Capabilities request failed for {Device}", device.Name);
+            return null;
+        }
+    }
+
+    private static int? ParseDoorCountFromCapabilities(string content)
+    {
+        try
+        {
+            var trimmed = content.Trim();
+            if (trimmed.StartsWith('{'))
+            {
+                using var doc = global::System.Text.Json.JsonDocument.Parse(content);
+                var root = doc.RootElement;
+                // Try AcsCapabilities.doorNo.@max (JSON attribute notation uses "@max" key)
+                if (root.TryGetProperty("AcsCapabilities", out var acsCap) &&
+                    acsCap.TryGetProperty("doorNo", out var doorNo))
+                {
+                    if (doorNo.TryGetProperty("@max", out var maxProp) && maxProp.TryGetInt32(out var max))
+                        return max > 0 ? max : null;
+                }
+            }
+            else if (trimmed.StartsWith('<'))
+            {
+                var doc = XDocument.Parse(content);
+                var doorNoEl = doc.Descendants()
+                    .FirstOrDefault(x => string.Equals(x.Name.LocalName, "doorNo", StringComparison.OrdinalIgnoreCase));
+                if (doorNoEl != null)
+                {
+                    var maxAttr = doorNoEl.Attributes()
+                        .FirstOrDefault(a => string.Equals(a.Name.LocalName, "max", StringComparison.OrdinalIgnoreCase));
+                    if (maxAttr != null && int.TryParse(maxAttr.Value, out var max))
+                        return max > 0 ? max : null;
+                }
+            }
+        }
+        catch { /* ignore */ }
+        return null;
     }
 
     /// <summary>Pro Series: GET /ISAPI/AccessControl/AcsWorkStatus?format=json — doorStatus, doorLockStatus массивы.</summary>
@@ -273,7 +420,7 @@ public sealed class DeviceDoorService(
             if (!root.TryGetProperty("AcsWorkStatus", out var acs))
                 return result;
 
-            // doorStatus: 1=sleep, 2=remainOpen, 3=remainClosed, 4=normal
+            // doorStatus: 1=sleep (relay slot not configured), 2=remainOpen, 3=remainClosed, 4=normal
             // doorLockStatus: 0=closed, 1=open, 2=short circuit, 3=open circuit, 4=error
             bool useDoorStatus;
             global::System.Text.Json.JsonElement statusArr;
@@ -293,18 +440,34 @@ public sealed class DeviceDoorService(
             }
 
             var hasDoorNames = acs.TryGetProperty("doorNameList", out var doorNameList) && doorNameList.ValueKind == global::System.Text.Json.JsonValueKind.Array;
+            var isElevator = device.DeviceType == DeviceType.ElevatorController;
 
             var idx = 0;
             foreach (var item in statusArr.EnumerateArray())
             {
                 var statusCode = item.ValueKind == global::System.Text.Json.JsonValueKind.Number && item.TryGetInt32(out var n) ? n : -1;
+
+                // Elevator controllers return ALL 128 relay slots in the array.
+                // doorStatus=1 (sleep) means the relay slot is not configured on this device — skip it.
+                // Only status 2 (remainOpen), 3 (remainClosed), 4 (normal) indicate a configured floor relay.
+                // We still increment idx so the doorIndex matches the actual relay number for control commands.
+                if (isElevator && useDoorStatus && statusCode == 1)
+                {
+                    idx++;
+                    continue;
+                }
+
                 var statusStr = useDoorStatus ? MapAcsDoorStatus(statusCode) : MapAcsDoorLockStatus(statusCode);
                 var doorName = hasDoorNames && idx < doorNameList.GetArrayLength()
                     ? doorNameList[idx].GetString()
                     : null;
-                result.Add(new DeviceDoor(device.Id, device.Name, idx, doorName, statusStr, device.DeviceType == DeviceType.ElevatorController));
+                result.Add(new DeviceDoor(device.Id, device.Name, idx, doorName, statusStr, isElevator));
                 idx++;
             }
+
+            if (isElevator)
+                logger.LogInformation("Elevator {Device}: AcsWorkStatus {Total} relay slots total, {Configured} configured (non-sleep)",
+                    device.Name, idx, result.Count);
         }
         catch (Exception ex)
         {

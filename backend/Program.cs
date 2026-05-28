@@ -54,7 +54,7 @@ builder.Host.UseWindowsService(options =>
 
 builder.Host.UseSerilog((context, loggerConfiguration) =>
 {
-    loggerConfiguration.ReadFrom.Configuration(context.Configuration).WriteTo.Console();
+    loggerConfiguration.ReadFrom.Configuration(context.Configuration);
 });
 
 builder.Services.AddOpenApi();

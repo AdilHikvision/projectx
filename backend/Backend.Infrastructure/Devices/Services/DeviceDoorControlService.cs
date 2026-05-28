@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Xml.Linq;
 using Backend.Application.Devices;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,7 @@ public sealed class DeviceDoorControlService(
             string.IsNullOrWhiteSpace(device.Password) ? password : device.Password);
 
         var ports = IsapiPortHelper.GetPortsToTry(device.Port);
+        string? lastError = null;
         foreach (var port in ports)
         {
             var (success, message) = await TryControlOnPortAsync(device.IpAddress, port, doorIndex, action, callNumber, callElevatorType, cred, cancellationToken);
@@ -46,11 +48,13 @@ public sealed class DeviceDoorControlService(
                 logger.LogInformation("Door control {Action} for device {Device} door {Door} on port {Port} succeeded", action, device.Name, doorIndex, port);
                 return (true, null);
             }
-            if (message?.Contains("401") == true || message?.Contains("403") == true || message?.Contains("Неверный") == true)
+            lastError = message;
+            logger.LogWarning("Door control {Action} port {Port} failed: {Msg}", action, port, message);
+            if (message?.Contains("401") == true || message?.Contains("403") == true || message?.Contains("Неверный") == true || message?.Contains("Доступ") == true)
                 return (false, message);
         }
 
-        return (false, "Не удалось выполнить команду. Проверьте устройство и сеть.");
+        return (false, lastError ?? "Не удалось выполнить команду. Проверьте устройство и сеть.");
     }
 
     private static async Task<(bool Success, string? Message)> TryControlOnPortAsync(
@@ -187,11 +191,20 @@ public sealed class DeviceDoorControlService(
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 return (false, "Доступ запрещён.");
 
-            if (response.IsSuccessStatusCode)
-                return (true, null);
-
             var body = await response.Content.ReadAsStringAsync(cts.Token);
-            return (false, $"Ошибка устройства: {(int)response.StatusCode}. {body}");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // Include the device's error body in the message for better diagnostics
+                var compact = body.Replace("\r", "").Replace("\n", " ").Trim();
+                return (false, $"HTTP {(int)response.StatusCode}: {(compact.Length > 300 ? compact[..300] : compact)}");
+            }
+
+            // Hikvision returns HTTP 200 even when the command fails internally.
+            // The actual result is in the ResponseStatus body: statusCode=1 means OK,
+            // any other value means the device rejected the command.
+            var (isOk, deviceMsg) = ParseResponseStatus(body);
+            return isOk ? (true, null) : (false, deviceMsg ?? "Устройство вернуло ошибку.");
         }
         catch (OperationCanceledException)
         {
@@ -205,5 +218,53 @@ public sealed class DeviceDoorControlService(
         {
             return (false, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Parses Hikvision ISAPI ResponseStatus (XML or JSON).
+    /// Returns (true, null) when statusCode==1 (success) or body is empty/unparseable.
+    /// Returns (false, message) when the device signals failure via statusCode != 1.
+    /// </summary>
+    private static (bool Ok, string? Message) ParseResponseStatus(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return (true, null);
+
+        try
+        {
+            var trimmed = body.TrimStart();
+
+            if (trimmed.StartsWith('{'))
+            {
+                using var doc = global::System.Text.Json.JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                var rs = root.TryGetProperty("ResponseStatus", out var rsEl) ? rsEl : root;
+                if (rs.TryGetProperty("statusCode", out var sc) && sc.TryGetInt32(out var code))
+                {
+                    if (code == 1) return (true, null);
+                    var str = rs.TryGetProperty("statusString", out var ss) ? ss.GetString() : null;
+                    var sub = rs.TryGetProperty("subStatusCode", out var sb) ? sb.GetString() : null;
+                    return (false, $"{str ?? "Error"} ({sub ?? code.ToString()})");
+                }
+            }
+            else if (trimmed.StartsWith('<'))
+            {
+                var doc = XDocument.Parse(body);
+                var scEl = doc.Descendants()
+                    .FirstOrDefault(x => string.Equals(x.Name.LocalName, "statusCode", StringComparison.OrdinalIgnoreCase));
+                if (scEl != null && int.TryParse(scEl.Value?.Trim(), out var code))
+                {
+                    if (code == 1) return (true, null);
+                    var str = doc.Descendants()
+                        .FirstOrDefault(x => string.Equals(x.Name.LocalName, "statusString", StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+                    var sub = doc.Descendants()
+                        .FirstOrDefault(x => string.Equals(x.Name.LocalName, "subStatusCode", StringComparison.OrdinalIgnoreCase))?.Value?.Trim();
+                    return (false, $"{str ?? "Error"} ({sub ?? code.ToString()})");
+                }
+            }
+        }
+        catch { /* unparseable body — assume success */ }
+
+        return (true, null);
     }
 }

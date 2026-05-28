@@ -166,9 +166,9 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <Button variant="outline" size="icon" className="rounded-full bg-slate-75 hover:bg-slate-100">
-                            <span className="material-symbols-outlined text-xl">notifications</span>
-                        </Button>
+                        <button type="button" className="w-9 h-9 rounded-full border border-border-base bg-white hover:bg-slate-75 transition-colors flex items-center justify-center">
+                            <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
+                        </button>
                         <UserDropdown initials={initials} onLogout={handleLogout} />
                     </div>
                 </div>
