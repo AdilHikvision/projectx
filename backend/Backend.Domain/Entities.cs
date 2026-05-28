@@ -487,3 +487,34 @@ public sealed class PayrollEntry : BaseEntity
     /// <summary>JSON-снимок применённых компонентов на момент расчёта.</summary>
     public string? ComponentsJson { get; set; }
 }
+
+// ─── Notifications ─────────────────────────────────────────────────────────────
+
+public static class NotificationTypes
+{
+    public const string DeviceOffline = "DeviceOffline";
+    public const string DeviceOnline = "DeviceOnline";
+    public const string ApprovalRequest = "ApprovalRequest";
+    public const string ApprovalApproved = "ApprovalApproved";
+    public const string ApprovalRejected = "ApprovalRejected";
+    public const string DailyReport = "DailyReport";
+}
+
+/// <summary>Уведомление для пользователя. UserId = null означает broadcast всем.</summary>
+public sealed class Notification : BaseEntity
+{
+    public Guid? UserId { get; set; }
+    public string Type { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Body { get; set; } = "";
+    public bool IsRead { get; set; }
+    public string? ReferenceId { get; set; }
+}
+
+/// <summary>Запись о прочтении broadcast-уведомления конкретным пользователем.</summary>
+public sealed class NotificationRead
+{
+    public Guid NotificationId { get; set; }
+    public Guid UserId { get; set; }
+    public DateTime ReadAtUtc { get; set; } = DateTime.UtcNow;
+}

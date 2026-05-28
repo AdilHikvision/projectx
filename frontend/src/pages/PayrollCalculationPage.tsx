@@ -4,6 +4,7 @@ import { Badge, Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { useExportReport } from '../hooks/useExportReport'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December']
@@ -91,6 +92,7 @@ const PAYROLL_TABS: { value: Tab; label: string }[] = [
 
 export function PayrollCalculationPage() {
     const { token } = useAuth()
+    const { exporting, downloadReport } = useExportReport(token)
     const [tab, setTab] = useState<Tab>('periods')
     const [error, setError] = useState<string | null>(null)
 
@@ -115,6 +117,26 @@ export function PayrollCalculationPage() {
         open: false, editId: null, name: '', componentType: 'Allowance', isFixed: true,
         amount: 0, percentage: 0, isDefault: false, isActive: true, description: ''
     })
+
+    // ── Email Report ──────────────────────────────────────────────────────────
+    const [emailModal, setEmailModal] = useState<{ periodId: string; periodLabel: string } | null>(null)
+    const [emailTo, setEmailTo] = useState('')
+    const [emailSending, setEmailSending] = useState(false)
+
+    async function sendPayrollReport() {
+        if (!token || !emailModal || !emailTo.trim()) return
+        setEmailSending(true)
+        try {
+            await apiRequest(`/api/payroll/periods/${emailModal.periodId}/send-email`, {
+                token, method: 'POST',
+                body: JSON.stringify({ to: emailTo.trim() }),
+            })
+            alert(`Report sent to ${emailTo.trim()}`)
+            setEmailModal(null)
+            setEmailTo('')
+        } catch (e: any) { alert(e?.message ?? 'Failed to send') }
+        setEmailSending(false)
+    }
 
     // ── Salary Setup ─────────────────────────────────────────────────────────
     const [employees, setEmployees] = useState<EmpRow[]>([])
@@ -495,6 +517,32 @@ export function PayrollCalculationPage() {
                                                     Mark Paid
                                                 </Button>
                                             )}
+                                            <Button
+                                                variant="outline"
+                                                size="md"
+                                                icon="send"
+                                                onClick={() => setEmailModal({ periodId: p.id, periodLabel: `${MONTHS[p.month - 1]} ${p.year}` })}
+                                            >
+                                                Send
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="md"
+                                                icon="table_view"
+                                                disabled={!!exporting}
+                                                onClick={() => downloadReport(`/api/reports/payroll/${p.id}/excel`, 'excel')}
+                                            >
+                                                {exporting === 'excel' ? '...' : 'Excel'}
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="md"
+                                                icon="picture_as_pdf"
+                                                disabled={!!exporting}
+                                                onClick={() => downloadReport(`/api/reports/payroll/${p.id}/pdf`, 'pdf')}
+                                            >
+                                                {exporting === 'pdf' ? '...' : 'PDF'}
+                                            </Button>
                                             <Button
                                                 variant={detail?.period.id === p.id ? 'secondary' : 'outline'}
                                                 size="md"
@@ -1227,6 +1275,32 @@ export function PayrollCalculationPage() {
                     </div>
                 )}
             </Modal>
+
+            {emailModal && (
+                <Modal isOpen title={`Send Payroll Report — ${emailModal.periodLabel}`} onClose={() => { setEmailModal(null); setEmailTo('') }}>
+                    <div className="space-y-4">
+                        <p className="text-xs text-text-light">The payroll summary for {emailModal.periodLabel} will be sent as an HTML email.</p>
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Recipient email</label>
+                            <Input
+                                type="email"
+                                placeholder="accountant@company.com"
+                                value={emailTo}
+                                onChange={e => setEmailTo(e.target.value)}
+                                autoFocus
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <Button fullWidth onClick={sendPayrollReport} isLoading={emailSending} disabled={!emailTo.trim()}>
+                                Send
+                            </Button>
+                            <Button fullWidth variant="outline" onClick={() => { setEmailModal(null); setEmailTo('') }} disabled={emailSending}>
+                                Cancel
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
         </AppLayout>
     )
 }

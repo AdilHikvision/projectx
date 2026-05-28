@@ -18,10 +18,10 @@ export function SystemSettingsPage() {
     const location = useLocation()
     const queryParams = new URLSearchParams(location.search)
     const tabParam = queryParams.get('tab')
-    const initialTab: 'global' | 'devices' | 'company' | 'logSync' =
-        tabParam === 'devices' ? 'devices' : tabParam === 'company' ? 'company' : tabParam === 'log-sync' ? 'logSync' : 'global'
+    const initialTab: 'global' | 'devices' | 'company' | 'logSync' | 'email' | 'templates' =
+        tabParam === 'devices' ? 'devices' : tabParam === 'company' ? 'company' : tabParam === 'log-sync' ? 'logSync' : tabParam === 'email' ? 'email' : tabParam === 'templates' ? 'templates' : 'global'
 
-    const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company' | 'logSync'>(initialTab)
+    const [activeTab, setActiveTab] = useState<'global' | 'devices' | 'company' | 'logSync' | 'email' | 'templates'>(initialTab)
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
     const { token } = useAuth()
     const { startLoading, stopLoading } = useLoading()
@@ -37,6 +37,8 @@ export function SystemSettingsPage() {
         else if (tab === 'company') setActiveTab('company')
         else if (tab === 'log-sync') setActiveTab('logSync')
         else if (tab === 'global') setActiveTab('global')
+        else if (tab === 'email') setActiveTab('email')
+        else if (tab === 'templates') setActiveTab('templates')
     }, [location.search])
 
     // ─── Localization & Runtime: time/timezone push to devices ───
@@ -379,6 +381,149 @@ export function SystemSettingsPage() {
         return `${(bytes / 1024 / 1024).toFixed(2)} MB`
     }
 
+    // ─── SMTP Settings ────────────────────────────────────────────────────────
+    const [smtp, setSmtp] = useState({
+        enabled: false,
+        host: '',
+        port: 587,
+        username: '',
+        password: '',
+        fromAddress: '',
+        fromName: '',
+        enableSsl: true,
+    })
+    const [smtpLoading, setSmtpLoading] = useState(false)
+    const [smtpSaving, setSmtpSaving] = useState(false)
+    const [smtpTesting, setSmtpTesting] = useState(false)
+    const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+    const loadSmtp = useCallback(async () => {
+        if (!token) return
+        setSmtpLoading(true)
+        try {
+            const data = await apiRequest<typeof smtp>('/api/settings/smtp', { token })
+            setSmtp(data)
+        } catch { /* ignore */ } finally { setSmtpLoading(false) }
+    }, [token])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'email') return
+        void loadSmtp()
+    }, [token, activeTab, loadSmtp])
+
+    const saveSmtp = async () => {
+        if (!token) return
+        setSmtpSaving(true)
+        setSmtpTestResult(null)
+        try {
+            await apiRequest('/api/settings/smtp', { method: 'PUT', token, body: JSON.stringify(smtp) })
+            alert('SMTP settings saved.')
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Failed to save')
+        } finally { setSmtpSaving(false) }
+    }
+
+    const testSmtp = async () => {
+        if (!token) return
+        setSmtpTesting(true)
+        setSmtpTestResult(null)
+        try {
+            const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', { method: 'POST', token })
+            setSmtpTestResult({ ok: true, message: res.message })
+        } catch (e) {
+            setSmtpTestResult({ ok: false, message: e instanceof Error ? e.message : 'Test failed' })
+        } finally { setSmtpTesting(false) }
+    }
+
+    // ─── Email Templates ──────────────────────────────────────────────────────
+    interface EmailTemplate {
+        key: string
+        name: string
+        description: string
+        subject: string
+        htmlBody: string
+        variables: string[]
+        isCustomized: boolean
+    }
+
+    const [templates, setTemplates] = useState<EmailTemplate[]>([])
+    const [tplLoading, setTplLoading] = useState(false)
+    const [selectedTplKey, setSelectedTplKey] = useState<string | null>(null)
+    const [tplDraft, setTplDraft] = useState<{ subject: string; htmlBody: string } | null>(null)
+    const [tplSaving, setTplSaving] = useState(false)
+    const [tplResetting, setTplResetting] = useState(false)
+    const [tplPreviewHtml, setTplPreviewHtml] = useState<string | null>(null)
+    const [tplPreviewLoading, setTplPreviewLoading] = useState(false)
+    const [tplView, setTplView] = useState<'edit' | 'preview'>('edit')
+
+    const loadTemplates = useCallback(async () => {
+        if (!token) return
+        setTplLoading(true)
+        try {
+            const data = await apiRequest<EmailTemplate[]>('/api/email-templates', { token })
+            setTemplates(data)
+            if (!selectedTplKey && data.length > 0) {
+                setSelectedTplKey(data[0].key)
+                setTplDraft({ subject: data[0].subject, htmlBody: data[0].htmlBody })
+            }
+        } catch { /* ignore */ } finally { setTplLoading(false) }
+    }, [token, selectedTplKey])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'templates') return
+        void loadTemplates()
+    }, [token, activeTab, loadTemplates])
+
+    const selectTemplate = (t: EmailTemplate) => {
+        setSelectedTplKey(t.key)
+        setTplDraft({ subject: t.subject, htmlBody: t.htmlBody })
+        setTplPreviewHtml(null)
+        setTplView('edit')
+    }
+
+    const saveTpl = async () => {
+        if (!token || !selectedTplKey || !tplDraft) return
+        setTplSaving(true)
+        try {
+            const updated = await apiRequest<EmailTemplate>(`/api/email-templates/${selectedTplKey}`, {
+                method: 'PUT', token,
+                body: JSON.stringify({ subject: tplDraft.subject, htmlBody: tplDraft.htmlBody }),
+            })
+            setTemplates(ts => ts.map(t => t.key === selectedTplKey ? updated : t))
+            setTplDraft({ subject: updated.subject, htmlBody: updated.htmlBody })
+        } catch (e) { alert(e instanceof Error ? e.message : 'Save failed') }
+        setTplSaving(false)
+    }
+
+    const resetTpl = async () => {
+        if (!token || !selectedTplKey) return
+        if (!confirm('Reset this template to the built-in default? Your custom version will be deleted.')) return
+        setTplResetting(true)
+        try {
+            const updated = await apiRequest<EmailTemplate>(`/api/email-templates/${selectedTplKey}/reset`, {
+                method: 'POST', token,
+            })
+            setTemplates(ts => ts.map(t => t.key === selectedTplKey ? updated : t))
+            setTplDraft({ subject: updated.subject, htmlBody: updated.htmlBody })
+            setTplPreviewHtml(null)
+        } catch (e) { alert(e instanceof Error ? e.message : 'Reset failed') }
+        setTplResetting(false)
+    }
+
+    const previewTpl = async () => {
+        if (!token || !selectedTplKey || !tplDraft) return
+        setTplPreviewLoading(true)
+        try {
+            const res = await apiRequest<{ subject: string; body: string }>(`/api/email-templates/${selectedTplKey}/preview`, {
+                method: 'POST', token,
+                body: JSON.stringify({ subject: tplDraft.subject, htmlBody: tplDraft.htmlBody }),
+            })
+            setTplPreviewHtml(res.body)
+            setTplView('preview')
+        } catch (e) { alert(e instanceof Error ? e.message : 'Preview failed') }
+        setTplPreviewLoading(false)
+    }
+
     const handleAction = () => {
         if (activeTab === 'devices' && devicesRef.current) {
             devicesRef.current.triggerAction()
@@ -424,6 +569,20 @@ export function SystemSettingsPage() {
                                 }`}
                         >
                             Log sync
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('email')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'email' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            Email (SMTP)
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('templates')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'templates' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            Email Templates
                         </button>
                     </div>
 
@@ -750,6 +909,239 @@ export function SystemSettingsPage() {
                     ) : activeTab === 'devices' ? (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <DevicesTab ref={devicesRef} />
+                        </div>
+                    ) : activeTab === 'email' ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-2xl space-y-8">
+                            <div className="flex items-center gap-3 px-2">
+                                <div className="w-8 h-8 rounded-xl bg-sky-500/10 flex items-center justify-center text-sky-600">
+                                    <span className="material-symbols-outlined text-lg">mail</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">SMTP Email Settings</h3>
+                                    <p className="text-xs text-text-muted mt-1">Used for password reset emails, self-service credentials, and report delivery.</p>
+                                </div>
+                            </div>
+
+                            {smtpLoading ? (
+                                <p className="text-sm text-text-light px-2">Loading…</p>
+                            ) : (
+                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none">
+                                    {/* Enable toggle */}
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-xs font-black text-text-dark">Enable SMTP</p>
+                                            <p className="text-[9px] text-text-light uppercase tracking-widest mt-0.5">Send emails via your SMTP server</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setSmtp(s => ({ ...s, enabled: !s.enabled }))}
+                                            className={`relative w-12 h-6 rounded-full transition-colors ${smtp.enabled ? 'bg-primary' : 'bg-slate-200'}`}
+                                        >
+                                            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${smtp.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">SMTP Host</label>
+                                            <Input placeholder="smtp.gmail.com" value={smtp.host} onChange={e => setSmtp(s => ({ ...s, host: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Port</label>
+                                            <Input placeholder="587" value={String(smtp.port)} onChange={e => setSmtp(s => ({ ...s, port: parseInt(e.target.value) || 587 }))} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Username</label>
+                                            <Input placeholder="your@email.com" value={smtp.username} onChange={e => setSmtp(s => ({ ...s, username: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Password</label>
+                                            <Input type="password" placeholder="••••••••" value={smtp.password} onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">From Address</label>
+                                            <Input placeholder="noreply@yourcompany.com" value={smtp.fromAddress} onChange={e => setSmtp(s => ({ ...s, fromAddress: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">From Name</label>
+                                            <Input placeholder="ProjectX" value={smtp.fromName} onChange={e => setSmtp(s => ({ ...s, fromName: e.target.value }))} />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            onClick={() => setSmtp(s => ({ ...s, enableSsl: !s.enableSsl }))}
+                                            className={`relative w-10 h-5 rounded-full transition-colors ${smtp.enableSsl ? 'bg-primary' : 'bg-slate-200'}`}
+                                        >
+                                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${smtp.enableSsl ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                        </button>
+                                        <span className="text-xs font-bold text-text-dark">Enable SSL/TLS</span>
+                                    </div>
+
+                                    {smtpTestResult && (
+                                        <div className={`rounded-2xl px-4 py-3 text-xs font-bold flex items-center gap-2 ${smtpTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                            <span className="material-symbols-outlined text-sm">{smtpTestResult.ok ? 'check_circle' : 'error'}</span>
+                                            {smtpTestResult.message}
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-3">
+                                        <Button onClick={saveSmtp} isLoading={smtpSaving}>
+                                            Save Settings
+                                        </Button>
+                                        <Button variant="outline" onClick={testSmtp} isLoading={smtpTesting}>
+                                            Send Test Email
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : activeTab === 'templates' ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <div className="flex items-center gap-3 px-2 mb-6">
+                                <div className="w-8 h-8 rounded-xl bg-violet-500/10 flex items-center justify-center text-violet-600">
+                                    <span className="material-symbols-outlined text-lg">edit_note</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Email Templates</h3>
+                                    <p className="text-xs text-text-muted mt-1">Customize the HTML body and subject for every outgoing email. Use <code className="bg-slate-100 px-1 rounded text-[11px] font-mono">{'{{variable}}'}</code> placeholders — they are replaced with real data at send time.</p>
+                                </div>
+                            </div>
+
+                            {tplLoading ? (
+                                <p className="text-sm text-text-light px-2">Loading…</p>
+                            ) : (
+                                <div className="flex gap-6" style={{ minHeight: '600px' }}>
+                                    {/* ── Left sidebar: template list ── */}
+                                    <div className="w-56 shrink-0 space-y-1">
+                                        {templates.map(t => (
+                                            <button
+                                                key={t.key}
+                                                onClick={() => selectTemplate(t)}
+                                                className={`w-full text-left px-4 py-3 rounded-2xl transition-all ${selectedTplKey === t.key ? 'bg-primary/10 text-primary' : 'hover:bg-slate-100 text-text-dark'}`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-base">
+                                                        {t.key === 'password_reset' ? 'lock_reset' : t.key === 'selfservice_created' ? 'person_add' : t.key === 'attendance_report' ? 'calendar_month' : 'payments'}
+                                                    </span>
+                                                    <div className="min-w-0">
+                                                        <p className="text-[11px] font-black uppercase tracking-wide truncate">{t.name}</p>
+                                                        {t.isCustomized && <span className="text-[9px] text-primary font-bold uppercase tracking-widest">Customized</span>}
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* ── Right: editor panel ── */}
+                                    {tplDraft && selectedTplKey && (() => {
+                                        const tpl = templates.find(t => t.key === selectedTplKey)
+                                        if (!tpl) return null
+                                        return (
+                                            <div className="flex-1 min-w-0 space-y-4">
+                                                {/* Description */}
+                                                <p className="text-xs text-text-muted">{tpl.description}</p>
+
+                                                {/* Variable chips */}
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {tpl.variables.map(v => (
+                                                        <button
+                                                            key={v}
+                                                            title="Click to copy"
+                                                            onClick={() => navigator.clipboard.writeText(v)}
+                                                            className="font-mono text-[10px] px-2 py-0.5 bg-violet-50 text-violet-700 rounded-lg border border-violet-200 hover:bg-violet-100 transition-colors cursor-copy"
+                                                        >
+                                                            {v}
+                                                        </button>
+                                                    ))}
+                                                    <span className="text-[10px] text-text-muted self-center ml-1">click to copy</span>
+                                                </div>
+
+                                                {/* Subject */}
+                                                <div className="space-y-1.5">
+                                                    <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Subject</label>
+                                                    <Input
+                                                        value={tplDraft.subject}
+                                                        onChange={e => setTplDraft(d => d ? { ...d, subject: e.target.value } : d)}
+                                                        placeholder="Email subject…"
+                                                    />
+                                                </div>
+
+                                                {/* Edit / Preview toggle */}
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex bg-slate-100 rounded-xl p-0.5 gap-0.5">
+                                                        <button
+                                                            onClick={() => setTplView('edit')}
+                                                            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tplView === 'edit' ? 'bg-white shadow-sm text-text-dark' : 'text-text-light hover:text-text-dark'}`}
+                                                        >
+                                                            HTML Editor
+                                                        </button>
+                                                        <button
+                                                            onClick={previewTpl}
+                                                            disabled={tplPreviewLoading}
+                                                            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${tplView === 'preview' ? 'bg-white shadow-sm text-text-dark' : 'text-text-light hover:text-text-dark'}`}
+                                                        >
+                                                            {tplPreviewLoading && <span className="material-symbols-outlined text-xs animate-spin">progress_activity</span>}
+                                                            Preview
+                                                        </button>
+                                                    </div>
+                                                    <span className="text-[9px] text-text-muted uppercase tracking-widest">Sample data is used in preview</span>
+                                                </div>
+
+                                                {/* Editor area */}
+                                                {tplView === 'edit' ? (
+                                                    <textarea
+                                                        value={tplDraft.htmlBody}
+                                                        onChange={e => setTplDraft(d => d ? { ...d, htmlBody: e.target.value } : d)}
+                                                        spellCheck={false}
+                                                        className="w-full font-mono text-[12px] leading-relaxed bg-slate-950 text-green-300 rounded-2xl p-5 resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 border-none"
+                                                        style={{ minHeight: '420px', tabSize: 2 }}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Tab') {
+                                                                e.preventDefault()
+                                                                const el = e.currentTarget
+                                                                const start = el.selectionStart
+                                                                const end = el.selectionEnd
+                                                                const val = el.value
+                                                                el.value = val.substring(0, start) + '  ' + val.substring(end)
+                                                                el.selectionStart = el.selectionEnd = start + 2
+                                                                setTplDraft(d => d ? { ...d, htmlBody: el.value } : d)
+                                                            }
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <div className="rounded-2xl border border-border-light overflow-hidden bg-white" style={{ minHeight: '420px' }}>
+                                                        {tplPreviewHtml ? (
+                                                            <iframe
+                                                                srcDoc={tplPreviewHtml}
+                                                                title="Email preview"
+                                                                className="w-full border-none"
+                                                                style={{ minHeight: '420px' }}
+                                                                sandbox="allow-same-origin"
+                                                            />
+                                                        ) : (
+                                                            <div className="flex items-center justify-center h-64 text-text-muted text-sm">
+                                                                Click Preview to render with sample data
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Actions */}
+                                                <div className="flex gap-3">
+                                                    <Button onClick={saveTpl} isLoading={tplSaving}>
+                                                        Save Template
+                                                    </Button>
+                                                    {tpl.isCustomized && (
+                                                        <Button variant="outline" onClick={resetTpl} isLoading={tplResetting}>
+                                                            Reset to Default
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )
+                                    })()}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-4xl space-y-8">

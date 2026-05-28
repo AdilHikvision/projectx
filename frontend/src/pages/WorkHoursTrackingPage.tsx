@@ -4,6 +4,7 @@ import { Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { useExportReport } from '../hooks/useExportReport'
 
 interface Employee {
   id: string
@@ -26,7 +27,7 @@ function formatDT(iso: string) {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-type PageTab = 'daily' | 'weekly' | 'monthly' | 'records' | 'schedules' | 'leaves'
+type PageTab = 'daily' | 'weekly' | 'monthly' | 'schedules' | 'leaves'
 
 interface LeaveRow {
   id: string
@@ -116,6 +117,7 @@ interface WorkScheduleRow {
   createdUtc: string
 }
 
+
 function timeToInput(isoOrSpan: string | null): string {
   if (!isoOrSpan) return ''
   const t = isoOrSpan.length >= 5 ? isoOrSpan.slice(0, 5) : isoOrSpan
@@ -195,6 +197,7 @@ function computeShiftHours(start: string, end: string): number | null {
 
 export function WorkHoursTrackingPage() {
   const { token } = useAuth()
+  const { exporting, downloadReport } = useExportReport(token)
   const [tab, setTab] = useState<PageTab>('daily')
   const [subTab, setSubTab] = useState<SubTab>('all')
 
@@ -251,6 +254,31 @@ export function WorkHoursTrackingPage() {
     reason: '',
   })
 
+  // ── Email Report ──────────────────────────────────────────────────────────
+  const [emailReportModal, setEmailReportModal] = useState(false)
+  const [emailReportTo, setEmailReportTo] = useState('')
+  const [emailReportSending, setEmailReportSending] = useState(false)
+
+  const sendAttendanceReport = async () => {
+    if (!token || !emailReportTo.trim()) return
+    setEmailReportSending(true)
+    try {
+      let from = filterDailyDate
+      let to = filterDailyDate
+      if (tab === 'weekly') { const r = weekRange(weeklyAnchor); from = r.from; to = r.to }
+      else if (tab === 'monthly') { const r = monthRange(monthlyAnchor); from = r.from; to = r.to }
+      await apiRequest('/api/reports/attendance/send-email', {
+        method: 'POST', token,
+        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to }),
+      })
+      alert(`Report sent to ${emailReportTo.trim()}`)
+      setEmailReportModal(false)
+      setEmailReportTo('')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to send')
+    } finally { setEmailReportSending(false) }
+  }
+
   // ── Quick Assign ──────────────────────────────────────────────────────────
   const [assignSchedule, setAssignSchedule] = useState<WorkScheduleRow | null>(null)
   const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string }[]>([])
@@ -261,13 +289,12 @@ export function WorkHoursTrackingPage() {
   const [assignSearch, setAssignSearch] = useState('')
   const [assignSaving, setAssignSaving] = useState(false)
 
-  useEffect(() => {
+useEffect(() => {
     loadMeta()
   }, [])
 
   useEffect(() => {
-    if (tab === 'records') loadRecords()
-    else if (tab === 'daily') loadDaily()
+    if (tab === 'daily') loadDaily()
     else if (tab === 'weekly' || tab === 'monthly') loadPeriod()
   }, [tab, filterEmployee, filterFrom, filterTo, filterDailyDate, weeklyAnchor, monthlyAnchor])
 
@@ -649,7 +676,7 @@ export function WorkHoursTrackingPage() {
               <div className="bg-surface rounded-2xl shadow-sm p-1 w-fit max-w-full">
                 {/* Main tabs row */}
                 <div className="flex gap-1">
-                  {(['daily', 'weekly', 'monthly', 'records', 'schedules', 'leaves'] as PageTab[]).map(t => (
+                  {(['daily', 'weekly', 'monthly', 'schedules', 'leaves'] as PageTab[]).map(t => (
                     <button
                       key={t}
                       type="button"
@@ -751,6 +778,50 @@ export function WorkHoursTrackingPage() {
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Month</label>
                 <input type="month" value={monthlyAnchor} onChange={(e) => setMonthlyAnchor(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
+              </div>
+            )}
+
+            {(tab === 'daily' || tab === 'weekly' || tab === 'monthly') && (
+              <div className="flex items-end gap-2 flex-wrap">
+                <Button type="button" icon="send" variant="outline" onClick={() => setEmailReportModal(true)}>
+                  Send Report
+                </Button>
+                <Button
+                  type="button"
+                  icon="table_view"
+                  variant="outline"
+                  disabled={!!exporting}
+                  onClick={() => {
+                    const range = tab === 'daily'
+                      ? { from: filterDailyDate, to: filterDailyDate }
+                      : tab === 'weekly'
+                        ? weekRange(weeklyAnchor)
+                        : monthRange(monthlyAnchor)
+                    const params = new URLSearchParams({ from: range.from, to: range.to })
+                    if (filterEmployee) params.set('employeeId', filterEmployee)
+                    downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
+                  }}
+                >
+                  {exporting === 'excel' ? 'Exporting...' : 'Excel'}
+                </Button>
+                <Button
+                  type="button"
+                  icon="picture_as_pdf"
+                  variant="outline"
+                  disabled={!!exporting}
+                  onClick={() => {
+                    const range = tab === 'daily'
+                      ? { from: filterDailyDate, to: filterDailyDate }
+                      : tab === 'weekly'
+                        ? weekRange(weeklyAnchor)
+                        : monthRange(monthlyAnchor)
+                    const params = new URLSearchParams({ from: range.from, to: range.to })
+                    if (filterEmployee) params.set('employeeId', filterEmployee)
+                    downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
+                  }}
+                >
+                  {exporting === 'pdf' ? 'Exporting...' : 'PDF'}
+                </Button>
               </div>
             )}
           </div>
@@ -937,52 +1008,6 @@ export function WorkHoursTrackingPage() {
             )
           })()}
 
-          {/* Records Table */}
-          {tab === 'records' && (
-            <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-                <p className="text-xs font-black text-text-light uppercase tracking-widest">{records.length} record{records.length === 1 ? '' : 's'}</p>
-              </div>
-              {loading ? (
-                <div className="flex items-center justify-center py-16">
-                  <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
-                </div>
-              ) : records.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
-                  <span className="material-symbols-outlined text-4xl">event_busy</span>
-                  <p className="text-sm">No records found.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                        <th className="px-5 py-3 text-left">Employee</th>
-                        <th className="px-5 py-3 text-left">Date & time</th>
-                        <th className="px-5 py-3 text-left">Event</th>
-                        <th className="px-5 py-3 text-left">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {records.map((r) => (
-                        <tr key={r.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
-                          <td className="px-5 py-3 font-bold text-text-dark">{r.employeeName}</td>
-                          <td className="px-5 py-3 text-text-light">{formatDT(r.eventTimeUtc)}</td>
-                          <td className="px-5 py-3">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${r.eventType === 'In' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                              <span className="material-symbols-outlined text-sm">{r.eventType === 'In' ? 'login' : 'logout'}</span>
-                              {r.eventType === 'In' ? 'In' : 'Out'}
-                            </span>
-                          </td>
-                          <td className="px-5 py-3 text-text-light text-xs">{r.source}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Weekly / Monthly Period Reports — per-employee per-day breakdown + totals */}
           {(tab === 'weekly' || tab === 'monthly') && (() => {
@@ -1744,6 +1769,34 @@ export function WorkHoursTrackingPage() {
           </div>
         )
       })()}
+
+      {emailReportModal && (
+        <Modal isOpen title="Send Attendance Report" onClose={() => { setEmailReportModal(false); setEmailReportTo('') }}>
+          <div className="space-y-4">
+            <p className="text-xs text-text-light">
+              The report for the selected {tab === 'daily' ? 'day' : tab === 'weekly' ? 'week' : 'month'} will be sent as an HTML email.
+            </p>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Recipient email</label>
+              <Input
+                type="email"
+                placeholder="manager@company.com"
+                value={emailReportTo}
+                onChange={e => setEmailReportTo(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button fullWidth onClick={sendAttendanceReport} isLoading={emailReportSending} disabled={!emailReportTo.trim()}>
+                Send
+              </Button>
+              <Button fullWidth variant="outline" onClick={() => { setEmailReportModal(false); setEmailReportTo('') }} disabled={emailReportSending}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </AppLayout>
   )
 }

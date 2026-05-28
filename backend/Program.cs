@@ -21,6 +21,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
 using Serilog;
+using QuestPDF.Infrastructure;
+
+QuestPDF.Settings.License = LicenseType.Community;
 
 // Подхватить backend/.env в переменные окружения до загрузки конфигурации (Database__Password и т.д.).
 foreach (var baseDir in new[]
@@ -73,6 +76,10 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
 });
 builder.Services.AddSingleton<IDeviceStatusBroadcaster, DeviceStatusBroadcaster>();
 builder.Services.AddSingleton<IDeviceActivityBroadcaster, DeviceActivityBroadcaster>();
+builder.Services.AddSingleton<INotificationService, NotificationService>();
+builder.Services.AddSingleton<IEmailService, EmailService>();
+builder.Services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
+builder.Services.AddHostedService<DailyReportNotificationService>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
@@ -343,6 +350,8 @@ app.MapPost("/api/auth/setup-admin-password", async (
 app.MapPost("/api/auth/forgot-password", async (
     ForgotPasswordRequest request,
     UserManager<ApplicationUser> userManager,
+    IEmailService emailService,
+    IEmailTemplateService tplService,
     IHostEnvironment env,
     CancellationToken cancellationToken) =>
 {
@@ -354,6 +363,16 @@ app.MapPost("/api/auth/forgot-password", async (
         return Results.Ok(new { message = "If an account exists with this email, a reset link has been sent." });
 
     var token = await userManager.GeneratePasswordResetTokenAsync(user);
+
+    var (subject, body) = await tplService.RenderAsync("password_reset", new()
+    {
+        ["{{firstName}}"] = user.FirstName ?? "",
+        ["{{token}}"] = token,
+        ["{{companyName}}"] = "ProjectX"
+    }, cancellationToken);
+
+    await emailService.SendAsync(user.Email!, subject, body, cancellationToken);
+
     if (env.IsDevelopment())
         return Results.Ok(new { message = "Password reset token generated.", token });
     return Results.Ok(new { message = "If an account exists with this email, a reset link has been sent." });
@@ -1323,6 +1342,156 @@ app.MapPost("/api/system-settings", async (SystemSettingRequest request, AppDbCo
     return Results.Ok(new SystemSettingResponse(setting.Key, setting.Value));
 }).RequireAuthorization();
 
+// ─── SMTP Settings ────────────────────────────────────────────────────────────
+
+app.MapGet("/api/settings/smtp", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var keys = new[] { "Smtp:Host", "Smtp:Port", "Smtp:Username", "Smtp:Password", "Smtp:FromAddress", "Smtp:FromName", "Smtp:EnableSsl", "Smtp:Enabled" };
+    var rows = await dbContext.SystemSettings.AsNoTracking().Where(x => keys.Contains(x.Key)).ToListAsync(cancellationToken);
+    var map = rows.ToDictionary(x => x.Key, x => x.Value ?? "");
+    return Results.Ok(new
+    {
+        enabled = string.Equals(map.GetValueOrDefault("Smtp:Enabled"), "true", StringComparison.OrdinalIgnoreCase),
+        host = map.GetValueOrDefault("Smtp:Host", ""),
+        port = int.TryParse(map.GetValueOrDefault("Smtp:Port"), out var p) ? p : 587,
+        username = map.GetValueOrDefault("Smtp:Username", ""),
+        password = map.GetValueOrDefault("Smtp:Password", ""),
+        fromAddress = map.GetValueOrDefault("Smtp:FromAddress", ""),
+        fromName = map.GetValueOrDefault("Smtp:FromName", ""),
+        enableSsl = !string.Equals(map.GetValueOrDefault("Smtp:EnableSsl", "true"), "false", StringComparison.OrdinalIgnoreCase)
+    });
+}).RequireAuthorization();
+
+app.MapPut("/api/settings/smtp", async (SmtpSettingsRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var updates = new Dictionary<string, string>
+    {
+        ["Smtp:Enabled"] = request.Enabled ? "true" : "false",
+        ["Smtp:Host"] = request.Host ?? "",
+        ["Smtp:Port"] = (request.Port > 0 ? request.Port : 587).ToString(),
+        ["Smtp:Username"] = request.Username ?? "",
+        ["Smtp:Password"] = request.Password ?? "",
+        ["Smtp:FromAddress"] = request.FromAddress ?? "",
+        ["Smtp:FromName"] = request.FromName ?? "",
+        ["Smtp:EnableSsl"] = request.EnableSsl ? "true" : "false"
+    };
+    foreach (var (key, value) in updates)
+    {
+        var setting = await dbContext.SystemSettings.FirstOrDefaultAsync(x => x.Key == key, cancellationToken);
+        if (setting is null)
+        {
+            setting = new SystemSetting { Id = Guid.NewGuid(), Key = key, Value = value, CreatedUtc = DateTime.UtcNow };
+            dbContext.SystemSettings.Add(setting);
+        }
+        else
+        {
+            setting.Value = value;
+            setting.UpdatedUtc = DateTime.UtcNow;
+        }
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { message = "SMTP settings saved." });
+}).RequireAuthorization();
+
+app.MapPost("/api/settings/smtp/test", async (IEmailService emailService, CancellationToken cancellationToken) =>
+{
+    var ok = await emailService.TestConnectionAsync(cancellationToken);
+    return ok ? Results.Ok(new { message = "Test email sent successfully." }) : Results.BadRequest(new { message = "Failed to send test email. Check SMTP settings." });
+}).RequireAuthorization();
+
+// ─── Email Templates ──────────────────────────────────────────────────────────
+
+app.MapGet("/api/email-templates", async (IEmailTemplateService tplService, CancellationToken ct) =>
+    Results.Ok(await tplService.GetAllAsync(ct))
+).RequireAuthorization();
+
+app.MapGet("/api/email-templates/{key}", async (string key, IEmailTemplateService tplService, CancellationToken ct) =>
+{
+    if (!tplService.Exists(key)) return Results.NotFound();
+    return Results.Ok(await tplService.GetAsync(key, ct));
+}).RequireAuthorization();
+
+app.MapPut("/api/email-templates/{key}", async (string key, EmailTemplateUpdateRequest req, IEmailTemplateService tplService, CancellationToken ct) =>
+{
+    if (!tplService.Exists(key)) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Subject)) return Results.BadRequest(new { message = "Subject is required." });
+    if (string.IsNullOrWhiteSpace(req.HtmlBody)) return Results.BadRequest(new { message = "Body is required." });
+    await tplService.SaveAsync(key, req.Subject.Trim(), req.HtmlBody, ct);
+    return Results.Ok(await tplService.GetAsync(key, ct));
+}).RequireAuthorization();
+
+app.MapPost("/api/email-templates/{key}/reset", async (string key, IEmailTemplateService tplService, CancellationToken ct) =>
+{
+    if (!tplService.Exists(key)) return Results.NotFound();
+    await tplService.ResetAsync(key, ct);
+    return Results.Ok(await tplService.GetAsync(key, ct));
+}).RequireAuthorization();
+
+app.MapPost("/api/email-templates/{key}/preview", async (string key, EmailTemplatePreviewRequest req, IEmailTemplateService tplService, CancellationToken ct) =>
+{
+    if (!tplService.Exists(key)) return Results.NotFound();
+    var sampleVars = GetSampleVariables(key);
+    // Allow caller to override subject/body for live preview without saving
+    string subject, body;
+    if (!string.IsNullOrWhiteSpace(req.Subject) || !string.IsNullOrWhiteSpace(req.HtmlBody))
+    {
+        var tmpSubject = req.Subject ?? tplService.GetDefault(key).Subject;
+        var tmpBody = req.HtmlBody ?? tplService.GetDefault(key).Body;
+        subject = RenderTemplate(tmpSubject, sampleVars);
+        body = RenderTemplate(tmpBody, sampleVars);
+    }
+    else
+    {
+        (subject, body) = await tplService.RenderAsync(key, sampleVars, ct);
+    }
+    return Results.Ok(new { subject, body });
+}).RequireAuthorization();
+
+static Dictionary<string, string> GetSampleVariables(string key) => key switch
+{
+    "password_reset" => new() {
+        ["{{firstName}}"] = "Alex",
+        ["{{token}}"] = "A1B2-C3D4-E5F6",
+        ["{{companyName}}"] = "Acme Corp"
+    },
+    "selfservice_created" => new() {
+        ["{{firstName}}"] = "Maria",
+        ["{{lastName}}"] = "Johnson",
+        ["{{email}}"] = "m.johnson@acme.com",
+        ["{{password}}"] = "SS_Temp1234!",
+        ["{{companyName}}"] = "Acme Corp"
+    },
+    "attendance_report" => new() {
+        ["{{companyName}}"] = "Acme Corp",
+        ["{{fromDate}}"] = "01.05.2026",
+        ["{{toDate}}"] = "31.05.2026",
+        ["{{tableRows}}"] = "<tr><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0'>01.05.2026</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0'>Alex Smith</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0'>Engineering</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>09:02</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>18:15</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>9.2</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>+2m</td></tr>",
+        ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
+    },
+    "payroll_report" => new() {
+        ["{{companyName}}"] = "Acme Corp",
+        ["{{month}}"] = "May",
+        ["{{year}}"] = "2026",
+        ["{{status}}"] = "Approved",
+        ["{{employeeCount}}"] = "24",
+        ["{{totalGross}}"] = "48,320.00",
+        ["{{totalTax}}"] = "6,764.80",
+        ["{{totalNet}}"] = "41,555.20",
+        ["{{tableRows}}"] = "<tr><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0'>Alex Smith</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0'>Engineering</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>22</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:center'>176.0</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:right'>2,000.00</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:right'>2,150.00</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:right'>301.00</td><td style='padding:5px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600'>1,849.00</td></tr>",
+        ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
+    },
+    _ => new()
+};
+
+static string RenderTemplate(string template, Dictionary<string, string> vars)
+{
+    return System.Text.RegularExpressions.Regex.Replace(template, @"\{\{(\w+)\}\}", m =>
+    {
+        var key = "{{" + m.Groups[1].Value + "}}";
+        return vars.TryGetValue(key, out var val) ? val : m.Value;
+    });
+}
+
 // Departments (древовидная структура отделов)
 app.MapGet("/api/departments", async (Guid? companyId, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -1584,6 +1753,8 @@ app.MapPut("/api/employees/{id:guid}", async (
     IDeviceConnectionManager connectionManager,
     IDeviceActivityBroadcaster activityBroadcaster,
     UserManager<ApplicationUser> userManager,
+    IEmailService emailService,
+    IEmailTemplateService emailTemplateService,
     HttpRequest httpRequest,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -1648,6 +1819,16 @@ app.MapPut("/api/employees/{id:guid}", async (
             {
                 await userManager.AddToRoleAsync(newUser, SystemRoles.Employee);
                 selfServiceTempPassword = tempPassword;
+
+                var (emailSubject, emailBody) = await emailTemplateService.RenderAsync("selfservice_created", new()
+                {
+                    ["{{firstName}}"] = entity.FirstName ?? "",
+                    ["{{lastName}}"] = entity.LastName ?? "",
+                    ["{{email}}"] = email,
+                    ["{{password}}"] = tempPassword,
+                    ["{{companyName}}"] = "ProjectX"
+                }, cancellationToken);
+                await emailService.SendAsync(email, emailSubject, emailBody, cancellationToken);
             }
             else
             {
@@ -2706,7 +2887,8 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
         .ToListAsync(cancellationToken);
 
     var employees = await dbContext.Employees.AsNoTracking()
-        .Where(e => e.IsActive)
+        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.Date >= fromDate && dp.Date <= toDate)))
+        .Include(e => e.WorkSchedule)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate))
             .ThenInclude(dp => dp.WorkSchedule)
         .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
@@ -2725,27 +2907,41 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
                     && (r.RequestedEndTimeUtc == null ? r.RequestedTimeUtc >= fromDt : r.RequestedEndTimeUtc >= fromDt))
         .ToListAsync(cancellationToken);
 
-    var empResult = employees.Select(e => new
+    var empResult = employees.Select(e =>
     {
-        employeeId = e.Id,
-        employeeName = e.FirstName + " " + e.LastName,
-        dates = e.DayPatterns.Select(p =>
+        // Merge explicit DayPatterns + leave-only dates (leaves without a DayPattern)
+        var patternDates = e.DayPatterns.Select(p => p.Date).ToHashSet();
+        var empLeaves = leaves.Where(l => l.EmployeeId == e.Id).ToList();
+
+        // Build leave-only dates not covered by DayPatterns
+        var leaveDates = new List<DateOnly>();
+        foreach (var lv in empLeaves)
         {
-            var leave = leaves.FirstOrDefault(l => l.EmployeeId == e.Id && l.StartDate <= p.Date && l.EndDate >= p.Date);
+            for (var d = lv.StartDate > fromDate ? lv.StartDate : fromDate;
+                 d <= (lv.EndDate < toDate ? lv.EndDate : toDate);
+                 d = d.AddDays(1))
+            {
+                if (!patternDates.Contains(d)) leaveDates.Add(d);
+            }
+        }
+
+        object BuildDate(DateOnly date, Guid? scheduleId, string? scheduleName, string? shiftStart, string? shiftEnd, bool isDayOff)
+        {
+            var leave = empLeaves.FirstOrDefault(l => l.StartDate <= date && l.EndDate >= date);
             var req = selfServiceRequests.FirstOrDefault(r => {
                 if (r.EmployeeId != e.Id) return false;
                 var reqStart = DateOnly.FromDateTime(r.RequestedTimeUtc);
                 var reqEnd = r.RequestedEndTimeUtc.HasValue ? DateOnly.FromDateTime(r.RequestedEndTimeUtc.Value) : reqStart;
-                return reqStart <= p.Date && reqEnd >= p.Date;
+                return reqStart <= date && reqEnd >= date;
             });
             return new
             {
-                date = p.Date.ToString("yyyy-MM-dd"),
-                scheduleId = p.WorkScheduleId,
-                scheduleName = p.WorkSchedule?.Name,
-                shiftStart = p.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"),
-                shiftEnd = p.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
-                isDayOff = p.IsDayOff,
+                date = date.ToString("yyyy-MM-dd"),
+                scheduleId,
+                scheduleName,
+                shiftStart,
+                shiftEnd,
+                isDayOff,
                 leaveId = leave?.Id,
                 leaveType = leave?.LeaveType.ToString(),
                 leaveIsPaid = leave?.IsPaid,
@@ -2756,7 +2952,26 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
                 requestStatus = req?.Status.ToString(),
                 requestComment = req?.Comment,
             };
-        }).ToArray()
+        }
+
+        var dates = e.DayPatterns
+            .Select(p => BuildDate(p.Date, p.WorkScheduleId, p.WorkSchedule?.Name,
+                p.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"), p.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"), p.IsDayOff))
+            .Concat(leaveDates.Select(d => BuildDate(d, null, null, null, null, false)))
+            .OrderBy(x => ((dynamic)x).date)
+            .ToArray();
+
+        return new
+        {
+            employeeId = e.Id,
+            employeeName = e.FirstName + " " + e.LastName,
+            defaultScheduleId = e.WorkScheduleId,
+            defaultScheduleName = e.WorkSchedule?.Name,
+            defaultShiftStart = e.WorkSchedule?.ShiftStart?.ToString(@"hh\:mm"),
+            defaultShiftEnd = e.WorkSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
+            defaultColor = e.WorkSchedule?.Color,
+            dates,
+        };
     });
 
     return Results.Ok(new { schedules, employees = empResult });
@@ -3313,7 +3528,7 @@ app.MapGet("/api/attendance-requests", async (Guid? employeeId, string? status, 
     return Results.Ok(items);
 }).RequireAuthorization();
 
-app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody request, AppDbContext dbContext, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, CancellationToken cancellationToken) =>
+app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody request, AppDbContext dbContext, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken cancellationToken) =>
 {
     if (!Enum.TryParse<AttendanceRequestType>(request.Type, true, out var reqType))
         return Results.BadRequest(new { message = "Неверный тип заявки." });
@@ -3346,12 +3561,23 @@ app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody reque
     };
     dbContext.AttendanceRequests.Add(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
+
+    var employeeName = $"{employee.FirstName} {employee.LastName}";
+    _ = notifService.CreateAsync(
+        NotificationTypes.ApprovalRequest,
+        "Новая заявка на утверждение",
+        $"{employeeName} подал(а) заявку: {reqType}.",
+        referenceId: entity.Id.ToString(),
+        ct: cancellationToken);
+
     return Results.Created($"/api/attendance-requests/{entity.Id}", new { entity.Id, entity.EmployeeId, entity.Type, entity.RequestedTimeUtc, entity.Status });
 }).RequireAuthorization();
 
-app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewAttendanceRequestBody? request, AppDbContext dbContext, ClaimsPrincipal user, CancellationToken cancellationToken) =>
+app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewAttendanceRequestBody? request, AppDbContext dbContext, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken cancellationToken) =>
 {
-    var entity = await dbContext.AttendanceRequests.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    var entity = await dbContext.AttendanceRequests
+        .Include(r => r.Employee)
+        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     if (entity is null) return Results.NotFound();
     if (entity.Status != AttendanceRequestStatus.Pending)
         return Results.BadRequest(new { message = "Заявка уже обработана." });
@@ -3392,12 +3618,26 @@ app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewA
             existingCorr.CheckOutUtc = entity.RequestedTimeUtc;
     }
     await dbContext.SaveChangesAsync(cancellationToken);
+
+    // Notify the employee whose request was approved
+    var requesterUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == entity.EmployeeId, cancellationToken);
+    if (requesterUser is not null)
+        _ = notifService.CreateAsync(
+            NotificationTypes.ApprovalApproved,
+            "Заявка одобрена",
+            $"Ваша заявка «{entity.Type}» одобрена.",
+            userId: requesterUser.Id,
+            referenceId: entity.Id.ToString(),
+            ct: cancellationToken);
+
     return Results.Ok(new { entity.Id, entity.Status, entity.ReviewedAtUtc });
 }).RequireAuthorization();
 
-app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAttendanceRequestBody? request, AppDbContext dbContext, ClaimsPrincipal user, CancellationToken cancellationToken) =>
+app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAttendanceRequestBody? request, AppDbContext dbContext, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken cancellationToken) =>
 {
-    var entity = await dbContext.AttendanceRequests.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    var entity = await dbContext.AttendanceRequests
+        .Include(r => r.Employee)
+        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     if (entity is null) return Results.NotFound();
     if (entity.Status != AttendanceRequestStatus.Pending)
         return Results.BadRequest(new { message = "Заявка уже обработана." });
@@ -3409,7 +3649,191 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
     entity.ReviewComment = request?.Comment;
     entity.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
+
+    // Notify the employee whose request was rejected
+    var requesterUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == entity.EmployeeId, cancellationToken);
+    if (requesterUser is not null)
+        _ = notifService.CreateAsync(
+            NotificationTypes.ApprovalRejected,
+            "Заявка отклонена",
+            $"Ваша заявка «{entity.Type}» отклонена.{(string.IsNullOrWhiteSpace(request?.Comment) ? "" : " Комментарий: " + request.Comment)}",
+            userId: requesterUser.Id,
+            referenceId: entity.Id.ToString(),
+            ct: cancellationToken);
+
     return Results.Ok(new { entity.Id, entity.Status, entity.ReviewedAtUtc });
+}).RequireAuthorization();
+
+// ─── Report Exports ────────────────────────────────────────────────────────────
+
+static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttendanceRows(
+    DateTime fromUtc, DateTime toUtc, Guid? employeeId, AppDbContext dbContext, CancellationToken ct)
+{
+    var fromDate = DateOnly.FromDateTime(fromUtc);
+    var toDate = DateOnly.FromDateTime(toUtc);
+
+    var empQuery = dbContext.Employees.AsNoTracking()
+        .Include(e => e.WorkSchedule)
+        .Include(e => e.Department)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+    if (employeeId.HasValue) empQuery = empQuery.Where(e => e.Id == employeeId.Value);
+    var employees = await empQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(ct);
+
+    var rangeEnd = toUtc.AddDays(1);
+    var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+        .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEnd)
+        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .ToListAsync(ct);
+
+    var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
+        .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc)
+        .ToListAsync(ct);
+    var corrByEmpDate = corrections.ToDictionary(c => (c.EmployeeId, c.DateUtc));
+
+    var byEmpNoDay = logs
+        .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
+        .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+
+    var rows = new List<AttendancePeriodRow>();
+    string? singleEmpName = null;
+    foreach (var e in employees)
+    {
+        var empKeyLower = (e.EmployeeNo ?? "").Trim().ToLowerInvariant();
+        var name = (e.FirstName + " " + e.LastName).Trim();
+        singleEmpName = name;
+        var patternsByDate = e.DayPatterns.ToDictionary(dp => dp.Date);
+        for (var day = fromUtc; day <= toUtc; day = day.AddDays(1))
+        {
+            var dayKey = DateOnly.FromDateTime(day);
+            patternsByDate.TryGetValue(dayKey, out var dayPat);
+            var sched = dayPat is not null && !dayPat.IsDayOff
+                ? (dayPat.WorkSchedule ?? e.WorkSchedule) : e.WorkSchedule;
+
+            DateTime? first = null, last = null;
+            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { first = stat.First; last = stat.Last; }
+            if (corrByEmpDate.TryGetValue((e.Id, day), out var corr))
+            {
+                if (corr.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
+                if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
+            }
+
+            int? lateMin = null;
+            if (sched?.ShiftStart is TimeSpan ss && first.HasValue)
+            {
+                var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+                lateMin = (int)Math.Max(0, Math.Round((local.TimeOfDay - ss).TotalMinutes));
+            }
+
+            rows.Add(new AttendancePeriodRow(
+                e.Id, name, e.Department?.Name, dayKey,
+                sched?.Name,
+                sched?.ShiftStart?.ToString(@"hh\:mm"),
+                sched?.ShiftEnd?.ToString(@"hh\:mm"),
+                first,
+                first.HasValue && last.HasValue && first != last ? last : null,
+                first.HasValue && last.HasValue ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+                lateMin,
+                corrByEmpDate.ContainsKey((e.Id, day))));
+        }
+    }
+    return (rows, employees.Count == 1 ? singleEmpName : null);
+}
+
+app.MapGet("/api/reports/work-hours/excel", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken ct) =>
+{
+    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-30)).ToUniversalTime().Date;
+    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
+    if (toUtc < fromUtc) toUtc = fromUtc;
+    if ((toUtc - fromUtc).TotalDays > 366) toUtc = fromUtc.AddDays(366);
+    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, dbContext, ct);
+    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
+    return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
+}).RequireAuthorization();
+
+app.MapGet("/api/reports/work-hours/pdf", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken ct) =>
+{
+    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-30)).ToUniversalTime().Date;
+    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
+    if (toUtc < fromUtc) toUtc = fromUtc;
+    if ((toUtc - fromUtc).TotalDays > 366) toUtc = fromUtc.AddDays(366);
+    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, dbContext, ct);
+    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
+    return Results.File(bytes, "application/pdf", $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
+}).RequireAuthorization();
+
+app.MapGet("/api/reports/payroll/{periodId:guid}/excel", async (Guid periodId, AppDbContext db, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.AsNoTracking().FirstOrDefaultAsync(p => p.Id == periodId, ct);
+    if (period is null) return Results.NotFound();
+    var entries = await db.PayrollEntries.AsNoTracking()
+        .Where(e => e.PeriodId == periodId)
+        .Include(e => e.Employee).ThenInclude(e => e.Department)
+        .OrderBy(e => e.Employee.LastName)
+        .ToListAsync(ct);
+    var rows = entries.Select(e => new PayrollReportRow(
+        $"{e.Employee.FirstName} {e.Employee.LastName}", e.Employee.EmployeeNo,
+        e.Employee.Department?.Name,
+        (double)e.WorkedDays, (double)e.WorkedHours, (double)e.OvertimeHours, e.AbsentDays,
+        e.BasePay, e.OvertimePay, e.AllowancesTotal, e.BonusesTotal,
+        e.GrossPay, e.DeductionsTotal, e.TaxAmount, e.NetPay)).ToList();
+    var bytes = ExcelReportBuilder.BuildPayroll(rows, period.Year, period.Month, period.Status.ToString());
+    return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        $"payroll-{period.Year}-{period.Month:D2}.xlsx");
+}).RequireAuthorization();
+
+app.MapGet("/api/reports/payroll/{periodId:guid}/pdf", async (Guid periodId, AppDbContext db, CancellationToken ct) =>
+{
+    var period = await db.PayrollPeriods.AsNoTracking().FirstOrDefaultAsync(p => p.Id == periodId, ct);
+    if (period is null) return Results.NotFound();
+    var entries = await db.PayrollEntries.AsNoTracking()
+        .Where(e => e.PeriodId == periodId)
+        .Include(e => e.Employee).ThenInclude(e => e.Department)
+        .OrderBy(e => e.Employee.LastName)
+        .ToListAsync(ct);
+    var rows = entries.Select(e => new PayrollReportRow(
+        $"{e.Employee.FirstName} {e.Employee.LastName}", e.Employee.EmployeeNo,
+        e.Employee.Department?.Name,
+        (double)e.WorkedDays, (double)e.WorkedHours, (double)e.OvertimeHours, e.AbsentDays,
+        e.BasePay, e.OvertimePay, e.AllowancesTotal, e.BonusesTotal,
+        e.GrossPay, e.DeductionsTotal, e.TaxAmount, e.NetPay)).ToList();
+    var bytes = PdfReportBuilder.BuildPayroll(rows, period.Year, period.Month, period.Status.ToString());
+    return Results.File(bytes, "application/pdf", $"payroll-{period.Year}-{period.Month:D2}.pdf");
+}).RequireAuthorization();
+
+// ─── Notifications ─────────────────────────────────────────────────────────────
+
+app.MapGet("/api/notifications", async (ClaimsPrincipal user, INotificationService notifService, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        return Results.Unauthorized();
+    var items = await notifService.GetForUserAsync(userId, ct: ct);
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+app.MapGet("/api/notifications/unread-count", async (ClaimsPrincipal user, INotificationService notifService, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        return Results.Unauthorized();
+    var count = await notifService.GetUnreadCountAsync(userId, ct);
+    return Results.Ok(new { count });
+}).RequireAuthorization();
+
+app.MapPost("/api/notifications/{id:guid}/read", async (Guid id, ClaimsPrincipal user, INotificationService notifService, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        return Results.Unauthorized();
+    await notifService.MarkReadAsync(id, userId, ct);
+    return Results.Ok();
+}).RequireAuthorization();
+
+app.MapPost("/api/notifications/read-all", async (ClaimsPrincipal user, INotificationService notifService, CancellationToken ct) =>
+{
+    if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+        return Results.Unauthorized();
+    await notifService.MarkAllReadAsync(userId, ct);
+    return Results.Ok();
 }).RequireAuthorization();
 
 // ─── Self-Service Auth ─────────────────────────────────────────────────────────
@@ -4143,6 +4567,140 @@ app.MapPut("/api/payroll/periods/{id:guid}/entries/{entryId:guid}/reject", async
     return Results.Ok(new { entry.Id, status = entry.Status.ToString() });
 }).RequireAuthorization();
 
+// ─── Email Reports ────────────────────────────────────────────────────────────
+
+app.MapPost("/api/reports/attendance/send-email", async (
+    SendAttendanceReportRequest request,
+    AppDbContext dbContext,
+    IEmailService emailService,
+    IEmailTemplateService tplService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.To))
+        return Results.BadRequest(new { message = "Recipient email is required." });
+
+    var fromUtc = request.From.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var toUtc = request.To2.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    if (toUtc < fromUtc) toUtc = fromUtc;
+
+    var employees = await dbContext.Employees.AsNoTracking()
+        .Include(e => e.Department)
+        .Include(e => e.WorkSchedule)
+        .Where(e => e.IsActive && e.WorkScheduleId != null)
+        .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
+        .ToListAsync(cancellationToken);
+
+    var empNos = employees.Where(e => !string.IsNullOrWhiteSpace(e.EmployeeNo))
+        .Select(e => e.EmployeeNo!.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var rangeEnd = toUtc.AddDays(1);
+    var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+        .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEnd)
+        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .ToListAsync(cancellationToken);
+
+    var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
+        .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc)
+        .ToListAsync(cancellationToken);
+    var corrByEmpDate = corrections.ToDictionary(c => (c.EmployeeId, c.DateUtc));
+
+    var byEmpNoDay = logs
+        .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
+        .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+
+    var tableRows = new System.Text.StringBuilder();
+    for (var day = fromUtc; day <= toUtc; day = day.AddDays(1))
+    {
+        foreach (var e in employees)
+        {
+            var empKeyLower = (e.EmployeeNo ?? "").Trim().ToLowerInvariant();
+            DateTime? first = null; DateTime? last = null;
+            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { first = stat.First; last = stat.Last; }
+            if (corrByEmpDate.TryGetValue((e.Id, day), out var corr))
+            {
+                if (corr.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
+                if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
+            }
+            int? lateMin = null;
+            if (e.WorkSchedule?.ShiftStart is TimeSpan shiftStart && first.HasValue)
+            {
+                var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+                lateMin = (int)Math.Max(0, Math.Round((local.TimeOfDay - shiftStart).TotalMinutes));
+            }
+            var hours = first.HasValue && last.HasValue ? (last.Value - first.Value).TotalHours : 0;
+            var name = $"{e.FirstName} {e.LastName}".Trim();
+            var dept = e.Department?.Name ?? "—";
+            var ciStr = first.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm") : "—";
+            var coStr = last.HasValue && last != first ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm") : "—";
+            var lateStr = lateMin is > 0 ? $"+{lateMin}m" : "—";
+            var hoursStr = hours > 0 ? hours.ToString("0.0") : "—";
+            tableRows.Append($"<tr><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{day:dd.MM.yyyy}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{name}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{dept}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{ciStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{coStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{hoursStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{lateStr}</td></tr>");
+        }
+    }
+
+    var companyName = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", cancellationToken))?.Value ?? "ProjectX";
+    var (subject, body) = await tplService.RenderAsync("attendance_report", new()
+    {
+        ["{{companyName}}"] = companyName,
+        ["{{fromDate}}"] = request.From.ToString("dd.MM.yyyy"),
+        ["{{toDate}}"] = request.To2.ToString("dd.MM.yyyy"),
+        ["{{tableRows}}"] = tableRows.ToString(),
+        ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
+    }, cancellationToken);
+
+    await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    return Results.Ok(new { message = $"Report sent to {request.To}." });
+}).RequireAuthorization();
+
+app.MapPost("/api/payroll/periods/{id:guid}/send-email", async (
+    Guid id,
+    SendPayrollReportRequest request,
+    AppDbContext dbContext,
+    IEmailService emailService,
+    IEmailTemplateService tplService,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.To))
+        return Results.BadRequest(new { message = "Recipient email is required." });
+
+    var period = await dbContext.PayrollPeriods.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+    if (period is null) return Results.NotFound();
+
+    var entries = await dbContext.PayrollEntries.AsNoTracking()
+        .Where(e => e.PeriodId == id)
+        .Include(e => e.Employee).ThenInclude(emp => emp!.Department)
+        .OrderBy(e => e.Employee!.LastName)
+        .ToListAsync(cancellationToken);
+
+    var companyName = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", cancellationToken))?.Value ?? "ProjectX";
+    var monthName = new System.Globalization.CultureInfo("en-US").DateTimeFormat.GetMonthName(period.Month);
+
+    var tableRows = string.Join("", entries.Select(e =>
+    {
+        var emp = e.Employee;
+        var name = emp is null ? "—" : $"{emp.FirstName} {emp.LastName}";
+        var dept = emp?.Department?.Name ?? "—";
+        return $"<tr><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0'>{name}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0'>{dept}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{e.WorkedDays}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{e.WorkedHours:0.0}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right'>{e.BasePay:N2}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right'>{e.GrossPay:N2}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right'>{e.TaxAmount:N2}</td><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600'>{e.NetPay:N2}</td></tr>";
+    }));
+
+    var (subject, body) = await tplService.RenderAsync("payroll_report", new()
+    {
+        ["{{companyName}}"] = companyName,
+        ["{{month}}"] = monthName,
+        ["{{year}}"] = period.Year.ToString(),
+        ["{{status}}"] = period.Status.ToString(),
+        ["{{employeeCount}}"] = entries.Count.ToString(),
+        ["{{totalGross}}"] = entries.Sum(e => e.GrossPay).ToString("N2"),
+        ["{{totalTax}}"] = entries.Sum(e => e.TaxAmount).ToString("N2"),
+        ["{{totalNet}}"] = entries.Sum(e => e.NetPay).ToString("N2"),
+        ["{{tableRows}}"] = tableRows,
+        ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
+    }, cancellationToken);
+
+    await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    return Results.Ok(new { message = $"Payroll report sent to {request.To}." });
+}).RequireAuthorization();
+
 // ─── Vault ────────────────────────────────────────────────────────────────────
 
 var backupDir = Path.Combine(AppContext.BaseDirectory, "backups");
@@ -4714,12 +5272,25 @@ public sealed record NoteRequest(string? Note);
 public sealed record CreateLeaveRequest(Guid EmployeeId, string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
 public sealed record UpdateLeaveRequest(string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
 public sealed record VaultSecondaryDbRequest(string? ConnectionString);
+public sealed record SmtpSettingsRequest(bool Enabled, string? Host, int Port, string? Username, string? Password, string? FromAddress, string? FromName, bool EnableSsl);
+public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody);
+public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
+public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2);
+public sealed record SendPayrollReportRequest(string To);
 
-public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub) : IDeviceStatusBroadcaster
+public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub, INotificationService notificationService) : IDeviceStatusBroadcaster
 {
     public async Task NotifyStatusChangedAsync(Guid deviceId, string deviceIdentifier, string status, DateTime? lastSeenUtc, string? statusMessage = null, CancellationToken cancellationToken = default)
     {
         await hub.Clients.All.SendAsync("DeviceStatusChanged", new DeviceStatusResponse(deviceId, deviceIdentifier, status, lastSeenUtc, statusMessage), cancellationToken);
+
+        if (status == "offline")
+            _ = notificationService.CreateAsync(
+                NotificationTypes.DeviceOffline,
+                "Устройство недоступно",
+                $"Устройство «{deviceIdentifier}» потеряло связь.",
+                referenceId: deviceId.ToString(),
+                ct: cancellationToken);
     }
 }
 
@@ -4743,6 +5314,7 @@ public sealed class DeviceActivityBroadcaster(IHubContext<DevicesHub> hub) : IDe
             cancellationToken);
 }
 
+[Microsoft.AspNetCore.Authorization.Authorize]
 public sealed class DevicesHub : Hub
 {
     private readonly IDeviceDiscoveryService _discovery;
@@ -4750,6 +5322,11 @@ public sealed class DevicesHub : Hub
     public DevicesHub(IDeviceDiscoveryService discovery)
     {
         _discovery = discovery;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        await base.OnConnectedAsync();
     }
 
     /// <summary>Запуск streaming discovery: устройства отправляются по мере обнаружения через DeviceFound, по завершении — DiscoveryComplete.</summary>

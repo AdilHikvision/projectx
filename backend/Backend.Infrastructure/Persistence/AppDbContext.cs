@@ -44,6 +44,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<PayrollPeriod> PayrollPeriods => Set<PayrollPeriod>();
     public DbSet<PayrollEntry> PayrollEntries => Set<PayrollEntry>();
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationRead> NotificationReads => Set<NotificationRead>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -349,6 +351,25 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             b.HasOne(e => e.Employee).WithMany(emp => emp.Leaves).HasForeignKey(e => e.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(e => e.EmployeeId);
             b.HasIndex(e => new { e.EmployeeId, e.StartDate });
+        });
+
+        builder.Entity<Notification>(entity =>
+        {
+            entity.ToTable("notifications");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Title).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.Body).HasMaxLength(1000).IsRequired();
+            entity.Property(x => x.ReferenceId).HasMaxLength(128);
+            entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.CreatedUtc);
+        });
+
+        builder.Entity<NotificationRead>(entity =>
+        {
+            entity.ToTable("notification_reads");
+            entity.HasKey(x => new { x.NotificationId, x.UserId });
+            entity.HasOne<Notification>().WithMany().HasForeignKey(x => x.NotificationId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

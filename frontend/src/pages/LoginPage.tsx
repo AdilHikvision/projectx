@@ -275,14 +275,6 @@ export function LoginPage() {
             </form>
           )}
 
-          {/* Footer branding */}
-          <div className="pt-2 flex justify-center">
-            <img
-              src="/Hikvision_LOGO2.png"
-              alt="Hikvision"
-              className="h-7 w-auto max-w-[min(100%,220px)] object-contain object-center opacity-90 drop-shadow-[0_4px_14px_rgba(0,0,0,0.28)]"
-            />
-          </div>
         </div>
       </div>
     </div>

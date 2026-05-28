@@ -57,6 +57,11 @@ interface DateData {
 interface Employee {
     employeeId: string
     employeeName: string
+    defaultScheduleId: string | null
+    defaultScheduleName: string | null
+    defaultShiftStart: string | null
+    defaultShiftEnd: string | null
+    defaultColor: string | null
     dates: DateData[]
 }
 
@@ -205,17 +210,37 @@ export function SchedulePlannerPage() {
                 shiftStart: sched?.shiftStart ?? null,
                 shiftEnd: sched?.shiftEnd ?? null,
                 isDayOff: pending.isDayOff,
-                color: sched?.color ?? '#6366f1',
+                color: sched?.color ?? emp.defaultColor ?? '#6366f1',
                 isPending: true,
                 isReset: pending.reset,
+                leaveId: null, leaveType: null, leaveIsPaid: null, leaveStatus: null, leaveReason: null,
+                requestId: null, requestType: null, requestStatus: null, requestComment: null,
             }
         }
         const base = emp.dates.find(d => d.date === dateStr)
         if (base) {
             const sched = data?.schedules.find(s => s.id === base.scheduleId) ?? null
-            return { ...base, color: sched?.color ?? '#6366f1', isPending: false, isReset: false }
+            const color = sched?.color ?? emp.defaultColor ?? '#6366f1'
+            return { ...base, color, isPending: false, isReset: false }
         }
-        return { scheduleId: null, scheduleName: null, shiftStart: null, shiftEnd: null, isDayOff: false, color: '#6366f1', isPending: false, isReset: false, leaveId: null, leaveType: null, leaveIsPaid: null, leaveStatus: null, leaveReason: null, requestId: null, requestType: null, requestStatus: null, requestComment: null }
+        // Fallback: use employee's default schedule on weekdays
+        if (emp.defaultScheduleId) {
+            const dow = new Date(dateStr + 'T00:00:00').getDay() // 0=Sun, 6=Sat
+            if (dow !== 0 && dow !== 6) {
+                return {
+                    scheduleId: emp.defaultScheduleId,
+                    scheduleName: emp.defaultScheduleName,
+                    shiftStart: emp.defaultShiftStart,
+                    shiftEnd: emp.defaultShiftEnd,
+                    isDayOff: false,
+                    color: emp.defaultColor ?? '#6366f1',
+                    isPending: false, isReset: false,
+                    leaveId: null, leaveType: null, leaveIsPaid: null, leaveStatus: null, leaveReason: null,
+                    requestId: null, requestType: null, requestStatus: null, requestComment: null,
+                }
+            }
+        }
+        return { scheduleId: null, scheduleName: null, shiftStart: null, shiftEnd: null, isDayOff: false, color: emp.defaultColor ?? '#6366f1', isPending: false, isReset: false, leaveId: null, leaveType: null, leaveIsPaid: null, leaveStatus: null, leaveReason: null, requestId: null, requestType: null, requestStatus: null, requestComment: null }
     }
 
     // ─── Totals ───────────────────────────────────────────────────────────────
@@ -224,7 +249,7 @@ export function SchedulePlannerPage() {
         let days = 0, mins = 0
         for (const col of columns) {
             const p = getEffective(emp, col.dateStr)
-            if (!p.isDayOff && p.scheduleId && p.shiftStart && p.shiftEnd) {
+            if (!p.isDayOff && !p.leaveType && p.scheduleId && p.shiftStart && p.shiftEnd) {
                 days++
                 mins += timeToMins(p.shiftEnd) - timeToMins(p.shiftStart)
             }
@@ -359,12 +384,6 @@ export function SchedulePlannerPage() {
                 {loading ? (
                     <div className="flex-1 flex items-center justify-center text-text-muted text-sm gap-2">
                         <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>Loading…
-                    </div>
-                ) : schedules.length === 0 ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-text-muted gap-3">
-                        <span className="material-symbols-outlined text-5xl">calendar_month</span>
-                        <p className="text-sm font-bold">No work schedules found</p>
-                        <p className="text-xs">Create schedules in Work Hours → Schedules tab first</p>
                     </div>
                 ) : (
                     <div className="flex-1 overflow-auto">

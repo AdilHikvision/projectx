@@ -6,3 +6,4 @@ export { UserDropdown } from './UserDropdown';
 export { NavItem } from './NavItem';
 export { AlertMessage } from './AlertMessage';
 export { ConfirmDialog } from './ConfirmDialog';
+export { NotificationBell } from './NotificationBell';

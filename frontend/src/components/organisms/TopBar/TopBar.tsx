@@ -1,6 +1,6 @@
-import { Button } from '../../atoms';
-import { UserDropdown } from '../../molecules';
+import { UserDropdown, NotificationBell } from '../../molecules';
 import { useAuth } from '../../../auth/AuthContext';
+import { useNotifications } from '../../../hooks/useNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 
@@ -47,6 +47,7 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
     const navigate = useNavigate();
     const location = useLocation();
     const initials = getInitials(user?.email);
+    const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
 
     const [query, setQuery] = useState('');
     const [activeIndex, setActiveIndex] = useState(0);
@@ -166,9 +167,12 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <button type="button" className="w-9 h-9 rounded-full border border-border-base bg-white hover:bg-slate-75 transition-colors flex items-center justify-center">
-                            <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
-                        </button>
+                        <NotificationBell
+                            notifications={notifications}
+                            unreadCount={unreadCount}
+                            onMarkRead={markRead}
+                            onMarkAllRead={markAllRead}
+                        />
                         <UserDropdown initials={initials} onLogout={handleLogout} />
                     </div>
                 </div>
