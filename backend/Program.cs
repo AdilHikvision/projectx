@@ -1788,6 +1788,15 @@ app.MapPut("/api/employees/{id:guid}", async (
     else if (request.DepartmentId == null) entity.DepartmentId = null;
     if (request.CompanyId.HasValue) entity.CompanyId = request.CompanyId.Value;
     else if (request.CompanyId == null) entity.CompanyId = null;
+    // When clearing the default schedule, also remove all day-pattern assignments
+    // so old patterns don't continue overriding the "no schedule" state in the report.
+    if (request.WorkScheduleId == null && entity.WorkScheduleId != null)
+    {
+        var patternsToRemove = await dbContext.EmployeeDayPatterns
+            .Where(p => p.EmployeeId == entity.Id && p.WorkScheduleId != null)
+            .ToListAsync(cancellationToken);
+        dbContext.EmployeeDayPatterns.RemoveRange(patternsToRemove);
+    }
     entity.WorkScheduleId = request.WorkScheduleId;
     entity.UpdatedUtc = DateTime.UtcNow;
 
@@ -2807,23 +2816,30 @@ app.MapPost("/api/system/services/{action}-all", async (
 app.MapGet("/api/work-schedules", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var schedules = await dbContext.WorkSchedules.AsNoTracking()
+        .Include(s => s.Shifts.OrderBy(sh => sh.SortOrder))
         .OrderBy(s => s.Name)
-        .Select(s => new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc))
         .ToListAsync(cancellationToken);
-    return Results.Ok(schedules);
+    var result = schedules.Select(s => new WorkScheduleResponse(
+        s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc,
+        s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null
+    )).ToList();
+    return Results.Ok(result);
 }).RequireAuthorization();
 
 app.MapGet("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var s = await dbContext.WorkSchedules.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    var s = await dbContext.WorkSchedules.AsNoTracking()
+        .Include(ws => ws.Shifts.OrderBy(sh => sh.SortOrder))
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (s is null) return Results.NotFound();
-    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc));
+    var shiftsDto = s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null;
+    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc, shiftsDto));
 }).RequireAuthorization();
 
 app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     if (!Enum.TryParse<ScheduleType>(request.Type, true, out var scheduleType))
-        return Results.BadRequest(new { message = "Неверный тип расписания. Допустимые значения: Standard, Shift, Flexible." });
+        return Results.BadRequest(new { message = "Неверный тип расписания. Допустимые значения: Standard, Shift, Flexible, Multi." });
     var entity = new WorkSchedule
     {
         Name = request.Name.Trim(),
@@ -2834,13 +2850,35 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
         Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : "#6366f1"
     };
     dbContext.WorkSchedules.Add(entity);
+    if (scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 })
+    {
+        foreach (var sh in request.Shifts)
+        {
+            dbContext.WorkScheduleShifts.Add(new WorkScheduleShift
+            {
+                WorkScheduleId = entity.Id,
+                Name = sh.Name.Trim(),
+                ShiftStart = sh.ShiftStart,
+                ShiftEnd = sh.ShiftEnd,
+                ValidEntryFrom = sh.ValidEntryFrom,
+                ValidEntryTo = sh.ValidEntryTo,
+                RequiredHoursPerDay = sh.RequiredHoursPerDay,
+                SortOrder = sh.SortOrder,
+            });
+        }
+    }
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc));
+    var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
+        ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
+        : null;
+    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto));
 }).RequireAuthorization();
 
 app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
-    var entity = await dbContext.WorkSchedules.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    var entity = await dbContext.WorkSchedules
+        .Include(ws => ws.Shifts)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null) return Results.NotFound();
     if (!Enum.TryParse<ScheduleType>(request.Type, true, out var scheduleType))
         return Results.BadRequest(new { message = "Неверный тип расписания." });
@@ -2851,8 +2889,68 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     entity.RequiredHoursPerDay = request.RequiredHoursPerDay ?? 8m;
     entity.Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : entity.Color;
     entity.UpdatedUtc = DateTime.UtcNow;
+    // Replace shifts for Multi schedules
+    dbContext.WorkScheduleShifts.RemoveRange(entity.Shifts);
+    if (scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 })
+    {
+        foreach (var sh in request.Shifts)
+        {
+            dbContext.WorkScheduleShifts.Add(new WorkScheduleShift
+            {
+                WorkScheduleId = entity.Id,
+                Name = sh.Name.Trim(),
+                ShiftStart = sh.ShiftStart,
+                ShiftEnd = sh.ShiftEnd,
+                ValidEntryFrom = sh.ValidEntryFrom,
+                ValidEntryTo = sh.ValidEntryTo,
+                RequiredHoursPerDay = sh.RequiredHoursPerDay,
+                SortOrder = sh.SortOrder,
+            });
+        }
+    }
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc));
+    var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
+        ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
+        : null;
+    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto));
+}).RequireAuthorization();
+
+// Returns the current assignment state for a schedule: which employees are assigned,
+// the date range (min/max of their day patterns), and days-of-week derived from pattern dates.
+app.MapGet("/api/work-schedules/{id:guid}/assignment", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    // Employees assigned via default WorkScheduleId
+    var empWithDefault = await dbContext.Employees.AsNoTracking()
+        .Where(e => e.IsActive && e.WorkScheduleId == id)
+        .Select(e => e.Id)
+        .ToListAsync(cancellationToken);
+
+    // Day patterns for this schedule
+    var patterns = await dbContext.EmployeeDayPatterns.AsNoTracking()
+        .Where(p => p.WorkScheduleId == id)
+        .Select(p => new { p.EmployeeId, p.Date })
+        .ToListAsync(cancellationToken);
+
+    var empWithPatterns = patterns.Select(p => p.EmployeeId).Distinct().ToList();
+    var allEmpIds = empWithDefault.Union(empWithPatterns).Distinct().ToList();
+
+    DateOnly? fromDate = patterns.Count > 0 ? patterns.Min(p => p.Date) : null;
+    DateOnly? toDate   = patterns.Count > 0 ? patterns.Max(p => p.Date) : null;
+
+    // Derive distinct days of week (1=Mon … 7=Sun, ISO) from pattern dates
+    var daysOfWeek = patterns
+        .Select(p => p.Date.DayOfWeek == DayOfWeek.Sunday ? 7 : (int)p.Date.DayOfWeek)
+        .Distinct()
+        .OrderBy(d => d)
+        .ToList();
+
+    return Results.Ok(new
+    {
+        employeeIds = allEmpIds,
+        fromDate = fromDate?.ToString("yyyy-MM-dd"),
+        toDate   = toDate?.ToString("yyyy-MM-dd"),
+        daysOfWeek,
+    });
 }).RequireAuthorization();
 
 app.MapDelete("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2860,6 +2958,90 @@ app.MapDelete("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbCo
     var entity = await dbContext.WorkSchedules.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (entity is null) return Results.NotFound();
     dbContext.WorkSchedules.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// Bulk-assign default schedule to multiple employees (sets Employee.WorkScheduleId).
+app.MapPut("/api/employees/bulk-schedule", async (
+    BulkAssignScheduleRequest request,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    if (request.EmployeeIds is null || request.EmployeeIds.Length == 0)
+        return Results.BadRequest(new { message = "No employee IDs provided." });
+    var employees = await dbContext.Employees
+        .Where(e => request.EmployeeIds.Contains(e.Id))
+        .ToListAsync(cancellationToken);
+    foreach (var emp in employees)
+    {
+        emp.WorkScheduleId = request.ScheduleId;
+        emp.UpdatedUtc = DateTime.UtcNow;
+    }
+    // When removing the schedule (null), delete ALL day-pattern assignments for these employees
+    // so old patterns don't keep overriding in the attendance report.
+    if (request.ScheduleId == null)
+    {
+        var patterns = await dbContext.EmployeeDayPatterns
+            .Where(p => request.EmployeeIds.Contains(p.EmployeeId) && p.WorkScheduleId != null)
+            .ToListAsync(cancellationToken);
+        dbContext.EmployeeDayPatterns.RemoveRange(patterns);
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { count = employees.Count });
+}).RequireAuthorization();
+
+// Bulk-assign day patterns for multiple employees in a single transaction.
+// If ReplaceScheduleId is provided, deletes ALL old patterns for that schedule
+// before writing new ones — so re-assigning always produces a clean state.
+app.MapPut("/api/schedule-planner/bulk-days", async (
+    BulkSchedulePlannerRequest request,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    if (request.EmployeeIds is null || request.EmployeeIds.Length == 0)
+        return Results.BadRequest(new { message = "No employee IDs provided." });
+    if (request.Days is null || request.Days.Length == 0)
+        return Results.BadRequest(new { message = "No days provided." });
+
+    var newDates = request.Days.Select(d => d.Date).ToArray();
+
+    // Delete ALL existing patterns for these employees on the target dates
+    // (regardless of WorkScheduleId) to avoid UNIQUE(EmployeeId, Date) violations.
+    var existing = await dbContext.EmployeeDayPatterns
+        .Where(p => request.EmployeeIds.Contains(p.EmployeeId) && newDates.Contains(p.Date))
+        .ToListAsync(cancellationToken);
+    dbContext.EmployeeDayPatterns.RemoveRange(existing);
+
+    // Also delete any patterns with the replaced schedule outside the new date range
+    // so old assignments don't linger beyond the new range.
+    if (request.ReplaceScheduleId.HasValue)
+    {
+        var oldOutside = await dbContext.EmployeeDayPatterns
+            .Where(p => request.EmployeeIds.Contains(p.EmployeeId)
+                     && p.WorkScheduleId == request.ReplaceScheduleId.Value
+                     && !newDates.Contains(p.Date))
+            .ToListAsync(cancellationToken);
+        dbContext.EmployeeDayPatterns.RemoveRange(oldOutside);
+    }
+
+    // Insert fresh patterns for the new date range + days of week.
+    foreach (var empId in request.EmployeeIds)
+    {
+        foreach (var day in request.Days)
+        {
+            dbContext.EmployeeDayPatterns.Add(new EmployeeDayPattern
+            {
+                Id = Guid.NewGuid(),
+                EmployeeId = empId,
+                Date = day.Date,
+                IsDayOff = false,
+                WorkScheduleId = day.ScheduleId,
+                CreatedUtc = DateTime.UtcNow,
+            });
+        }
+    }
+
     await dbContext.SaveChangesAsync(cancellationToken);
     return Results.NoContent();
 }).RequireAuthorization();
@@ -2872,19 +3054,37 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
     var fromDate = from ?? new DateOnly(today.Year, today.Month, 1);
     var toDate = to ?? new DateOnly(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
 
-    var schedules = await dbContext.WorkSchedules.AsNoTracking()
+    var scheduleEntities = await dbContext.WorkSchedules.AsNoTracking()
         .OrderBy(s => s.Name)
-        .Select(s => new
-        {
-            id = s.Id,
-            name = s.Name,
-            type = s.Type.ToString(),
-            shiftStart = s.ShiftStart != null ? s.ShiftStart.Value.ToString(@"hh\:mm") : null,
-            shiftEnd = s.ShiftEnd != null ? s.ShiftEnd.Value.ToString(@"hh\:mm") : null,
-            requiredHoursPerDay = s.RequiredHoursPerDay,
-            color = s.Color
-        })
         .ToListAsync(cancellationToken);
+
+    var allShifts = await dbContext.WorkScheduleShifts.AsNoTracking()
+        .OrderBy(sh => sh.SortOrder)
+        .ToListAsync(cancellationToken);
+
+    var shiftsBySchedule = allShifts.GroupBy(sh => sh.WorkScheduleId)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
+    var scheduleDtos = scheduleEntities.Select(s => new
+    {
+        id = s.Id,
+        name = s.Name,
+        type = s.Type.ToString(),
+        shiftStart = s.ShiftStart?.ToString(@"hh\:mm"),
+        shiftEnd = s.ShiftEnd?.ToString(@"hh\:mm"),
+        requiredHoursPerDay = s.RequiredHoursPerDay,
+        color = s.Color,
+        shifts = shiftsBySchedule.TryGetValue(s.Id, out var sh) ? sh.Select(x => new
+        {
+            id = x.Id,
+            name = x.Name,
+            shiftStart = x.ShiftStart.ToString(@"hh\:mm"),
+            shiftEnd = x.ShiftEnd.ToString(@"hh\:mm"),
+            validEntryFrom = x.ValidEntryFrom.ToString(@"hh\:mm"),
+            validEntryTo = x.ValidEntryTo.ToString(@"hh\:mm"),
+            requiredHoursPerDay = x.RequiredHoursPerDay,
+        }).ToArray() : Array.Empty<object>(),
+    }).ToList();
 
     var employees = await dbContext.Employees.AsNoTracking()
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.Date >= fromDate && dp.Date <= toDate)))
@@ -2898,8 +3098,8 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
         .Where(l => l.StartDate <= toDate && l.EndDate >= fromDate && l.Status != LeaveStatus.Rejected && l.Status != LeaveStatus.Cancelled)
         .ToListAsync(cancellationToken);
 
-    var fromDt = fromDate.ToDateTime(TimeOnly.MinValue);
-    var toDt = toDate.ToDateTime(TimeOnly.MaxValue);
+    var fromDt = DateTime.SpecifyKind(fromDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
+    var toDt = DateTime.SpecifyKind(toDate.ToDateTime(TimeOnly.MaxValue), DateTimeKind.Utc);
     var selfServiceRequests = await dbContext.AttendanceRequests.AsNoTracking()
         .Where(r => (r.Type == AttendanceRequestType.Absence || r.Type == AttendanceRequestType.Vacation || r.Type == AttendanceRequestType.Overtime)
                     && r.Status != AttendanceRequestStatus.Rejected
@@ -2974,7 +3174,7 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
         };
     });
 
-    return Results.Ok(new { schedules, employees = empResult });
+    return Results.Ok(new { schedules = scheduleDtos, employees = empResult });
 }).RequireAuthorization();
 
 app.MapPut("/api/schedule-planner/{employeeId:guid}/days", async (
@@ -3122,8 +3322,8 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
     var dayDate = DateOnly.FromDateTime(dayStartUtc);
 
     var employeesQuery = dbContext.Employees.AsNoTracking()
-        .Include(e => e.WorkSchedule)
-        .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
@@ -3182,15 +3382,39 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
             ? (dayPattern.WorkSchedule ?? e.WorkSchedule)
             : e.WorkSchedule;
 
+        var isDayOff = dayPattern?.IsDayOff ?? false;
+
+        // For Multi schedules, pick the sub-shift matching the check-in window
+        WorkScheduleShift? matchedShift = null;
+        if (effectiveSchedule?.Type == ScheduleType.Multi && first.HasValue && effectiveSchedule.Shifts.Any())
+        {
+            var checkInLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            var checkInTime = checkInLocal.TimeOfDay;
+            matchedShift = effectiveSchedule.Shifts
+                .OrderBy(s => s.SortOrder)
+                .FirstOrDefault(s => checkInTime >= s.ValidEntryFrom && checkInTime <= s.ValidEntryTo);
+        }
+
+        var shiftStartForCalc = matchedShift is not null ? (TimeSpan?)matchedShift.ShiftStart : effectiveSchedule?.ShiftStart;
+        var shiftEndForCalc   = matchedShift is not null ? (TimeSpan?)matchedShift.ShiftEnd   : effectiveSchedule?.ShiftEnd;
+        var normHoursForCalc  = matchedShift is not null ? (double)matchedShift.RequiredHoursPerDay
+                              : (!isDayOff && effectiveSchedule is not null ? (double)effectiveSchedule.RequiredHoursPerDay : 0d);
+        var shiftNameForCalc  = matchedShift is not null ? $"{effectiveSchedule!.Name} / {matchedShift.Name}" : effectiveSchedule?.Name;
+
+        var totalHoursVal = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d;
+        var normHours = (!isDayOff && effectiveSchedule is not null) ? normHoursForCalc : 0d;
+        var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
+        var isAbsent = !isDayOff && effectiveSchedule is not null && !first.HasValue;
+
         int? lateMinutes = null;
         int? earlyLeaveMinutes = null;
-        if (effectiveSchedule is not null && effectiveSchedule.ShiftStart is TimeSpan shiftStart && first.HasValue)
+        if (!isDayOff && effectiveSchedule is not null && shiftStartForCalc is TimeSpan shiftStart && first.HasValue)
         {
             var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
             var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
             lateMinutes = (int)Math.Max(0, Math.Round(diff));
         }
-        if (effectiveSchedule is not null && effectiveSchedule.ShiftEnd is TimeSpan shiftEnd && last.HasValue)
+        if (!isDayOff && effectiveSchedule is not null && shiftEndForCalc is TimeSpan shiftEnd && last.HasValue)
         {
             var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
             var diff = (shiftEnd - lastLocal.TimeOfDay).TotalMinutes;
@@ -3202,12 +3426,16 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
             employeeId = e.Id,
             employeeName = string.IsNullOrEmpty(name) ? null : name,
             date = dayStartUtc,
-            scheduleName = effectiveSchedule?.Name,
-            shiftStart = effectiveSchedule?.ShiftStart?.ToString(@"hh\:mm"),
-            shiftEnd = effectiveSchedule?.ShiftEnd?.ToString(@"hh\:mm"),
+            scheduleName = shiftNameForCalc,
+            shiftStart = shiftStartForCalc?.ToString(@"hh\:mm"),
+            shiftEnd = shiftEndForCalc?.ToString(@"hh\:mm"),
             checkInUtc = first,
             checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
-            totalHours = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+            totalHours = totalHoursVal,
+            normHours,
+            overtimeHours,
+            isDayOff,
+            isAbsent,
             eventCount = stat?.Count ?? 0,
             lateMinutes,
             earlyLeaveMinutes,
@@ -3232,8 +3460,8 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
     var toDate = DateOnly.FromDateTime(toUtc);
 
     var employeesQuery = dbContext.Employees.AsNoTracking()
-        .Include(e => e.WorkSchedule)
-        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
@@ -3288,12 +3516,43 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
             }
 
+            var isDayOff = dayPat?.IsDayOff ?? false;
+
+            // For Multi schedules, pick the sub-shift matching the check-in window
+            WorkScheduleShift? matchedShiftP = null;
+            if (effectiveSched?.Type == ScheduleType.Multi && first.HasValue && effectiveSched.Shifts.Any())
+            {
+                var checkInLocalP = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+                var checkInTimeP = checkInLocalP.TimeOfDay;
+                matchedShiftP = effectiveSched.Shifts
+                    .OrderBy(s => s.SortOrder)
+                    .FirstOrDefault(s => checkInTimeP >= s.ValidEntryFrom && checkInTimeP <= s.ValidEntryTo);
+            }
+
+            var shiftStartForCalcP = matchedShiftP is not null ? (TimeSpan?)matchedShiftP.ShiftStart : effectiveSched?.ShiftStart;
+            var shiftEndForCalcP   = matchedShiftP is not null ? (TimeSpan?)matchedShiftP.ShiftEnd   : effectiveSched?.ShiftEnd;
+            var normHoursForCalcP  = matchedShiftP is not null ? (double)matchedShiftP.RequiredHoursPerDay
+                                  : (!isDayOff && effectiveSched is not null ? (double)effectiveSched.RequiredHoursPerDay : 0d);
+            var shiftNameForCalcP  = matchedShiftP is not null ? $"{effectiveSched!.Name} / {matchedShiftP.Name}" : effectiveSched?.Name;
+
+            var totalHoursVal = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d;
+            var normHours = (!isDayOff && effectiveSched is not null) ? normHoursForCalcP : 0d;
+            var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
+            var isAbsent = !isDayOff && effectiveSched is not null && !first.HasValue;
+
             int? lateMinutes = null;
-            if (effectiveSched is not null && effectiveSched.ShiftStart is TimeSpan shiftStart && first.HasValue)
+            int? earlyLeaveMinutes = null;
+            if (!isDayOff && effectiveSched is not null && shiftStartForCalcP is TimeSpan shiftStart && first.HasValue)
             {
                 var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
                 var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
                 lateMinutes = (int)Math.Max(0, Math.Round(diff));
+            }
+            if (!isDayOff && effectiveSched is not null && shiftEndForCalcP is TimeSpan shiftEnd && last.HasValue)
+            {
+                var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+                var diff = (shiftEnd - lastLocal.TimeOfDay).TotalMinutes;
+                earlyLeaveMinutes = (int)Math.Max(0, Math.Round(diff));
             }
 
             rows.Add(new
@@ -3301,13 +3560,18 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 employeeId = e.Id,
                 employeeName = string.IsNullOrEmpty(name) ? null : name,
                 date = day,
-                scheduleName = effectiveSched?.Name,
-                shiftStart = effectiveSched?.ShiftStart?.ToString(@"hh\:mm"),
-                shiftEnd = effectiveSched?.ShiftEnd?.ToString(@"hh\:mm"),
+                scheduleName = shiftNameForCalcP,
+                shiftStart = shiftStartForCalcP?.ToString(@"hh\:mm"),
+                shiftEnd = shiftEndForCalcP?.ToString(@"hh\:mm"),
                 checkInUtc = first,
                 checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
-                totalHours = (first.HasValue && last.HasValue) ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+                totalHours = totalHoursVal,
+                normHours,
+                overtimeHours,
+                isDayOff,
+                isAbsent,
                 lateMinutes,
+                earlyLeaveMinutes,
                 corrected = hasCorrection
             });
         }
@@ -4984,7 +5248,7 @@ static EmployeeResponse MapEmployeeResponse(Employee e)
     var primaryFaceId = (e.Faces ?? []).OrderBy(f => f.CreatedUtc).Select(f => (Guid?)f.Id).FirstOrDefault();
     return new EmployeeResponse(
         e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify,
-        accessNames, dept, e.CompanyId, primaryFaceId, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0, e.Irises?.Count ?? 0);
+        accessNames, dept, e.CompanyId, primaryFaceId, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0, e.Irises?.Count ?? 0, e.WorkScheduleId);
 }
 
 static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
@@ -5205,7 +5469,7 @@ public sealed record CaptureFingerprintRequest(string? PersonId, string? PersonT
 
 public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds, Guid? CompanyId);
 public sealed record DepartmentRef(Guid Id, string Name);
-public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount);
+public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, Guid? WorkScheduleId = null);
 public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null);
 public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount);
 public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises);
@@ -5246,9 +5510,12 @@ public sealed record ManagedServiceResponse(
     string Message);
 
 // Time Attendance records
-public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc);
+public sealed record WorkScheduleShiftDto(Guid? Id, string Name, TimeSpan ShiftStart, TimeSpan ShiftEnd, TimeSpan ValidEntryFrom, TimeSpan ValidEntryTo, decimal RequiredHoursPerDay, int SortOrder);
+public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc, WorkScheduleShiftDto[]? Shifts = null);
 public sealed record SchedulePlannerDayRequest(DateOnly Date, Guid? ScheduleId, bool IsDayOff, bool Reset = false);
-public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color);
+public sealed record BulkAssignScheduleRequest(Guid[] EmployeeIds, Guid? ScheduleId);
+public sealed record BulkSchedulePlannerRequest(Guid[] EmployeeIds, SchedulePlannerDayRequest[] Days, Guid? ReplaceScheduleId = null);
+public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null);
 public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string EmployeeName, DateTime EventTimeUtc, string EventType, Guid? DeviceId, string Source, DateTime CreatedUtc);
 public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);

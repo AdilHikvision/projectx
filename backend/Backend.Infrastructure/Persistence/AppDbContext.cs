@@ -32,6 +32,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Fingerprint> Fingerprints => Set<Fingerprint>();
     public DbSet<Iris> Irises => Set<Iris>();
     public DbSet<WorkSchedule> WorkSchedules => Set<WorkSchedule>();
+    public DbSet<WorkScheduleShift> WorkScheduleShifts => Set<WorkScheduleShift>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
     public DbSet<DeviceAuthLog> DeviceAuthLogs => Set<DeviceAuthLog>();
@@ -220,6 +221,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Type).HasConversion<int>().IsRequired();
             entity.Property(x => x.RequiredHoursPerDay).HasPrecision(5, 2);
             entity.Property(x => x.Color).HasMaxLength(7).HasDefaultValue("#6366f1");
+        });
+
+        builder.Entity<WorkScheduleShift>(entity =>
+        {
+            entity.ToTable("work_schedule_shifts");
+            entity.HasKey(x => x.Id);
+            entity.HasOne(x => x.WorkSchedule).WithMany(x => x.Shifts).HasForeignKey(x => x.WorkScheduleId).OnDelete(DeleteBehavior.Cascade);
+            entity.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.RequiredHoursPerDay).HasPrecision(5, 2);
         });
 
         builder.Entity<AttendanceRecord>(entity =>

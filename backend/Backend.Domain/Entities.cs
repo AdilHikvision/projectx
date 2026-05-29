@@ -243,9 +243,9 @@ public sealed class EmployeeAccessLevel
 
 // ─── Time Attendance ───────────────────────────────────────────────────────────
 
-public enum ScheduleType { Standard, Shift, Flexible }
+public enum ScheduleType { Standard, Shift, Flexible, Multi }
 
-/// <summary>Расписание работы: стандартное (9–18), сменное или гибкое.</summary>
+/// <summary>Расписание работы: стандартное (9–18), сменное, гибкое или мульти-смена.</summary>
 public sealed class WorkSchedule : BaseEntity
 {
     public string Name { get; set; } = "";
@@ -259,6 +259,24 @@ public sealed class WorkSchedule : BaseEntity
     /// <summary>Hex-цвет для отображения в планнере, например #6366f1.</summary>
     public string Color { get; set; } = "#6366f1";
     public ICollection<Employee> Employees { get; set; } = [];
+    /// <summary>Под-смены (для Multi-расписания).</summary>
+    public ICollection<WorkScheduleShift> Shifts { get; set; } = new List<WorkScheduleShift>();
+}
+
+/// <summary>Под-смена в Multi-расписании.</summary>
+public sealed class WorkScheduleShift : BaseEntity
+{
+    public Guid WorkScheduleId { get; set; }
+    public WorkSchedule WorkSchedule { get; set; } = null!;
+    public string Name { get; set; } = string.Empty;
+    public TimeSpan ShiftStart { get; set; }
+    public TimeSpan ShiftEnd { get; set; }
+    /// <summary>Начало окна регистрации (check-in попадает в эту смену если время >= ValidEntryFrom).</summary>
+    public TimeSpan ValidEntryFrom { get; set; }
+    /// <summary>Конец окна регистрации (check-in попадает в эту смену если время <= ValidEntryTo).</summary>
+    public TimeSpan ValidEntryTo { get; set; }
+    public decimal RequiredHoursPerDay { get; set; } = 8m;
+    public int SortOrder { get; set; }
 }
 
 /// <summary>

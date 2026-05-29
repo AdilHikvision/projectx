@@ -78,7 +78,12 @@ interface PeriodRow {
   checkInUtc: string | null
   checkOutUtc: string | null
   totalHours: number
+  normHours: number
+  overtimeHours: number
+  isDayOff: boolean
+  isAbsent: boolean
   lateMinutes: number | null
+  earlyLeaveMinutes: number | null
   corrected: boolean
 }
 
@@ -92,6 +97,10 @@ interface DailySummary {
   checkInUtc: string | null
   checkOutUtc: string | null
   totalHours: number
+  normHours: number
+  overtimeHours: number
+  isDayOff: boolean
+  isAbsent: boolean
   eventCount: number
   lateMinutes: number | null
   earlyLeaveMinutes: number | null
@@ -106,6 +115,17 @@ function formatTimeOnly(iso: string) {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+interface WorkScheduleShiftRow {
+  id?: string
+  name: string
+  shiftStart: string // "HH:MM"
+  shiftEnd: string
+  validEntryFrom: string // "HH:MM"
+  validEntryTo: string
+  requiredHoursPerDay: number
+  sortOrder: number
+}
+
 interface WorkScheduleRow {
   id: string
   name: string
@@ -115,6 +135,7 @@ interface WorkScheduleRow {
   requiredHoursPerDay: number
   color: string
   createdUtc: string
+  shifts?: WorkScheduleShiftRow[]
 }
 
 
@@ -171,16 +192,13 @@ function isEarlyCheckout(row: PeriodRow): boolean {
 }
 
 function rowMatchesSubTab(r: PeriodRow, st: SubTab): boolean {
+  if (r.isDayOff) return st === 'all'
   switch (st) {
-    case 'absent': return !r.checkInUtc
+    case 'absent': return r.isAbsent
     case 'late': return (r.lateMinutes ?? 0) > 0
-    case 'early': return isEarlyCheckout(r)
-    case 'overtime': {
-      if (!r.checkInUtc || !r.shiftStart || !r.shiftEnd) return false
-      const exp = computeShiftHours(r.shiftStart.slice(0, 5), r.shiftEnd.slice(0, 5))
-      return exp !== null && r.totalHours > exp
-    }
-    case 'incomplete': return !!r.checkInUtc
+    case 'early': return (r.earlyLeaveMinutes ?? 0) > 0
+    case 'overtime': return r.overtimeHours > 0
+    case 'incomplete': return !!r.checkInUtc && !r.checkOutUtc
     default: return true
   }
 }
@@ -230,12 +248,13 @@ export function WorkHoursTrackingPage() {
   const [editingSchedule, setEditingSchedule] = useState<WorkScheduleRow | null>(null)
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
-    type: 'Standard' as 'Standard' | 'Flexible',
+    type: 'Standard' as 'Standard' | 'Flexible' | 'Multi',
     shiftStart: '09:00',
     shiftEnd: '18:00',
     requiredHoursPerDay: '8',
     color: '#6366f1',
   })
+  const [scheduleShifts, setScheduleShifts] = useState<WorkScheduleShiftRow[]>([])
   const [scheduleSaving, setScheduleSaving] = useState(false)
 
   // ── Leaves ────────────────────────────────────────────────────────────────
@@ -288,6 +307,13 @@ export function WorkHoursTrackingPage() {
   const [assignTo, setAssignTo] = useState('')
   const [assignSearch, setAssignSearch] = useState('')
   const [assignSaving, setAssignSaving] = useState(false)
+  const [assignSuccessCount, setAssignSuccessCount] = useState(0)
+  const [assignLastDows, setAssignLastDows] = useState<Set<number>>(new Set([1, 2, 3, 4, 5]))
+  const [assignError, setAssignError] = useState<string | null>(null)
+  const [assignRemoveMode, setAssignRemoveMode] = useState(false)
+  useEffect(() => {
+    if (assignSuccessCount > 0) { const t = setTimeout(() => setAssignSuccessCount(0), 3000); return () => clearTimeout(t) }
+  }, [assignSuccessCount])
 
 useEffect(() => {
     loadMeta()
@@ -456,6 +482,7 @@ useEffect(() => {
       requiredHoursPerDay: '8',
       color: '#6366f1',
     })
+    setScheduleShifts([])
     setEditingSchedule(null)
     setScheduleModal('create')
   }
@@ -464,12 +491,23 @@ useEffect(() => {
     setEditingSchedule(s)
     setScheduleForm({
       name: s.name,
-      type: (['Standard', 'Flexible'].includes(s.type) ? s.type : 'Standard') as 'Standard' | 'Flexible',
+      type: (['Standard', 'Flexible', 'Multi'].includes(s.type) ? s.type : 'Standard') as 'Standard' | 'Flexible' | 'Multi',
       shiftStart: timeToInput(s.shiftStart) || '09:00',
       shiftEnd: timeToInput(s.shiftEnd) || '18:00',
       requiredHoursPerDay: String(s.requiredHoursPerDay ?? 8),
       color: s.color || '#6366f1',
     })
+    // Load sub-shifts for Multi schedules
+    setScheduleShifts(s.shifts?.map(sh => ({
+      id: sh.id,
+      name: sh.name,
+      shiftStart: sh.shiftStart,
+      shiftEnd: sh.shiftEnd,
+      validEntryFrom: sh.validEntryFrom,
+      validEntryTo: sh.validEntryTo,
+      requiredHoursPerDay: sh.requiredHoursPerDay,
+      sortOrder: sh.sortOrder,
+    })) ?? [])
     setScheduleModal('edit')
   }
 
@@ -480,17 +518,31 @@ useEffect(() => {
     setScheduleSaving(true)
     try {
       const isFlex = scheduleForm.type === 'Flexible'
+      const isMulti = scheduleForm.type === 'Multi'
       // Для Standard/Shift Norm = (end − start), считается автоматически.
-      const computed = isFlex ? null : computeShiftHours(scheduleForm.shiftStart, scheduleForm.shiftEnd)
-      const body = {
+      const computed = (isFlex || isMulti) ? null : computeShiftHours(scheduleForm.shiftStart, scheduleForm.shiftEnd)
+      const body: Record<string, unknown> = {
         name,
         type: scheduleForm.type,
-        shiftStart: isFlex ? null : inputTimeToApi(scheduleForm.shiftStart),
-        shiftEnd: isFlex ? null : inputTimeToApi(scheduleForm.shiftEnd),
+        shiftStart: (isFlex || isMulti) ? null : inputTimeToApi(scheduleForm.shiftStart),
+        shiftEnd: (isFlex || isMulti) ? null : inputTimeToApi(scheduleForm.shiftEnd),
         requiredHoursPerDay: isFlex
           ? (parseFloat(scheduleForm.requiredHoursPerDay) || 8)
-          : (computed ?? 8),
+          : isMulti
+            ? 8
+            : (computed ?? 8),
         color: scheduleForm.color,
+      }
+      if (isMulti) {
+        body.shifts = scheduleShifts.map((sh, idx) => ({
+          name: sh.name,
+          shiftStart: inputTimeToApi(sh.shiftStart),
+          shiftEnd: inputTimeToApi(sh.shiftEnd),
+          validEntryFrom: inputTimeToApi(sh.validEntryFrom),
+          validEntryTo: inputTimeToApi(sh.validEntryTo),
+          requiredHoursPerDay: sh.requiredHoursPerDay,
+          sortOrder: idx,
+        }))
       }
       if (scheduleModal === 'create') {
         await apiRequest('/api/work-schedules', { method: 'POST', token, body: JSON.stringify(body) })
@@ -499,6 +551,7 @@ useEffect(() => {
       }
       setScheduleModal(null)
       setEditingSchedule(null)
+      setScheduleShifts([])
       await loadSchedules()
     } finally {
       setScheduleSaving(false)
@@ -520,44 +573,98 @@ useEffect(() => {
 
   async function openAssignModal(s: WorkScheduleRow) {
     setAssignSchedule(s)
-    setAssignSelEmps(new Set())
-    setAssignSelDows(new Set([1, 2, 3, 4, 5]))
     setAssignSearch('')
-    const now = new Date()
-    const y = now.getFullYear(), m = now.getMonth()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    setAssignFrom(`${y}-${pad(m + 1)}-01`)
-    const lastDay = new Date(y, m + 1, 0).getDate()
-    setAssignTo(`${y}-${pad(m + 1)}-${pad(lastDay)}`)
+    setAssignError(null)
+    setAssignRemoveMode(false)
     try {
       type EmpItem = { id: string; firstName: string; lastName: string; department?: { name: string } | null }
-      const data = await apiRequest<EmpItem[]>('/api/employees?isActive=true', { token })
-      setAssignEmps(data.map(e => ({ id: e.id, name: `${e.firstName} ${e.lastName}`, dept: e.department?.name ?? '' })))
-    } catch { setAssignEmps([]) }
+      type AssignmentState = { employeeIds: string[]; fromDate: string | null; toDate: string | null; daysOfWeek: number[] }
+
+      const [empData, state] = await Promise.all([
+        apiRequest<EmpItem[]>('/api/employees?isActive=true', { token }),
+        apiRequest<AssignmentState>(`/api/work-schedules/${s.id}/assignment`, { token }),
+      ])
+
+      setAssignEmps(empData.map(e => ({ id: e.id, name: `${e.firstName} ${e.lastName}`, dept: e.department?.name ?? '' })))
+      setAssignSelEmps(new Set(state.employeeIds))
+
+      // Days of week derived from actual patterns in DB (always accurate after clean overwrite)
+      const dows = state.daysOfWeek.length > 0 ? state.daysOfWeek : [1, 2, 3, 4, 5]
+      setAssignSelDows(new Set(dows))
+      setAssignLastDows(new Set(dows))
+
+      // Date range: from actual pattern min/max dates, or default to current month
+      if (state.fromDate && state.toDate) {
+        setAssignFrom(state.fromDate)
+        setAssignTo(state.toDate)
+      } else {
+        const now = new Date()
+        const y = now.getFullYear(), mo = now.getMonth()
+        const pad = (n: number) => String(n).padStart(2, '0')
+        setAssignFrom(`${y}-${pad(mo + 1)}-01`)
+        setAssignTo(`${y}-${pad(mo + 1)}-${pad(new Date(y, mo + 1, 0).getDate())}`)
+      }
+    } catch {
+      setAssignEmps([])
+      setAssignSelEmps(new Set())
+      setAssignSelDows(new Set(assignLastDows))
+      const now = new Date()
+      const y = now.getFullYear(), mo = now.getMonth()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      setAssignFrom(`${y}-${pad(mo + 1)}-01`)
+      setAssignTo(`${y}-${pad(mo + 1)}-${pad(new Date(y, mo + 1, 0).getDate())}`)
+    }
   }
 
   async function doAssign() {
-    if (!token || !assignSchedule || assignSelEmps.size === 0 || assignSelDows.size === 0) return
+    if (!token || !assignSchedule || assignSelEmps.size === 0) return
+    if (!assignRemoveMode && assignSelDows.size === 0) return
     setAssignSaving(true)
+    setAssignError(null)
     try {
-      const from = new Date(assignFrom), to = new Date(assignTo)
-      const payload: { date: string; scheduleId: string; isDayOff: boolean; reset: boolean }[] = []
-      for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-        const dow = d.getDay() === 0 ? 7 : d.getDay()
-        if (assignSelDows.has(dow)) {
-          const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-          payload.push({ date: ds, scheduleId: assignSchedule.id, isDayOff: false, reset: false })
-        }
-      }
-      if (payload.length === 0) return
-      await Promise.all([...assignSelEmps].map(empId =>
-        apiRequest(`/api/schedule-planner/${empId}/days`, {
+      const empIds = [...assignSelEmps]
+
+      if (assignRemoveMode) {
+        // Remove mode: clear WorkScheduleId + delete all day patterns via backend (one call).
+        // Backend handles deleting all patterns when scheduleId = null.
+        await apiRequest('/api/employees/bulk-schedule', {
           method: 'PUT', token,
-          body: JSON.stringify(payload),
-          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employeeIds: empIds, scheduleId: null }),
         })
-      ))
+      } else {
+        // Assign mode: build day-pattern payload for the date range + days of week
+        const parseLocal = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
+        const from = parseLocal(assignFrom), to = parseLocal(assignTo)
+        const pad = (n: number) => String(n).padStart(2, '0')
+        const days: { date: string; scheduleId: string; isDayOff: boolean; reset: boolean }[] = []
+        for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+          const dow = d.getDay() === 0 ? 7 : d.getDay()
+          if (assignSelDows.has(dow)) {
+            const ds = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+            days.push({ date: ds, scheduleId: assignSchedule.id, isDayOff: false, reset: false })
+          }
+        }
+        if (days.length === 0) { setAssignError('No dates match the selected days of week in this range'); return }
+
+        // Set WorkScheduleId for all employees
+        await apiRequest('/api/employees/bulk-schedule', {
+          method: 'PUT', token,
+          body: JSON.stringify({ employeeIds: empIds, scheduleId: assignSchedule.id }),
+        })
+        // Delete old patterns for this schedule and write fresh ones (clean overwrite)
+        await apiRequest('/api/schedule-planner/bulk-days', {
+          method: 'PUT', token,
+          body: JSON.stringify({ employeeIds: empIds, days, replaceScheduleId: assignSchedule.id }),
+        })
+        setAssignLastDows(new Set(assignSelDows))
+      }
+
+      setAssignSuccessCount(assignSelEmps.size)
+      setAssignError(null)
       setAssignSchedule(null)
+      setAssignRemoveMode(false)
+    } catch (err) {
+      setAssignError(err instanceof Error ? err.message : 'Assignment failed. Please try again.')
     } finally {
       setAssignSaving(false)
     }
@@ -877,9 +984,17 @@ useEffect(() => {
                             <td className="px-5 py-3 text-text-light text-xs">
                               {s.type === 'Flexible'
                                 ? '—'
-                                : `${timeToInput(s.shiftStart) || '—'} – ${timeToInput(s.shiftEnd) || '—'}`}
+                                : s.type === 'Multi'
+                                  ? (s.shifts && s.shifts.length > 0
+                                    ? s.shifts.map(sh => `${sh.name} ${sh.shiftStart}–${sh.shiftEnd}`).join(', ')
+                                    : '—')
+                                  : `${timeToInput(s.shiftStart) || '—'} – ${timeToInput(s.shiftEnd) || '—'}`}
                             </td>
-                            <td className="px-5 py-3 text-text-light">{s.requiredHoursPerDay} h</td>
+                            <td className="px-5 py-3 text-text-light">
+                              {s.type === 'Multi' && s.shifts && s.shifts.length > 0
+                                ? s.shifts.map(sh => `${sh.name}: ${sh.requiredHoursPerDay}h`).join(', ')
+                                : `${s.requiredHoursPerDay} h`}
+                            </td>
                             <td className="px-5 py-3 text-right">
                               <button
                                 type="button"
@@ -917,16 +1032,13 @@ useEffect(() => {
           {/* Daily Report — one day, only employees with assigned schedule */}
           {tab === 'daily' && (() => {
             const filteredDaily = daily.filter(d => {
+              if (d.isDayOff) return subTab === 'all'
               switch (subTab) {
-                case 'absent': return !d.checkInUtc
+                case 'absent': return d.isAbsent
                 case 'late': return (d.lateMinutes ?? 0) > 0
                 case 'early': return (d.earlyLeaveMinutes ?? 0) > 0
-                case 'overtime': {
-                  if (!d.checkInUtc || !d.shiftStart || !d.shiftEnd) return false
-                  const exp = computeShiftHours(d.shiftStart.slice(0, 5), d.shiftEnd.slice(0, 5))
-                  return exp !== null && d.totalHours > exp
-                }
-                case 'incomplete': return !!d.checkInUtc
+                case 'overtime': return d.overtimeHours > 0
+                case 'incomplete': return !!d.checkInUtc && !d.checkOutUtc
                 default: return true
               }
             })
@@ -961,45 +1073,41 @@ useEffect(() => {
                         <th className="px-5 py-3 text-left">Shift</th>
                         <th className="px-5 py-3 text-left">Check-in</th>
                         <th className="px-5 py-3 text-left">Check-out</th>
-                        <th className="px-5 py-3 text-right">Hours</th>
+                        <th className="px-5 py-3 text-right">Actual</th>
+                        <th className="px-5 py-3 text-right">Norm</th>
                         {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">Late</th>}
                         {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">Early</th>}
-                        {subTab === 'all' && <th className="px-5 py-3 text-right">OT</th>}
+                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">OT</th>}
                         <th className="px-5 py-3 text-right">Edit</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredDaily.map((d) => {
-                        const absent = !d.checkInUtc
-                        const otHours = (() => {
-                          if (!d.checkInUtc || !d.shiftStart || !d.shiftEnd) return null
-                          const exp = computeShiftHours(d.shiftStart.slice(0, 5), d.shiftEnd.slice(0, 5))
-                          if (exp === null) return null
-                          const diff = d.totalHours - exp
-                          return diff > 0 ? diff : null
-                        })()
-                        return (
-                          <tr key={`${d.employeeId}-${d.date}`} className={`border-b border-border last:border-none hover:bg-background-light transition-colors ${absent ? 'opacity-60' : ''}`}>
-                            <td className="px-5 py-3 font-bold text-text-dark">
-                              {d.employeeName ?? '—'}
-                              {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? 'Corrected'}>✎</span>}
-                            </td>
-                            <td className="px-5 py-3 text-text-light text-xs">{d.scheduleName ?? '—'}</td>
-                            <td className="px-5 py-3 text-text-light font-mono text-xs">{d.shiftStart && d.shiftEnd ? `${d.shiftStart}–${d.shiftEnd}` : '—'}</td>
-                            <td className="px-5 py-3 font-mono">{d.checkInUtc ? <span className="text-green-700">{formatTimeOnly(d.checkInUtc)}</span> : <span className="text-error-text font-bold">absent</span>}</td>
-                            <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
-                            <td className="px-5 py-3 text-right text-text-dark">{d.totalHours.toFixed(2)}</td>
-                            {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                            {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                            {subTab === 'all' && <td className="px-5 py-3 text-right">{otHours !== null ? <span className="text-purple-700 font-bold">+{otHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
-                            <td className="px-5 py-3 text-right">
-                              <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">
-                                Edit
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
+                      {filteredDaily.map((d) => (
+                        <tr key={`${d.employeeId}-${d.date}`} className={`border-b border-border last:border-none hover:bg-background-light transition-colors ${d.isAbsent ? 'opacity-60' : ''}`}>
+                          <td className="px-5 py-3 font-bold text-text-dark">
+                            {d.employeeName ?? '—'}
+                            {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? 'Corrected'}>✎</span>}
+                          </td>
+                          <td className="px-5 py-3 text-text-light text-xs">
+                            {d.isDayOff ? <span className="text-slate-400 italic">Day off</span> : (d.scheduleName ?? '—')}
+                          </td>
+                          <td className="px-5 py-3 text-text-light font-mono text-xs">{d.shiftStart && d.shiftEnd ? `${d.shiftStart}–${d.shiftEnd}` : '—'}</td>
+                          <td className="px-5 py-3 font-mono">
+                            {d.isDayOff ? <span className="text-slate-400">—</span>
+                              : d.checkInUtc ? <span className="text-green-700">{formatTimeOnly(d.checkInUtc)}</span>
+                              : <span className="text-error-text font-bold">absent</span>}
+                          </td>
+                          <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right font-mono text-text-dark">{d.totalHours > 0 ? d.totalHours.toFixed(2) : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? d.normHours.toFixed(2) : '—'}</td>
+                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
+                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
+                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{d.overtimeHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
+                          <td className="px-5 py-3 text-right">
+                            <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">Edit</button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -1046,25 +1154,28 @@ useEffect(() => {
                   </div>
                 ) : (
                   filteredEmps.map((emp) => {
-                    const totalHours = emp.rows.reduce((s, r) => s + (r.totalHours ?? 0), 0)
+                    const workRows = emp.rows.filter(r => !r.isDayOff)
+                    const present = workRows.filter(r => r.checkInUtc).length
+                    const absent = workRows.filter(r => r.isAbsent).length
+                    const totalActual = emp.rows.reduce((s, r) => s + r.totalHours, 0)
+                    const totalNorm = workRows.reduce((s, r) => s + r.normHours, 0)
+                    const totalOT = emp.rows.reduce((s, r) => s + r.overtimeHours, 0)
                     const totalLate = emp.rows.reduce((s, r) => s + (r.lateMinutes ?? 0), 0)
-                    const present = emp.rows.filter(r => r.checkInUtc).length
-                    const totalEarly = emp.rows.filter(r => isEarlyCheckout(r)).length
-                    const totalOT = emp.rows.filter(r => {
-                      if (!r.checkInUtc || !r.shiftStart || !r.shiftEnd) return false
-                      const exp = computeShiftHours(r.shiftStart.slice(0, 5), r.shiftEnd.slice(0, 5))
-                      return exp !== null && r.totalHours > exp
-                    }).length
+                    const totalEarlyDays = emp.rows.filter(r => (r.earlyLeaveMinutes ?? 0) > 0).length
+                    const deficit = Math.max(0, totalNorm - totalActual - totalOT)
                     return (
                       <div key={emp.name} className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                         <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
                           <p className="text-sm font-black text-text-dark">{emp.name}</p>
                           <div className="flex flex-wrap gap-4 text-[10px] font-black text-text-light uppercase tracking-widest">
-                            <span>Present: <strong className="text-text-dark">{present}/{emp.rows.length}</strong></span>
-                            <span>Hours: <strong className="text-text-dark">{totalHours.toFixed(2)}</strong></span>
+                            <span>Present: <strong className="text-text-dark">{present}/{workRows.length}</strong></span>
+                            {absent > 0 && <span>Absent: <strong className="text-error-text">{absent}d</strong></span>}
+                            <span>Actual: <strong className="text-text-dark">{totalActual.toFixed(2)}h</strong></span>
+                            <span>Norm: <strong className="text-text-dark">{totalNorm.toFixed(2)}h</strong></span>
+                            {totalOT > 0 && <span>OT: <strong className="text-purple-700">+{totalOT.toFixed(2)}h</strong></span>}
+                            {deficit > 0.05 && <span>Deficit: <strong className="text-red-600">-{deficit.toFixed(2)}h</strong></span>}
                             {totalLate > 0 && <span>Late: <strong className="text-amber-700">{totalLate}m</strong></span>}
-                            {totalEarly > 0 && <span>Early: <strong className="text-orange-600">{totalEarly}d</strong></span>}
-                            {totalOT > 0 && <span>OT: <strong className="text-purple-700">{totalOT}d</strong></span>}
+                            {totalEarlyDays > 0 && <span>Early: <strong className="text-orange-600">{totalEarlyDays}d</strong></span>}
                           </div>
                         </div>
                         <div className="overflow-x-auto">
@@ -1074,41 +1185,38 @@ useEffect(() => {
                                 <th className="px-5 py-2 text-left">Date</th>
                                 <th className="px-5 py-2 text-left">Check-in</th>
                                 <th className="px-5 py-2 text-left">Check-out</th>
-                                <th className="px-5 py-2 text-right">Hours</th>
+                                <th className="px-5 py-2 text-right">Actual</th>
+                                <th className="px-5 py-2 text-right">Norm</th>
                                 {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">Late</th>}
                                 {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">Early</th>}
-                                {subTab === 'all' && <th className="px-5 py-2 text-right">OT</th>}
+                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">OT</th>}
                               </tr>
                             </thead>
                             <tbody>
-                              {emp.visibleRows.map((r) => {
-                                const rowEarly = subTab !== 'incomplete' && isEarlyCheckout(r)
-                                const rowOtHours = subTab === 'all' ? (() => {
-                                  if (!r.checkInUtc || !r.shiftStart || !r.shiftEnd) return null
-                                  const exp = computeShiftHours(r.shiftStart.slice(0, 5), r.shiftEnd.slice(0, 5))
-                                  if (exp === null) return null
-                                  const diff = r.totalHours - exp
-                                  return diff > 0 ? diff : null
-                                })() : null
-                                return (
-                                <tr key={r.date} className={`border-b border-border last:border-none ${!r.checkInUtc ? 'opacity-60' : ''}`}>
+                              {emp.visibleRows.map((r) => (
+                                <tr key={r.date} className={`border-b border-border last:border-none ${r.isAbsent ? 'opacity-60' : ''} ${r.isDayOff ? 'bg-slate-50' : ''}`}>
                                   <td className="px-5 py-2 text-text-dark">
                                     {formatDateOnly(r.date)}
                                     {r.corrected && <span className="ml-1 text-[9px] text-amber-700" title="Corrected">✎</span>}
+                                    {r.isDayOff && <span className="ml-1 text-[9px] text-slate-400 italic">day off</span>}
                                   </td>
-                                  <td className="px-5 py-2 font-mono">{r.checkInUtc ? <span className="text-green-700">{formatTimeOnly(r.checkInUtc)}</span> : <span className="text-error-text font-bold">absent</span>}</td>
+                                  <td className="px-5 py-2 font-mono">
+                                    {r.isDayOff ? <span className="text-slate-400">—</span>
+                                      : r.checkInUtc ? <span className="text-green-700">{formatTimeOnly(r.checkInUtc)}</span>
+                                      : <span className="text-error-text font-bold">absent</span>}
+                                  </td>
                                   <td className="px-5 py-2 font-mono">
                                     {r.checkOutUtc
-                                      ? <span className={rowEarly ? 'text-orange-600' : 'text-blue-700'}>{formatTimeOnly(r.checkOutUtc)}</span>
+                                      ? <span className={(r.earlyLeaveMinutes ?? 0) > 0 ? 'text-orange-600' : 'text-blue-700'}>{formatTimeOnly(r.checkOutUtc)}</span>
                                       : <span className="text-text-light">—</span>}
                                   </td>
-                                  <td className="px-5 py-2 text-right text-text-dark">{r.totalHours.toFixed(2)}</td>
+                                  <td className="px-5 py-2 text-right font-mono text-text-dark">{r.totalHours > 0 ? r.totalHours.toFixed(2) : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right font-mono text-text-light">{r.normHours > 0 ? r.normHours.toFixed(2) : '—'}</td>
                                   {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{r.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{rowEarly ? <span className="text-orange-600 font-bold">early</span> : <span className="text-text-light">—</span>}</td>}
-                                  {subTab === 'all' && <td className="px-5 py-2 text-right">{rowOtHours !== null ? <span className="text-purple-700 font-bold">+{rowOtHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
+                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{r.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
+                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{r.overtimeHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
                                 </tr>
-                                )
-                              })}
+                              ))}
                             </tbody>
                           </table>
                         </div>
@@ -1350,11 +1458,18 @@ useEffect(() => {
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Type</label>
             <select
               value={scheduleForm.type}
-              onChange={(e) => setScheduleForm((p) => ({ ...p, type: e.target.value as typeof p.type }))}
+              onChange={(e) => {
+                const newType = e.target.value as typeof scheduleForm.type
+                setScheduleForm((p) => ({ ...p, type: newType }))
+                if (newType === 'Multi' && scheduleShifts.length === 0) {
+                  setScheduleShifts([{ name: 'Day', shiftStart: '08:00', shiftEnd: '17:00', validEntryFrom: '06:00', validEntryTo: '10:00', requiredHoursPerDay: 8, sortOrder: 0 }])
+                }
+              }}
               className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
             >
               <option value="Standard">Standard (fixed shift)</option>
               <option value="Flexible">Flexible (hours per day)</option>
+              <option value="Multi">Multi (multiple sub-shifts)</option>
             </select>
           </div>
           {scheduleForm.type === 'Flexible' && (
@@ -1365,7 +1480,7 @@ useEffect(() => {
               </p>
             </div>
           )}
-          {scheduleForm.type !== 'Flexible' && (
+          {scheduleForm.type === 'Standard' && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Shift start</label>
@@ -1395,20 +1510,11 @@ useEffect(() => {
               </div>
             </div>
           )}
-          <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-              {scheduleForm.type === 'Flexible' ? 'Required hours per day' : 'Norm (hours / day, computed from shift)'}
-            </label>
-            {scheduleForm.type === 'Flexible' ? (
-              <Input
-                type="number"
-                min={0.5}
-                max={24}
-                step={0.5}
-                value={scheduleForm.requiredHoursPerDay}
-                onChange={(e) => setScheduleForm((p) => ({ ...p, requiredHoursPerDay: e.target.value }))}
-              />
-            ) : (
+          {scheduleForm.type !== 'Flexible' && scheduleForm.type !== 'Multi' && (
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
+                Norm (hours / day, computed from shift)
+              </label>
               <Input
                 type="text"
                 value={(() => {
@@ -1418,11 +1524,114 @@ useEffect(() => {
                 readOnly
                 className="opacity-70 cursor-not-allowed"
               />
-            )}
-          </div>
+            </div>
+          )}
+          {scheduleForm.type === 'Flexible' && (
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Required hours per day</label>
+              <Input
+                type="number"
+                min={0.5}
+                max={24}
+                step={0.5}
+                value={scheduleForm.requiredHoursPerDay}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, requiredHoursPerDay: e.target.value }))}
+              />
+            </div>
+          )}
+          {scheduleForm.type === 'Multi' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Sub-shifts</label>
+                <button
+                  type="button"
+                  onClick={() => setScheduleShifts(prev => [...prev, {
+                    name: `Shift ${prev.length + 1}`,
+                    shiftStart: '08:00', shiftEnd: '17:00',
+                    validEntryFrom: '06:00', validEntryTo: '10:00',
+                    requiredHoursPerDay: 8, sortOrder: prev.length,
+                  }])}
+                  className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[14px]">add</span> Add shift
+                </button>
+              </div>
+              {scheduleShifts.length === 0 && (
+                <p className="text-xs text-text-light italic">No sub-shifts yet. Click "Add shift" to create one.</p>
+              )}
+              {scheduleShifts.map((sh, idx) => (
+                <div key={idx} className="rounded-xl bg-background-light p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <input
+                      type="text"
+                      placeholder="Shift name (e.g. Day, Night)"
+                      value={sh.name}
+                      onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, name: e.target.value } : s))}
+                      className="flex-1 rounded-lg bg-white border border-border px-2 py-1.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none mr-2"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setScheduleShifts(prev => prev.filter((_, i) => i !== idx))}
+                      className="text-error-text hover:text-error-text/70"
+                      title="Remove shift"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Shift start</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={sh.shiftStart}
+                        onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, shiftStart: maskHHMM(e.target.value) } : s))}
+                        className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Shift end</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={sh.shiftEnd}
+                        onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, shiftEnd: maskHHMM(e.target.value) } : s))}
+                        className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Entry window from</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={sh.validEntryFrom}
+                        onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, validEntryFrom: maskHHMM(e.target.value) } : s))}
+                        className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Entry window to</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={sh.validEntryTo}
+                        onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, validEntryTo: maskHHMM(e.target.value) } : s))}
+                        className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Required hours / day</label>
+                    <input
+                      type="number" min={0.5} max={24} step={0.5}
+                      value={sh.requiredHoursPerDay}
+                      onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, requiredHoursPerDay: parseFloat(e.target.value) || 8 } : s))}
+                      className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null) }}>Cancel</Button>
-            <Button fullWidth isLoading={scheduleSaving} onClick={saveSchedule} disabled={!scheduleForm.name.trim()}>
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>Cancel</Button>
+            <Button fullWidth isLoading={scheduleSaving} onClick={saveSchedule} disabled={!scheduleForm.name.trim() || (scheduleForm.type === 'Multi' && scheduleShifts.length === 0)}>
               {scheduleModal === 'create' ? 'Create' : 'Save'}
             </Button>
           </div>
@@ -1431,7 +1640,7 @@ useEffect(() => {
 
       <Modal
         isOpen={scheduleModal === 'delete'}
-        onClose={() => { setScheduleModal(null); setEditingSchedule(null) }}
+        onClose={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}
         title="Delete schedule"
       >
         <div className="space-y-4 pt-2">
@@ -1439,7 +1648,7 @@ useEffect(() => {
             Delete <strong>{editingSchedule?.name}</strong>? Employees using this schedule will need another one assigned.
           </p>
           <div className="flex gap-3">
-            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null) }}>Cancel</Button>
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>Cancel</Button>
             <Button variant="danger" fullWidth isLoading={scheduleSaving} onClick={deleteSchedule}>
               Delete
             </Button>
@@ -1600,16 +1809,17 @@ useEffect(() => {
             return n
           })
 
-        // count matching dates
+        // count matching dates (only relevant for Assign mode)
+        const parseLocal = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
         let dateCount = 0
-        if (assignFrom && assignTo) {
-          const from = new Date(assignFrom), to = new Date(assignTo)
+        if (!assignRemoveMode && assignFrom && assignTo) {
+          const from = parseLocal(assignFrom), to = parseLocal(assignTo)
           for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
             const dow = d.getDay() === 0 ? 7 : d.getDay()
             if (assignSelDows.has(dow)) dateCount++
           }
         }
-        const canAssign = assignSelEmps.size > 0 && assignSelDows.size > 0 && dateCount > 0
+        const canAssign = assignSelEmps.size > 0 && (assignRemoveMode || (assignSelDows.size > 0 && dateCount > 0))
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]"
@@ -1688,8 +1898,16 @@ useEffect(() => {
                 {/* Right — Settings */}
                 <div className="flex-1 flex flex-col p-5 gap-5 overflow-y-auto">
 
-                  {/* Days of week */}
-                  <div className="space-y-2.5">
+                  {/* Remove mode message */}
+                  {assignRemoveMode && (
+                    <div className="rounded-2xl p-4 bg-red-50 border border-red-200 text-xs font-bold text-red-600 space-y-1">
+                      <p className="flex items-center gap-2"><span className="material-symbols-outlined text-base">warning</span>Remove schedule</p>
+                      <p className="font-normal text-red-500">Clears the default schedule and all day-pattern assignments for selected employees. The attendance report will no longer show this schedule for them.</p>
+                    </div>
+                  )}
+
+                  {/* Days of week — hidden in remove mode */}
+                  {!assignRemoveMode && <div className="space-y-2.5">
                     <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">Days of week</p>
                     <div className="grid grid-cols-7 gap-1.5">
                       {DOW_LABELS.map((label, i) => {
@@ -1722,10 +1940,10 @@ useEffect(() => {
                       <button onClick={() => setAssignSelDows(new Set([1,2,3,4,5,6,7]))}
                         className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">All</button>
                     </div>
-                  </div>
+                  </div>}
 
-                  {/* Date range */}
-                  <div className="space-y-2.5">
+                  {/* Date range — hidden in remove mode */}
+                  {!assignRemoveMode && <div className="space-y-2.5">
                     <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">Date range</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
@@ -1739,31 +1957,59 @@ useEffect(() => {
                           className="w-full rounded-xl bg-black/[0.04] border border-black/10 px-3 py-2 text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20" />
                       </div>
                     </div>
-                  </div>
+                  </div>}
 
                   {/* Summary */}
-                  {canAssign && (
-                    <div className="rounded-2xl px-4 py-3 text-[11px] font-bold" style={{ backgroundColor: assignSchedule.color + '15', color: assignSchedule.color }}>
-                      Will assign <strong>{dateCount}</strong> day{dateCount !== 1 ? 's' : ''} to{' '}
-                      <strong>{assignSelEmps.size}</strong> employee{assignSelEmps.size !== 1 ? 's' : ''}{' '}
-                      → <strong>{assignSelEmps.size * dateCount}</strong> total assignments
+                  {canAssign && !assignRemoveMode && (
+                    <div className="rounded-2xl px-4 py-3 text-[11px] font-bold space-y-1"
+                      style={{ backgroundColor: assignSchedule.color + '15', color: assignSchedule.color }}>
+                      <p>Will assign <strong>{dateCount}</strong> day{dateCount !== 1 ? 's' : ''} to <strong>{assignSelEmps.size}</strong> employee{assignSelEmps.size !== 1 ? 's' : ''}</p>
+                      <p className="opacity-70">Also sets as default schedule in employee profiles</p>
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Footer */}
-              <div className="px-6 py-4 border-t border-black/[0.07] flex gap-3 shrink-0">
-                <button onClick={() => setAssignSchedule(null)}
-                  className="flex-1 py-2.5 text-sm font-bold text-text-muted bg-black/[0.05] rounded-2xl hover:bg-black/[0.08] transition-colors">
-                  Cancel
-                </button>
-                <button onClick={doAssign} disabled={!canAssign || assignSaving}
-                  className="flex-1 py-2.5 text-sm font-bold text-white rounded-2xl transition-all disabled:opacity-40 flex items-center justify-center gap-2"
-                  style={{ backgroundColor: assignSchedule.color }}>
-                  {assignSaving && <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>}
-                  {assignSaving ? 'Assigning…' : `Assign to ${assignSelEmps.size || '?'} employee${assignSelEmps.size !== 1 ? 's' : ''}`}
-                </button>
+              <div className="px-6 py-4 border-t border-black/[0.07] flex flex-col gap-3 shrink-0">
+                {/* Assign / Remove toggle */}
+                <div className="flex rounded-2xl overflow-hidden border border-black/[0.08] text-[11px] font-black">
+                  <button
+                    type="button"
+                    onClick={() => setAssignRemoveMode(false)}
+                    className={`flex-1 py-2 transition-colors ${!assignRemoveMode ? 'text-white' : 'text-text-muted bg-black/[0.04] hover:bg-black/[0.07]'}`}
+                    style={!assignRemoveMode ? { backgroundColor: assignSchedule.color } : {}}>
+                    Assign
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAssignRemoveMode(true)}
+                    className={`flex-1 py-2 transition-colors ${assignRemoveMode ? 'bg-red-500 text-white' : 'text-text-muted bg-black/[0.04] hover:bg-black/[0.07]'}`}>
+                    Remove
+                  </button>
+                </div>
+                {assignError && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-600">
+                    <span className="material-symbols-outlined text-sm">error</span>
+                    {assignError}
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  <button onClick={() => { setAssignSchedule(null); setAssignError(null); setAssignRemoveMode(false) }}
+                    className="flex-1 py-2.5 text-sm font-bold text-text-muted bg-black/[0.05] rounded-2xl hover:bg-black/[0.08] transition-colors">
+                    Cancel
+                  </button>
+                  <button onClick={doAssign} disabled={!canAssign || assignSaving}
+                    className={`flex-1 py-2.5 text-sm font-bold text-white rounded-2xl transition-all disabled:opacity-40 flex items-center justify-center gap-2 ${assignRemoveMode ? 'bg-red-500' : ''}`}
+                    style={!assignRemoveMode ? { backgroundColor: assignSchedule.color } : {}}>
+                    {assignSaving && <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>}
+                    {assignSaving
+                      ? (assignRemoveMode ? 'Removing…' : 'Assigning…')
+                      : (assignRemoveMode
+                          ? `Remove from ${assignSelEmps.size || '?'} employee${assignSelEmps.size !== 1 ? 's' : ''}`
+                          : `Assign to ${assignSelEmps.size || '?'} employee${assignSelEmps.size !== 1 ? 's' : ''}`)}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1796,6 +2042,23 @@ useEffect(() => {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Success toast after assign */}
+      {assignSuccessCount > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 duration-300">
+          <div className="flex items-center gap-3 bg-green-600 text-white px-4 py-3 rounded-2xl shadow-xl">
+            <span className="material-symbols-outlined text-xl">check_circle</span>
+            <span className="text-sm font-bold">Assigned to {assignSuccessCount} employee{assignSuccessCount !== 1 ? 's' : ''}</span>
+            <button
+              type="button"
+              onClick={() => setAssignSuccessCount(0)}
+              className="ml-2 opacity-70 hover:opacity-100 transition-opacity"
+            >
+              <span className="material-symbols-outlined text-base">close</span>
+            </button>
+          </div>
+        </div>
       )}
     </AppLayout>
   )

@@ -261,7 +261,7 @@ export function PersonDetailPage() {
     selfServiceEmail: '',
     workScheduleId: null as string | null,
   })
-  const [_workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
+  const [workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
   const [selfServiceTempPassword, setSelfServiceTempPassword] = useState<string | null>(null)
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
@@ -1542,6 +1542,29 @@ export function PersonDetailPage() {
                       >Close</button>
                     </div>
                   )}
+
+                  {/* Work Schedule Assignment */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Default work schedule</label>
+                    <div className="relative">
+                      <select
+                        value={formData.workScheduleId ?? ''}
+                        onChange={(e) => setFormData((p) => ({ ...p, workScheduleId: e.target.value || null }))}
+                        className="w-full rounded-xl bg-white border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none shadow-sm appearance-none pr-8"
+                      >
+                        <option value="">— No schedule —</option>
+                        {workSchedules.map((ws) => (
+                          <option key={ws.id} value={ws.id}>
+                            {ws.name} ({ws.type})
+                          </option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 text-text-light text-base pointer-events-none">expand_more</span>
+                    </div>
+                    <p className="text-[10px] text-text-light leading-relaxed">
+                      Used as the default schedule in time attendance reports. Per-day overrides can be set in the Schedule Planner.
+                    </p>
+                  </div>
                 </div>
               )}
 

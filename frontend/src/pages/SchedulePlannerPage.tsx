@@ -26,6 +26,16 @@ function timeToMins(t: string): number {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface ScheduleShift {
+    id: string
+    name: string
+    shiftStart: string
+    shiftEnd: string
+    validEntryFrom: string
+    validEntryTo: string
+    requiredHoursPerDay: number
+}
+
 interface Schedule {
     id: string
     name: string
@@ -34,6 +44,7 @@ interface Schedule {
     shiftEnd: string | null
     requiredHoursPerDay: number
     color: string
+    shifts: ScheduleShift[]
 }
 
 interface DateData {
@@ -154,14 +165,19 @@ export function SchedulePlannerPage() {
 
     // ─── Fetch ────────────────────────────────────────────────────────────────
 
+    const [fetchError, setFetchError] = useState<string | null>(null)
+
     const fetchData = useCallback(async () => {
         setLoading(true)
+        setFetchError(null)
         try {
             const d = await apiRequest<PlannerData>(
                 `/api/schedule-planner?from=${rangeFrom}&to=${rangeTo}`, { token }
             )
             setData(d)
-        } catch { /* ignore */ }
+        } catch (e) {
+            setFetchError(e instanceof Error ? e.message : 'Failed to load planner data')
+        }
         finally { setLoading(false) }
     }, [token, rangeFrom, rangeTo])
 
@@ -249,9 +265,15 @@ export function SchedulePlannerPage() {
         let days = 0, mins = 0
         for (const col of columns) {
             const p = getEffective(emp, col.dateStr)
-            if (!p.isDayOff && !p.leaveType && p.scheduleId && p.shiftStart && p.shiftEnd) {
+            if (!p.isDayOff && !p.leaveType && p.scheduleId) {
                 days++
-                mins += timeToMins(p.shiftEnd) - timeToMins(p.shiftStart)
+                if (p.shiftStart && p.shiftEnd) {
+                    mins += timeToMins(p.shiftEnd) - timeToMins(p.shiftStart)
+                } else {
+                    // Flexible / Multi: use requiredHoursPerDay from schedule
+                    const sched = schedules.find(s => s.id === p.scheduleId)
+                    mins += (sched?.requiredHoursPerDay ?? 8) * 60
+                }
             }
         }
         return { days, hours: Math.round(mins / 60) }
@@ -380,10 +402,39 @@ export function SchedulePlannerPage() {
                     </div>
                 </div>
 
+                {/* ── Schedule legend ── */}
+                {!loading && schedules.length > 0 && (
+                    <div className="shrink-0 flex items-center gap-2 px-5 py-2 bg-background-light border-b border-black/[0.06] overflow-x-auto">
+                        <span className="text-[9px] font-black text-text-muted uppercase tracking-widest shrink-0">Schedules:</span>
+                        {schedules.map(s => (
+                            <div key={s.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border shrink-0"
+                                style={{ backgroundColor: s.color + '18', borderColor: s.color + '55', color: s.color }}>
+                                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                                <span className="text-[10px] font-black whitespace-nowrap">{s.name}</span>
+                                {s.type === 'Multi' ? (
+                                    <span className="text-[9px] opacity-70">multi</span>
+                                ) : s.shiftStart && s.shiftEnd ? (
+                                    <span className="text-[9px] opacity-70">{s.shiftStart}–{s.shiftEnd}</span>
+                                ) : (
+                                    <span className="text-[9px] opacity-70">{s.requiredHoursPerDay}h</span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 {/* ── Grid ── */}
                 {loading ? (
                     <div className="flex-1 flex items-center justify-center text-text-muted text-sm gap-2">
                         <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>Loading…
+                    </div>
+                ) : fetchError ? (
+                    <div className="flex-1 flex items-center justify-center">
+                        <div className="text-center space-y-2 text-red-600 p-8 bg-red-50 rounded-2xl max-w-lg">
+                            <span className="material-symbols-outlined text-3xl">error</span>
+                            <p className="text-sm font-bold">Failed to load planner</p>
+                            <p className="text-xs font-mono bg-white rounded-lg p-3 text-left">{fetchError}</p>
+                        </div>
                     </div>
                 ) : (
                     <div className="flex-1 overflow-auto">
@@ -546,11 +597,16 @@ export function SchedulePlannerPage() {
                                                             ) : hasShift ? (
                                                                 <div className="w-full rounded-lg px-1.5 py-1.5 text-center" style={chipStyle}>
                                                                     <p className="text-[10px] font-black leading-none truncate">{p.scheduleName}</p>
-                                                                    {p.shiftStart && p.shiftEnd && (
-                                                                        <p className="text-[9px] opacity-70 leading-none mt-1">
-                                                                            {p.shiftStart}–{p.shiftEnd}
-                                                                        </p>
-                                                                    )}
+                                                                    {(() => {
+                                                                        const sched = schedules.find(s => s.id === p.scheduleId)
+                                                                        if (p.shiftStart && p.shiftEnd)
+                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">{p.shiftStart}–{p.shiftEnd}</p>
+                                                                        if (sched?.type === 'Multi')
+                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">multi-shift</p>
+                                                                        if (sched?.requiredHoursPerDay)
+                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">{sched.requiredHoursPerDay}h/day</p>
+                                                                        return null
+                                                                    })()}
                                                                 </div>
                                                             ) : p.isDayOff ? (
                                                                 <span className="text-[11px] text-rose-300 font-bold select-none">OFF</span>
