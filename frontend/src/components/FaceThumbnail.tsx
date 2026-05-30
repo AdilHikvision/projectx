@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { getApiBaseUrl } from '../lib/api'
 
 /** Loads face photo with auth (blob URL). */
@@ -6,13 +7,14 @@ export function FaceThumbnail({
   faceId,
   token,
   className,
-  alt = 'Face',
+  alt,
 }: {
   faceId: string
   token: string | null
   className?: string
   alt?: string
 }) {
+  const { t } = useTranslation()
   const [src, setSrc] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
   const urlRef = useRef<string | null>(null)
@@ -49,10 +51,10 @@ export function FaceThumbnail({
   }, [faceId, token])
   if (missing)
     return (
-      <div className={`bg-background-light flex items-center justify-center text-text-light ${className ?? ''}`} title="No photo">
+      <div className={`bg-background-light flex items-center justify-center text-text-light ${className ?? ''}`} title={t('faces.noPhoto')}>
         <span className="material-symbols-outlined text-3xl">person</span>
       </div>
     )
   if (!src) return <div className={`bg-slate-100 animate-pulse ${className ?? ''}`} aria-hidden />
-  return <img src={src} alt={alt} className={className} />
+  return <img src={src} alt={alt ?? t('faces.faceAlt')} className={className} />
 }

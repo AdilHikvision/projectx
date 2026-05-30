@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 
 interface DashboardCard {
-    title: string
-    description: string
+    titleKey: string
+    descriptionKey: string
     icon: string
     path: string
     color: string
@@ -11,57 +12,57 @@ interface DashboardCard {
 
 const DASHBOARD_CARDS: DashboardCard[] = [
     {
-        title: 'People',
-        description: 'Manage employees, visitors and credentials',
+        titleKey: 'dashboard.cards.peopleTitle',
+        descriptionKey: 'dashboard.cards.peopleDescription',
         icon: 'group',
         path: '/people',
         color: 'bg-blue-500',
     },
     {
-        title: 'Devices',
-        description: 'Monitor and configure access control hardware',
+        titleKey: 'dashboard.cards.devicesTitle',
+        descriptionKey: 'dashboard.cards.devicesDescription',
         icon: 'sensors',
         path: '/settings?tab=devices',
         color: 'bg-purple-500',
     },
     {
-        title: 'Monitoring',
-        description: 'Real-time event logs and door control',
+        titleKey: 'dashboard.cards.monitoringTitle',
+        descriptionKey: 'dashboard.cards.monitoringDescription',
         icon: 'monitor_heart',
         path: '/monitoring',
         color: 'bg-red-500',
     },
     {
-        title: 'Access Levels',
-        description: 'Define who can access which rooms and when',
+        titleKey: 'dashboard.cards.accessLevelsTitle',
+        descriptionKey: 'dashboard.cards.accessLevelsDescription',
         icon: 'admin_panel_settings',
         path: '/access-levels',
         color: 'bg-emerald-500',
     },
     {
-        title: 'Work Hours',
-        description: 'Attendance reports and time tracking',
+        titleKey: 'dashboard.cards.workHoursTitle',
+        descriptionKey: 'dashboard.cards.workHoursDescription',
         icon: 'schedule',
         path: '/work-hours',
         color: 'bg-amber-500',
     },
     {
-        title: 'Payroll',
-        description: 'Calculate salaries based on attendance',
+        titleKey: 'dashboard.cards.payrollTitle',
+        descriptionKey: 'dashboard.cards.payrollDescription',
         icon: 'payments',
         path: '/payroll',
         color: 'bg-indigo-500',
     },
     {
-        title: 'Settings',
-        description: 'System configuration and preferences',
+        titleKey: 'dashboard.cards.settingsTitle',
+        descriptionKey: 'dashboard.cards.settingsDescription',
         icon: 'settings',
         path: '/settings',
         color: 'bg-slate-500',
     },
     {
-        title: 'System Status',
-        description: 'Database, services and server health',
+        titleKey: 'dashboard.cards.statusTitle',
+        descriptionKey: 'dashboard.cards.statusDescription',
         icon: 'monitoring',
         path: '/status',
         color: 'bg-cyan-500',
@@ -70,6 +71,7 @@ const DASHBOARD_CARDS: DashboardCard[] = [
 
 export function DashboardPage() {
     const navigate = useNavigate()
+    const { t } = useTranslation()
 
     return (
         <AppLayout>
@@ -90,15 +92,15 @@ export function DashboardPage() {
                                 </div>
 
                                 <h3 className="text-xl font-black text-text-dark mb-2 tracking-tight group-hover:text-primary transition-colors">
-                                    {card.title}
+                                    {t(card.titleKey)}
                                 </h3>
 
                                 <p className="text-sm font-medium text-text-muted leading-relaxed">
-                                    {card.description}
+                                    {t(card.descriptionKey)}
                                 </p>
 
                                 <div className="mt-6 flex items-center text-[10px] font-black uppercase tracking-[0.2em] text-text-light group-hover:text-primary transition-all">
-                                    Open Module
+                                    {t('common.openModule')}
                                     <span className="material-symbols-outlined text-xs ml-1 group-hover:ml-3 transition-all">arrow_forward</span>
                                 </div>
                             </div>

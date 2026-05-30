@@ -1,5 +1,6 @@
 import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
@@ -10,10 +11,10 @@ import { apiRequest, getHubUrl } from '../lib/api'
 type DeviceStatus = 'Online' | 'Offline'
 
 const DEVICE_TYPES = [
-  { value: 'all', label: 'All' },
-  { value: 'AccessController', label: 'Access Controllers' },
-  { value: 'Intercom', label: 'Intercoms' },
-  { value: 'ElevatorController', label: 'Elevators' },
+  { value: 'all', labelKey: 'common.all' },
+  { value: 'AccessController', labelKey: 'devices.typeAccessControllers' },
+  { value: 'Intercom', labelKey: 'devices.typeIntercoms' },
+  { value: 'ElevatorController', labelKey: 'devices.typeElevators' },
 ] as const
 
 interface Device {
@@ -107,13 +108,13 @@ function getDeviceIcon(deviceType: string): string {
   return 'devices'
 }
 
-function getDeviceTypeLabel(deviceType: string): string {
-  if (deviceType === 'AccessController') return 'Access Controller'
-  if (deviceType === 'Intercom') return 'Intercom'
-  if (deviceType === 'AttendanceTerminal') return 'Attendance Terminal'
-  if (deviceType === 'ElevatorController') return 'Elevator Controller'
-  if (deviceType === 'EnrollerStation') return 'Enroller station'
-  return deviceType
+function getDeviceTypeLabelKey(deviceType: string): string | null {
+  if (deviceType === 'AccessController') return 'devices.deviceTypeAccessController'
+  if (deviceType === 'Intercom') return 'devices.deviceTypeIntercom'
+  if (deviceType === 'AttendanceTerminal') return 'devices.deviceTypeAttendanceTerminal'
+  if (deviceType === 'ElevatorController') return 'devices.deviceTypeElevatorController'
+  if (deviceType === 'EnrollerStation') return 'devices.deviceTypeEnrollerStation'
+  return null
 }
 
 function deviceTypeStringToNumber(deviceType: string | null | undefined): number {
@@ -134,13 +135,13 @@ function deviceTypeStringToNumber(deviceType: string | null | undefined): number
 }
 
 const DISCOVER_TYPE_TABS = [
-  { value: 'all', label: 'All' },
-  { value: 'camera', label: 'Cameras' },
-  { value: 'access', label: 'Access Control' },
-  { value: 'intercom', label: 'Intercoms' },
-  { value: 'nvr', label: 'NVR' },
-  { value: 'switch', label: 'Switches' },
-  { value: 'other', label: 'Other' },
+  { value: 'all', labelKey: 'common.all' },
+  { value: 'camera', labelKey: 'devices.discoverTypeCameras' },
+  { value: 'access', labelKey: 'devices.discoverTypeAccessControl' },
+  { value: 'intercom', labelKey: 'devices.typeIntercoms' },
+  { value: 'nvr', labelKey: 'devices.discoverTypeNvr' },
+  { value: 'switch', labelKey: 'devices.discoverTypeSwitches' },
+  { value: 'other', labelKey: 'devices.discoverTypeOther' },
 ] as const
 
 function inferDeviceTypeFromModel(model: string | null | undefined, serial?: string | null): string {
@@ -156,8 +157,14 @@ function inferDeviceTypeFromModel(model: string | null | undefined, serial?: str
 
 
 export function DevicesPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { startLoading, stopLoading, isLoading } = useLoading()
+
+  const getDeviceTypeLabel = useCallback((deviceType: string): string => {
+    const key = getDeviceTypeLabelKey(deviceType)
+    return key ? t(key) : deviceType
+  }, [t])
   const [devices, setDevices] = useState<Device[]>([])
   const [isDiscovering, setIsDiscovering] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -196,11 +203,11 @@ export function DevicesPage() {
       const statusesById = new Map(statusesResult.map((s) => [s.deviceId, s]))
       setDevices(devicesResult.map((d) => mergeStatus(d, statusesById.get(d.id))))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load devices')
+      setError(e instanceof Error ? e.message : t('devices.errorLoadDevices'))
     } finally {
       stopLoading()
     }
-  }, [token, startLoading, stopLoading])
+  }, [token, startLoading, stopLoading, t])
 
   const fetchStatuses = useCallback(async () => {
     if (!token) return
@@ -253,14 +260,14 @@ export function DevicesPage() {
           .build()
 
         hub.onreconnecting(() => {
-          setInfo('Reconnecting to server...')
+          setInfo(t('devices.reconnectingToServer'))
         })
         hub.onreconnected(() => {
           setInfo(null)
           fetchStatusesRef.current()
         })
         hub.onclose((err) => {
-          if (err) setInfo('Connection lost. Refreshing status via polling.')
+          if (err) setInfo(t('devices.connectionLostPolling'))
         })
 
         hub.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
@@ -285,7 +292,7 @@ export function DevicesPage() {
 
         hub.on('DiscoveryComplete', (count: number) => {
           setIsDiscovering(false)
-          setInfo(count > 0 ? `Found ${count} devices.` : 'No devices found.')
+          setInfo(count > 0 ? t('devices.foundDevicesCount', { count }) : t('devices.noDevicesFound'))
         })
 
         await hub.start()
@@ -305,7 +312,7 @@ export function DevicesPage() {
       if (pollTimer) window.clearInterval(pollTimer)
       hub?.stop().catch(() => { /* ignore — cleanup */ })
     }
-  }, [token])
+  }, [token, t])
 
   const filteredDevices = useMemo(() => {
     let result = devices
@@ -346,7 +353,7 @@ export function DevicesPage() {
 
     const hub = hubRef.current
     if (hub?.state !== 'Connected') {
-      setError('Realtime connection not ready. Wait a moment and try again.')
+      setError(t('devices.realtimeNotReady'))
       setIsDiscovering(false)
       return
     }
@@ -354,7 +361,7 @@ export function DevicesPage() {
     try {
       await hub.invoke('StartDiscovery')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Discovery failed')
+      setError(e instanceof Error ? e.message : t('devices.discoveryFailed'))
       setIsDiscovering(false)
     }
   }
@@ -455,7 +462,7 @@ export function DevicesPage() {
       closeModals()
       fetchStatusesRef.current()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create device')
+      setError(e instanceof Error ? e.message : t('devices.errorCreateDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -483,7 +490,7 @@ export function DevicesPage() {
       setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update device')
+      setError(e instanceof Error ? e.message : t('devices.errorUpdateDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -498,7 +505,7 @@ export function DevicesPage() {
       setDevices((prev) => prev.filter((d) => d.id !== deletingDevice.id))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete device')
+      setError(e instanceof Error ? e.message : t('devices.errorDeleteDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -506,15 +513,15 @@ export function DevicesPage() {
 
   async function handleActivate() {
     if (!activatingDevice || !activatingDevice.macAddress) {
-      setError('Device MAC address is required for activation.')
+      setError(t('devices.errorMacRequired'))
       return
     }
     if (activatePassword !== activateConfirm) {
-      setError('Passwords do not match.')
+      setError(t('devices.errorPasswordsDoNotMatch'))
       return
     }
     if (activatePassword.length < 8) {
-      setError('Password must be at least 8 characters.')
+      setError(t('devices.errorPasswordMinLength'))
       return
     }
     setIsSubmitting(true)
@@ -531,11 +538,11 @@ export function DevicesPage() {
           password: activatePassword,
         }),
       })
-      setInfo(`Device ${activatingDevice.ipAddress} activated. Initiating re-scan...`)
+      setInfo(t('devices.deviceActivatedRescan', { ip: activatingDevice.ipAddress }))
       closeActivateModal()
       await startDiscovery()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Activation failed'
+      const msg = e instanceof Error ? e.message : t('devices.activationFailed')
       setActivateError(msg)
     } finally {
       setIsSubmitting(false)
@@ -571,11 +578,11 @@ export function DevicesPage() {
   async function handleAddFromDiscoveredSubmit() {
     if (!token || !addFromDevice) return
     if (!addDeviceName.trim()) {
-      setError('Please enter a device name')
+      setError(t('devices.errorEnterDeviceName'))
       return
     }
     if (!addDevicePassword) {
-      setError('Please enter the device password (same as used during activation)')
+      setError(t('devices.errorEnterDevicePassword'))
       return
     }
     setError(null)
@@ -602,10 +609,10 @@ export function DevicesPage() {
       setDevices((prev) => [...prev, deviceWithStatus])
       setDiscovered((prev) => prev.filter((x) => x.deviceIdentifier !== addFromDevice.deviceIdentifier))
       fetchStatusesRef.current()
-      setInfo(`Device "${addDeviceName.trim()}" added.`)
+      setInfo(t('devices.deviceAddedInfo', { name: addDeviceName.trim() }))
       closeAddFromDiscoveredModal()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add device')
+      setError(e instanceof Error ? e.message : t('devices.errorAddDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -622,18 +629,18 @@ export function DevicesPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title="Devices Fleet"
-            description="Manage and monitor your enterprise access control hardware fleet."
+            title={t('devices.pageTitle')}
+            description={t('devices.pageDescription')}
             actions={
               <div className="flex gap-2">
                 <Button variant="outline" size="md" icon="sync" onClick={loadData} isLoading={isLoading}>
-                  Refresh
+                  {t('common.refresh')}
                 </Button>
                 <Button variant="outline" size="md" icon="search" onClick={handleDiscover}>
-                  Discover
+                  {t('devices.discover')}
                 </Button>
                 <Button size="md" icon="add" onClick={openCreateModal}>
-                  Add Manually
+                  {t('devices.addManually')}
                 </Button>
               </div>
             }
@@ -652,22 +659,22 @@ export function DevicesPage() {
 
           {/* Mobile Quick Actions */}
           <div className="flex md:hidden gap-2">
-            <Button fullWidth variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>Refresh</Button>
-            <Button fullWidth variant="outline" size="sm" icon="search" onClick={handleDiscover}>Discover</Button>
+            <Button fullWidth variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>{t('common.refresh')}</Button>
+            <Button fullWidth variant="outline" size="sm" icon="search" onClick={handleDiscover}>{t('devices.discover')}</Button>
           </div>
 
           {/* Stats Tier */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:grid-cols-6">
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.total')}</p>
               <p className="text-2xl font-black text-primary leading-none">{devices.length}</p>
             </div>
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Online</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.online')}</p>
               <p className="text-2xl font-black text-emerald-500 leading-none">{onlineCount}</p>
             </div>
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Offline</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.offline')}</p>
               <p className="text-2xl font-black text-error-text leading-none">{devices.length - onlineCount}</p>
             </div>
           </div>
@@ -675,7 +682,7 @@ export function DevicesPage() {
           <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
             <div className="relative flex-1 max-w-md">
               <Input
-                placeholder="Search devices..."
+                placeholder={t('devices.searchDevices')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 icon="search"
@@ -683,14 +690,14 @@ export function DevicesPage() {
               />
             </div>
             <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-divider-light md:border-none">
-              {DEVICE_TYPES.map((t) => (
+              {DEVICE_TYPES.map((tab) => (
                 <button
-                  key={t.value}
-                  onClick={() => setTypeFilter(t.value)}
-                  className={`pb-2.5 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${typeFilter === t.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                  key={tab.value}
+                  onClick={() => setTypeFilter(tab.value)}
+                  className={`pb-2.5 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${typeFilter === tab.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
                     }`}
                 >
-                  {t.label}
+                  {t(tab.labelKey)}
                 </button>
               ))}
             </div>
@@ -701,7 +708,7 @@ export function DevicesPage() {
             {filteredDevices.length === 0 ? (
               <div className="py-20 text-center bg-surface rounded-2xl shadow-md">
                 <span className="material-symbols-outlined text-text-light text-5xl mb-3">router</span>
-                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">No devices found</p>
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">{t('devices.noDevicesFound')}</p>
               </div>
             ) : (
               filteredDevices.map((device) => (
@@ -721,8 +728,8 @@ export function DevicesPage() {
                           {device.ipAddress}:{device.port} • {getDeviceTypeLabel(device.deviceType)}
                         </p>
                         <div className="flex gap-3 text-[9px] font-bold text-text-muted/60 uppercase tracking-tight">
-                          <span>SN: {device.deviceIdentifier}</span>
-                          {device.macAddress && <span>MAC: {device.macAddress}</span>}
+                          <span>{t('devices.snLabel')}: {device.deviceIdentifier}</span>
+                          {device.macAddress && <span>{t('devices.macLabel')}: {device.macAddress}</span>}
                         </div>
                       </div>
                     </div>
@@ -731,9 +738,9 @@ export function DevicesPage() {
                     <Badge
                       variant={device.status === 'Online' ? 'success' : 'error'}
                       dot
-                      title={device.status === 'Offline' ? (device.statusMessage || 'Connection lost / Timeout') : undefined}
+                      title={device.status === 'Offline' ? (device.statusMessage || t('devices.connectionLostTimeout')) : undefined}
                     >
-                      {device.status}
+                      {device.status === 'Online' ? t('devices.statusOnline') : t('devices.statusOffline')}
                     </Badge>
                     <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
                   </div>
@@ -748,20 +755,20 @@ export function DevicesPage() {
       <Modal
         isOpen={modalMode === 'create' || modalMode === 'edit'}
         onClose={closeModals}
-        title={modalMode === 'create' ? 'Add Access Device' : 'Device Configuration'}
+        title={modalMode === 'create' ? t('devices.addAccessDevice') : t('devices.deviceConfiguration')}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Label / Name</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.labelName')}</label>
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Main Entrance Controller"
+                placeholder={t('devices.labelNamePlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">IP Address</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.ipAddress')}</label>
               <Input
                 value={formData.ipAddress}
                 onChange={(e) => setFormData((p) => ({ ...p, ipAddress: e.target.value }))}
@@ -769,7 +776,7 @@ export function DevicesPage() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Service Port</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.servicePort')}</label>
               <Input
                 type="number"
                 value={formData.port}
@@ -780,33 +787,33 @@ export function DevicesPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Physical Location</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.physicalLocation')}</label>
               <Input
                 value={formData.location}
                 onChange={(e) => setFormData((p) => ({ ...p, location: e.target.value }))}
-                placeholder="e.g. 1st Floor Lobby"
+                placeholder={t('devices.physicalLocationPlaceholder')}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Device type</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.deviceType')}</label>
             <select
               value={formData.deviceType}
               onChange={(e) => setFormData((p) => ({ ...p, deviceType: parseInt(e.target.value, 10) }))}
               className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
             >
-              <option value={1}>Access Controller</option>
-              <option value={2}>Intercom</option>
-              <option value={3}>Attendance Terminal</option>
-              <option value={4}>Elevator Controller</option>
-              <option value={5}>Enroller station</option>
+              <option value={1}>{t('devices.deviceTypeAccessController')}</option>
+              <option value={2}>{t('devices.deviceTypeIntercom')}</option>
+              <option value={3}>{t('devices.deviceTypeAttendanceTerminal')}</option>
+              <option value={4}>{t('devices.deviceTypeElevatorController')}</option>
+              <option value={5}>{t('devices.deviceTypeEnrollerStation')}</option>
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Username</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.username')}</label>
               <Input
                 value={formData.username}
                 onChange={(e) => setFormData((p) => ({ ...p, username: e.target.value }))}
@@ -814,7 +821,7 @@ export function DevicesPage() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Secret Key / Password</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.secretKeyPassword')}</label>
               <Input
                 type="password"
                 value={formData.password}
@@ -826,14 +833,14 @@ export function DevicesPage() {
 
           <div className="flex gap-2 pt-4">
             <Button fullWidth onClick={modalMode === 'create' ? handleCreate : handleUpdate} isLoading={isSubmitting} disabled={!canCreateOrUpdate || isSubmitting}>
-              {modalMode === 'create' ? 'Register Device' : 'Save Changes'}
+              {modalMode === 'create' ? t('devices.registerDevice') : t('common.saveChanges')}
             </Button>
-            <Button fullWidth variant="outline" onClick={closeModals}>Cancel</Button>
+            <Button fullWidth variant="outline" onClick={closeModals}>{t('common.cancel')}</Button>
           </div>
 
           {modalMode === 'edit' && (
             <div className="pt-4 border-t border-divider-light">
-              <Button fullWidth variant="danger" icon="delete" onClick={() => openDeleteModal(editingDevice!)}>Remove Device</Button>
+              <Button fullWidth variant="danger" icon="delete" onClick={() => openDeleteModal(editingDevice!)}>{t('devices.removeDevice')}</Button>
             </div>
           )}
         </div>
@@ -843,7 +850,7 @@ export function DevicesPage() {
       <Modal
         isOpen={modalMode === 'discover' || modalMode === 'activate'}
         onClose={closeModals}
-        title="Network Discovery"
+        title={t('devices.networkDiscovery')}
         fullScreen
         className="bg-background-light"
       >
@@ -851,7 +858,7 @@ export function DevicesPage() {
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <p className="text-xs font-bold text-text-muted uppercase tracking-widest min-w-[100px]">
-                {isDiscovering ? 'Scanning...' : `Found (${discovered.length})`}
+                {isDiscovering ? t('devices.scanningDots') : t('devices.foundCount', { count: discovered.length })}
               </p>
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input
@@ -860,13 +867,13 @@ export function DevicesPage() {
                   onChange={(e) => setShowAddedDevices(e.target.checked)}
                   className="w-4 h-4 rounded border-divider-light text-primary focus:ring-primary/20 transition-all"
                 />
-                <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Show Registered</span>
+                <span className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('devices.showRegistered')}</span>
               </label>
             </div>
             <div className="flex-1 max-w-md relative">
               <Input
                 size="sm"
-                placeholder="Search by IP, Serial, or Model..."
+                placeholder={t('devices.searchByIpSerialModel')}
                 value={discoverSearchQuery}
                 onChange={(e) => setDiscoverSearchQuery(e.target.value)}
                 icon="search"
@@ -874,20 +881,20 @@ export function DevicesPage() {
               />
             </div>
             <Button size="sm" variant="outline" icon="sync" onClick={handleDiscoverRefresh} isLoading={isDiscovering}>
-              {isDiscovering ? 'Scanning' : 'Rescan'}
+              {isDiscovering ? t('devices.scanning') : t('devices.rescan')}
             </Button>
           </div>
 
           {/* Discovery Filter Tabs */}
           <div className="flex overflow-x-auto no-scrollbar gap-6 border-b border-divider-light">
-            {DISCOVER_TYPE_TABS.map((t) => (
+            {DISCOVER_TYPE_TABS.map((tab) => (
               <button
-                key={t.value}
-                onClick={() => setDiscoverTypeTab(t.value)}
-                className={`pb-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${discoverTypeTab === t.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                key={tab.value}
+                onClick={() => setDiscoverTypeTab(tab.value)}
+                className={`pb-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${discoverTypeTab === tab.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
                   }`}
               >
-                {t.label}
+                {t(tab.labelKey)}
               </button>
             ))}
           </div>
@@ -921,7 +928,7 @@ export function DevicesPage() {
                 return (
                   <div className="py-20 text-center">
                     <span className="material-symbols-outlined text-4xl text-text-light mb-2">radar</span>
-                    <p className="text-xs font-bold text-text-muted uppercase tracking-widest">No matching devices</p>
+                    <p className="text-xs font-bold text-text-muted uppercase tracking-widest">{t('devices.noMatchingDevices')}</p>
                   </div>
                 )
               }
@@ -939,29 +946,29 @@ export function DevicesPage() {
                     <div className="flex justify-between items-start mb-3">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-black text-text-dark leading-none">{d.model || 'Unknown Model'}</p>
+                          <p className="text-sm font-black text-text-dark leading-none">{d.model || t('devices.unknownModel')}</p>
                           {added ? (
-                            <Badge variant="success" className="text-[8px] px-1.5 py-0">Added</Badge>
+                            <Badge variant="success" className="text-[8px] px-1.5 py-0">{t('devices.added')}</Badge>
                           ) : (
-                            <Badge variant={d.isActive ? 'neutral' : 'error'} className="text-[8px] px-1.5 py-0">{d.isActive ? 'Activated' : 'Inactive'}</Badge>
+                            <Badge variant={d.isActive ? 'neutral' : 'error'} className="text-[8px] px-1.5 py-0">{d.isActive ? t('devices.activated') : t('devices.inactive')}</Badge>
                           )}
                         </div>
                         <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{d.ipAddress}:{d.port}</p>
                         <div className="flex flex-wrap gap-x-4 gap-y-1">
                           <div className="flex items-center gap-1.5 opacity-60">
-                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">MAC: {d.macAddress || 'NO MAC'}</span>
+                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">{t('devices.macLabel')}: {d.macAddress || t('devices.noMac')}</span>
                           </div>
                           <div className="flex items-center gap-1.5 opacity-60">
-                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">SN: {d.deviceIdentifier}</span>
+                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">{t('devices.snLabel')}: {d.deviceIdentifier}</span>
                           </div>
                         </div>
                       </div>
                     </div>
                     <div className="flex gap-2 justify-end">
                       {added ? null : d.isActive ? (
-                        <Button className="w-full md:w-fit md:px-6" size="sm" icon="add" onClick={() => openAddFromDiscoveredModal(d)}>Add Device</Button>
+                        <Button className="w-full md:w-fit md:px-6" size="sm" icon="add" onClick={() => openAddFromDiscoveredModal(d)}>{t('devices.addDevice')}</Button>
                       ) : (
-                        <Button className="w-full md:w-fit md:px-6" variant="outline" icon="lock_open" onClick={() => openActivateModal(d)}>Activate</Button>
+                        <Button className="w-full md:w-fit md:px-6" variant="outline" icon="lock_open" onClick={() => openActivateModal(d)}>{t('devices.activate')}</Button>
                       )}
                     </div>
                   </div>
@@ -971,54 +978,54 @@ export function DevicesPage() {
           </div>
 
           <div className="flex justify-end">
-            <Button className="w-full md:w-fit md:px-12" variant="outline" onClick={closeModals}>Close Explorer</Button>
+            <Button className="w-full md:w-fit md:px-12" variant="outline" onClick={closeModals}>{t('devices.closeExplorer')}</Button>
           </div>
         </div>
       </Modal>
 
       {/* Activation Sub-Modal */}
-      <Modal isOpen={modalMode === 'activate'} onClose={closeActivateModal} title="Security Activation">
+      <Modal isOpen={modalMode === 'activate'} onClose={closeActivateModal} title={t('devices.securityActivation')}>
         <div className="space-y-4 p-2">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Set activation password for {activatingDevice?.ipAddress}</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('devices.setActivationPasswordFor', { ip: activatingDevice?.ipAddress ?? '' })}</p>
           <div className="space-y-4">
             <div className="bg-slate-50 p-4 rounded-2xl shadow-inner border-none">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">New Password (Min 8)</label>
-              <Input type="password" value={activatePassword} onChange={e => setActivatePassword(e.target.value)} placeholder="Minimum 8 characters" className="bg-white" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">{t('devices.newPasswordMin8')}</label>
+              <Input type="password" value={activatePassword} onChange={e => setActivatePassword(e.target.value)} placeholder={t('devices.minimumChars')} className="bg-white" />
             </div>
             <div className="bg-slate-50 p-4 rounded-2xl shadow-inner border-none">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">Confirm Identity</label>
-              <Input type="password" value={activateConfirm} onChange={e => setActivateConfirm(e.target.value)} placeholder="Repeat password" className="bg-white" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">{t('devices.confirmIdentity')}</label>
+              <Input type="password" value={activateConfirm} onChange={e => setActivateConfirm(e.target.value)} placeholder={t('devices.repeatPassword')} className="bg-white" />
             </div>
           </div>
           {activateError && <div className="p-3 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10">{activateError}</div>}
           <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleActivate} isLoading={isSubmitting} disabled={activatePassword.length < 8 || activatePassword !== activateConfirm || isSubmitting}>Activate</Button>
-            <Button fullWidth variant="outline" onClick={closeActivateModal}>Abort</Button>
+            <Button fullWidth onClick={handleActivate} isLoading={isSubmitting} disabled={activatePassword.length < 8 || activatePassword !== activateConfirm || isSubmitting}>{t('devices.activate')}</Button>
+            <Button fullWidth variant="outline" onClick={closeActivateModal}>{t('devices.abort')}</Button>
           </div>
         </div>
       </Modal>
 
       {/* Add from Discovery Shortcut Modal */}
-      <Modal isOpen={!!addFromDevice} onClose={closeAddFromDiscoveredModal} title="Register Discovered">
+      <Modal isOpen={!!addFromDevice} onClose={closeAddFromDiscoveredModal} title={t('devices.registerDiscovered')}>
         <div className="space-y-4">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-widest">Add {addFromDevice?.ipAddress} to fleet</p>
+          <p className="text-xs font-bold text-text-muted uppercase tracking-widest">{t('devices.addIpToFleet', { ip: addFromDevice?.ipAddress ?? '' })}</p>
           <div className="space-y-3">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Friendly Name</label>
-              <Input value={addDeviceName} onChange={e => setAddDeviceName(e.target.value)} placeholder="e.g. Back Door Intercom" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.friendlyName')}</label>
+              <Input value={addDeviceName} onChange={e => setAddDeviceName(e.target.value)} placeholder={t('devices.friendlyNamePlaceholder')} />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Credentials (Username)</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.credentialsUsername')}</label>
               <Input value={addDeviceUsername} onChange={e => setAddDeviceUsername(e.target.value)} placeholder="admin" />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Secret Key / Password</label>
-              <Input type="password" value={addDevicePassword} onChange={e => setAddDevicePassword(e.target.value)} placeholder="Required" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devices.secretKeyPassword')}</label>
+              <Input type="password" value={addDevicePassword} onChange={e => setAddDevicePassword(e.target.value)} placeholder={t('devices.requiredField')} />
             </div>
           </div>
           <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleAddFromDiscoveredSubmit} isLoading={isSubmitting} disabled={!addDeviceName || !addDevicePassword || isSubmitting}>Add Device</Button>
-            <Button fullWidth variant="outline" onClick={closeAddFromDiscoveredModal}>Cancel</Button>
+            <Button fullWidth onClick={handleAddFromDiscoveredSubmit} isLoading={isSubmitting} disabled={!addDeviceName || !addDevicePassword || isSubmitting}>{t('devices.addDevice')}</Button>
+            <Button fullWidth variant="outline" onClick={closeAddFromDiscoveredModal}>{t('common.cancel')}</Button>
           </div>
         </div>
       </Modal>
@@ -1027,28 +1034,28 @@ export function DevicesPage() {
       <Modal
         isOpen={!!networkWarningMessage}
         onClose={() => setNetworkWarningMessage(null)}
-        title="Network Configuration Alert"
+        title={t('devices.networkConfigurationAlert')}
       >
         <div className="space-y-4">
           <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 mb-2">
             <span className="material-symbols-outlined text-2xl">router</span>
           </div>
-          <p className="text-sm font-black text-text-dark leading-tight">{networkWarningMessage ?? 'Subnet mismatch detected.'}</p>
+          <p className="text-sm font-black text-text-dark leading-tight">{networkWarningMessage ?? t('devices.subnetMismatchDetected')}</p>
           <p className="text-xs text-text-light leading-relaxed">
-            The target device must be reachable on the same local network as the server to perform activation or registration.
+            {t('devices.subnetReachabilityNote')}
           </p>
-          <Button fullWidth variant="outline" onClick={() => setNetworkWarningMessage(null)}>Acknowledge</Button>
+          <Button fullWidth variant="outline" onClick={() => setNetworkWarningMessage(null)}>{t('devices.acknowledge')}</Button>
         </div>
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title="System Deletion">
+      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title={t('devices.systemDeletion')}>
         <div className="space-y-4">
-          <p className="text-sm font-bold text-text-dark">Remove {deletingDevice?.name} from your fleet management?</p>
-          <p className="text-xs text-text-light leading-relaxed">Warning: This will stop all monitoring and data collection for this device. This operation is permanent.</p>
+          <p className="text-sm font-bold text-text-dark">{t('devices.removeFromFleetQuestion', { name: deletingDevice?.name ?? '' })}</p>
+          <p className="text-xs text-text-light leading-relaxed">{t('devices.deleteWarning')}</p>
           <div className="flex gap-2 pt-4">
-            <Button variant="danger" fullWidth onClick={handleDelete} isLoading={isSubmitting}>Confirm Deletion</Button>
-            <Button variant="outline" fullWidth onClick={closeModals} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="danger" fullWidth onClick={handleDelete} isLoading={isSubmitting}>{t('devices.confirmDeletion')}</Button>
+            <Button variant="outline" fullWidth onClick={closeModals} disabled={isSubmitting}>{t('common.cancel')}</Button>
           </div>
         </div>
       </Modal>

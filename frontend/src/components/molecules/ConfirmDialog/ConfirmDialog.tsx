@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Button } from '../../atoms';
 import { Modal } from '../../organisms';
 
@@ -19,11 +20,12 @@ export function ConfirmDialog({
     onConfirm,
     title,
     message,
-    confirmText = 'Confirm',
-    cancelText = 'Cancel',
+    confirmText,
+    cancelText,
     variant = 'danger',
     isLoading = false,
 }: ConfirmDialogProps) {
+    const { t } = useTranslation();
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={title}>
             <div className="space-y-4">
@@ -34,14 +36,14 @@ export function ConfirmDialog({
                         onClick={onConfirm}
                         isLoading={isLoading}
                     >
-                        {confirmText}
+                        {confirmText ?? t('common.confirm')}
                     </Button>
                     <Button
                         variant="outline"
                         onClick={onClose}
                         disabled={isLoading}
                     >
-                        {cancelText}
+                        {cancelText ?? t('common.cancel')}
                     </Button>
                 </div>
             </div>

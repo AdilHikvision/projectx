@@ -1,5 +1,6 @@
 import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useCallback, useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { Badge, Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
@@ -9,10 +10,10 @@ import { apiRequest, getHubUrl } from '../lib/api'
 type DeviceStatus = 'Online' | 'Offline'
 
 const DEVICE_TYPES = [
-  { value: 'all', label: 'All' },
-  { value: 'AccessController', label: 'Access Controllers' },
-  { value: 'Intercom', label: 'Intercoms' },
-  { value: 'ElevatorController', label: 'Elevators' },
+  { value: 'all', labelKey: 'common.all' as const },
+  { value: 'AccessController', labelKey: 'devicesTab.types.accessControllers' as const },
+  { value: 'Intercom', labelKey: 'devicesTab.types.intercoms' as const },
+  { value: 'ElevatorController', labelKey: 'devicesTab.types.elevators' as const },
 ] as const
 
 interface Device {
@@ -103,12 +104,12 @@ function getDeviceIcon(deviceType: string): string {
   return 'devices'
 }
 
-function getDeviceTypeLabel(deviceType: string): string {
-  if (deviceType === 'AccessController') return 'Access Controller'
-  if (deviceType === 'Intercom') return 'Intercom'
-  if (deviceType === 'AttendanceTerminal') return 'Attendance Terminal'
-  if (deviceType === 'ElevatorController') return 'Elevator Controller'
-  if (deviceType === 'EnrollerStation') return 'Enroller station'
+function getDeviceTypeLabel(deviceType: string, t: (k: string) => string): string {
+  if (deviceType === 'AccessController') return t('devicesTab.deviceTypeLabels.AccessController')
+  if (deviceType === 'Intercom') return t('devicesTab.deviceTypeLabels.Intercom')
+  if (deviceType === 'AttendanceTerminal') return t('devicesTab.deviceTypeLabels.AttendanceTerminal')
+  if (deviceType === 'ElevatorController') return t('devicesTab.deviceTypeLabels.ElevatorController')
+  if (deviceType === 'EnrollerStation') return t('devicesTab.deviceTypeLabels.EnrollerStation')
   return deviceType
 }
 
@@ -130,13 +131,13 @@ function deviceTypeStringToNumber(deviceType: string | null | undefined): number
 }
 
 const DISCOVER_TYPE_TABS = [
-  { value: 'all', label: 'All' },
-  { value: 'camera', label: 'Cameras' },
-  { value: 'access', label: 'Access Control' },
-  { value: 'intercom', label: 'Intercoms' },
-  { value: 'nvr', label: 'NVR' },
-  { value: 'switch', label: 'Switches' },
-  { value: 'other', label: 'Other' },
+  { value: 'all', labelKey: 'common.all' as const },
+  { value: 'camera', labelKey: 'devicesTab.discoverTypes.cameras' as const },
+  { value: 'access', labelKey: 'devicesTab.discoverTypes.access' as const },
+  { value: 'intercom', labelKey: 'devicesTab.discoverTypes.intercoms' as const },
+  { value: 'nvr', labelKey: 'devicesTab.discoverTypes.nvr' as const },
+  { value: 'switch', labelKey: 'devicesTab.discoverTypes.switches' as const },
+  { value: 'other', labelKey: 'devicesTab.discoverTypes.other' as const },
 ] as const
 
 function inferDeviceTypeFromModel(model: string | null | undefined, serial?: string | null): string {
@@ -151,6 +152,7 @@ function inferDeviceTypeFromModel(model: string | null | undefined, serial?: str
 }
 
 export const DevicesTab = forwardRef((_props, ref) => {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { startLoading, stopLoading, isLoading } = useLoading()
 
@@ -192,11 +194,11 @@ export const DevicesTab = forwardRef((_props, ref) => {
       const statusesById = new Map(statusesResult.map((s) => [s.deviceId, s]))
       setDevices(devicesResult.map((d) => mergeStatus(d, statusesById.get(d.id))))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load devices')
+      setError(e instanceof Error ? e.message : t('devicesTab.failedLoadDevices'))
     } finally {
       stopLoading()
     }
-  }, [token, startLoading, stopLoading])
+  }, [token, startLoading, stopLoading, t])
 
   const fetchStatuses = useCallback(async () => {
     if (!token) return
@@ -249,14 +251,14 @@ export const DevicesTab = forwardRef((_props, ref) => {
           .build()
 
         hub.onreconnecting(() => {
-          setInfo('Reconnecting to server...')
+          setInfo(t('devicesTab.reconnectingToServer'))
         })
         hub.onreconnected(() => {
           setInfo(null)
           fetchStatusesRef.current()
         })
         hub.onclose((err) => {
-          if (err) setInfo('Connection lost. Refreshing status via polling.')
+          if (err) setInfo(t('devicesTab.connectionLost'))
         })
 
         hub.on('DeviceStatusChanged', (payload: DeviceStatusResponse) => {
@@ -281,7 +283,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
         hub.on('DiscoveryComplete', (count: number) => {
           setIsDiscovering(false)
-          setInfo(count > 0 ? `Found ${count} devices.` : 'No devices found.')
+          setInfo(count > 0 ? t('devicesTab.foundDevices', { count }) : t('devicesTab.noDevicesFound'))
         })
 
         await hub.start()
@@ -318,7 +320,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
         const identifier = (d.deviceIdentifier ?? '').toLowerCase()
         const ip = (d.ipAddress ?? '').toLowerCase()
         const location = (d.location ?? '').toLowerCase()
-        const typeLabel = getDeviceTypeLabel(d.deviceType ?? '').toLowerCase()
+        const typeLabel = getDeviceTypeLabel(d.deviceType ?? '', t).toLowerCase()
         const portStr = String(d.port ?? '')
         const searchable = `${name} ${identifier} ${ip} ${location} ${typeLabel} ${portStr}`
         return terms.every((term) => searchable.includes(term))
@@ -326,7 +328,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
     }
 
     return result
-  }, [devices, typeFilter, searchQuery])
+  }, [devices, typeFilter, searchQuery, t])
 
   function openDiscoverModal() {
     setError(null)
@@ -342,7 +344,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
     const hub = hubRef.current
     if (hub?.state !== 'Connected') {
-      setError('Realtime connection not ready. Wait a moment and try again.')
+      setError(t('devicesTab.realtimeNotReady'))
       setIsDiscovering(false)
       return
     }
@@ -350,7 +352,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
     try {
       await hub.invoke('StartDiscovery')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Discovery failed')
+      setError(e instanceof Error ? e.message : t('devicesTab.discoveryFailed'))
       setIsDiscovering(false)
     }
   }
@@ -455,7 +457,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       closeModals()
       fetchStatusesRef.current()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create device')
+      setError(e instanceof Error ? e.message : t('devicesTab.failedCreateDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -483,7 +485,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update device')
+      setError(e instanceof Error ? e.message : t('devicesTab.failedUpdateDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -498,7 +500,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       setDevices((prev) => prev.filter((d) => d.id !== deletingDevice.id))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete device')
+      setError(e instanceof Error ? e.message : t('devicesTab.failedDeleteDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -506,15 +508,15 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
   async function handleActivate() {
     if (!activatingDevice || !activatingDevice.macAddress) {
-      setError('Device MAC address is required for activation.')
+      setError(t('devicesTab.macRequired'))
       return
     }
     if (activatePassword !== activateConfirm) {
-      setError('Passwords do not match.')
+      setError(t('devicesTab.passwordsDoNotMatch'))
       return
     }
     if (activatePassword.length < 8) {
-      setError('Password must be at least 8 characters.')
+      setError(t('devicesTab.passwordMin8'))
       return
     }
     setIsSubmitting(true)
@@ -531,11 +533,11 @@ export const DevicesTab = forwardRef((_props, ref) => {
           password: activatePassword,
         }),
       })
-      setInfo(`Device ${activatingDevice.ipAddress} activated. Initiating re-scan...`)
+      setInfo(t('devicesTab.deviceActivated', { ip: activatingDevice.ipAddress }))
       closeActivateModal()
       await startDiscovery()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Activation failed'
+      const msg = e instanceof Error ? e.message : t('devicesTab.activationFailed')
       setActivateError(msg)
     } finally {
       setIsSubmitting(false)
@@ -571,11 +573,11 @@ export const DevicesTab = forwardRef((_props, ref) => {
   async function handleAddFromDiscoveredSubmit() {
     if (!token || !addFromDevice) return
     if (!addDeviceName.trim()) {
-      setError('Please enter a device name')
+      setError(t('devicesTab.pleaseEnterDeviceName'))
       return
     }
     if (!addDevicePassword) {
-      setError('Please enter the device password (same as used during activation)')
+      setError(t('devicesTab.pleaseEnterDevicePassword'))
       return
     }
     setError(null)
@@ -602,10 +604,10 @@ export const DevicesTab = forwardRef((_props, ref) => {
       setDevices((prev) => [...prev, deviceWithStatus])
       setDiscovered((prev) => prev.filter((x) => x.deviceIdentifier !== addFromDevice.deviceIdentifier))
       fetchStatusesRef.current()
-      setInfo(`Device "${addDeviceName.trim()}" added.`)
+      setInfo(t('devicesTab.deviceAdded', { name: addDeviceName.trim() }))
       closeAddFromDiscoveredModal()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add device')
+      setError(e instanceof Error ? e.message : t('devicesTab.failedAddDevice'))
     } finally {
       setIsSubmitting(false)
     }
@@ -618,18 +620,18 @@ export const DevicesTab = forwardRef((_props, ref) => {
     <div className="space-y-6">
       <PageHeader
         className="hidden md:flex"
-        title="Devices Fleet"
-        description="Manage and monitor your enterprise access control hardware fleet."
+        title={t('devicesTab.devicesFleet')}
+        description={t('devicesTab.devicesFleetDescription')}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="md" icon="sync" onClick={loadData} isLoading={isLoading}>
-              Refresh
+              {t('common.refresh')}
             </Button>
             <Button variant="outline" size="md" icon="search" onClick={handleDiscover}>
-              Discover
+              {t('devicesTab.discover')}
             </Button>
             <Button size="md" icon="add" onClick={openCreateModal}>
-              Add Manually
+              {t('devicesTab.addManually')}
             </Button>
           </div>
         }
@@ -648,22 +650,22 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
       {/* Mobile Quick Actions */}
       <div className="flex md:hidden gap-2">
-        <Button fullWidth variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>Refresh</Button>
-        <Button fullWidth variant="outline" size="sm" icon="search" onClick={handleDiscover}>Discover</Button>
+        <Button fullWidth variant="outline" size="sm" icon="sync" onClick={loadData} isLoading={isLoading}>{t('common.refresh')}</Button>
+        <Button fullWidth variant="outline" size="sm" icon="search" onClick={handleDiscover}>{t('devicesTab.discover')}</Button>
       </div>
 
       {/* Stats Tier */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 lg:grid-cols-6">
         <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.total')}</p>
           <p className="text-2xl font-black text-primary leading-none">{devices.length}</p>
         </div>
         <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Online</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.online')}</p>
           <p className="text-2xl font-black text-emerald-500 leading-none">{onlineCount}</p>
         </div>
         <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Offline</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.offline')}</p>
           <p className="text-2xl font-black text-error-text leading-none">{devices.length - onlineCount}</p>
         </div>
       </div>
@@ -671,7 +673,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
         <div className="relative flex-1 max-w-md">
           <Input
-            placeholder="Search devices..."
+            placeholder={t('devicesTab.searchDevices')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             icon="search"
@@ -679,14 +681,14 @@ export const DevicesTab = forwardRef((_props, ref) => {
           />
         </div>
         <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-divider-light md:border-none">
-          {DEVICE_TYPES.map((t) => (
+          {DEVICE_TYPES.map((dt) => (
             <button
-              key={t.value}
-              onClick={() => setTypeFilter(t.value)}
-              className={`pb-2.5 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${typeFilter === t.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
+              key={dt.value}
+              onClick={() => setTypeFilter(dt.value)}
+              className={`pb-2.5 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${typeFilter === dt.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
                 }`}
             >
-              {t.label}
+              {t(dt.labelKey)}
             </button>
           ))}
         </div>
@@ -697,7 +699,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
         {filteredDevices.length === 0 ? (
           <div className="py-20 text-center bg-surface rounded-2xl shadow-md">
             <span className="material-symbols-outlined text-text-light text-5xl mb-3">router</span>
-            <p className="text-sm font-bold text-text-muted uppercase tracking-widest">No devices found</p>
+            <p className="text-sm font-bold text-text-muted uppercase tracking-widest">{t('devicesTab.noDevicesFoundShort')}</p>
           </div>
         ) : (
           filteredDevices.map((device) => (
@@ -714,7 +716,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
                   <h4 className="text-base font-black text-text-dark leading-tight">{device.name}</h4>
                   <div className="mt-1 space-y-0.5">
                     <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">
-                      {device.ipAddress}:{device.port} • {getDeviceTypeLabel(device.deviceType)}
+                      {device.ipAddress}:{device.port} • {getDeviceTypeLabel(device.deviceType, t)}
                     </p>
                     <div className="flex gap-3 text-[9px] font-bold text-text-muted/60 uppercase tracking-tight">
                       <span>SN: {device.deviceIdentifier}</span>
@@ -727,9 +729,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
                 <Badge
                   variant={device.status === 'Online' ? 'success' : 'error'}
                   dot
-                  title={device.status === 'Offline' ? (device.statusMessage || 'Connection lost / Timeout') : undefined}
+                  title={device.status === 'Offline' ? (device.statusMessage || t('devicesTab.connectionLostTimeout')) : undefined}
                 >
-                  {device.status}
+                  {device.status === 'Online' ? t('devicesTab.online') : t('devicesTab.offline')}
                 </Badge>
                 <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
               </div>
@@ -742,20 +744,20 @@ export const DevicesTab = forwardRef((_props, ref) => {
       <Modal
         isOpen={modalMode === 'create' || modalMode === 'edit'}
         onClose={closeModals}
-        title={modalMode === 'create' ? 'Add Access Device' : 'Device Configuration'}
+        title={modalMode === 'create' ? t('devicesTab.addAccessDevice') : t('devicesTab.deviceConfiguration')}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Label / Name</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.labelName')}</label>
               <Input
                 value={formData.name}
                 onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
-                placeholder="e.g. Main Entrance Controller"
+                placeholder={t('devicesTab.namePlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">IP Address</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.ipAddress')}</label>
               <Input
                 value={formData.ipAddress}
                 onChange={(e) => setFormData((p) => ({ ...p, ipAddress: e.target.value }))}
@@ -763,7 +765,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Service Port</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.servicePort')}</label>
               <Input
                 type="number"
                 value={formData.port}
@@ -774,33 +776,33 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Physical Location</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.physicalLocation')}</label>
               <Input
                 value={formData.location}
                 onChange={(e) => setFormData((p) => ({ ...p, location: e.target.value }))}
-                placeholder="e.g. 1st Floor Lobby"
+                placeholder={t('devicesTab.locationPlaceholder')}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Device type</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.deviceType')}</label>
             <select
               value={formData.deviceType}
               onChange={(e) => setFormData((p) => ({ ...p, deviceType: parseInt(e.target.value, 10) }))}
               className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
             >
-              <option value={1}>Access Controller</option>
-              <option value={2}>Intercom</option>
-              <option value={3}>Attendance Terminal</option>
-              <option value={4}>Elevator Controller</option>
-              <option value={5}>Enroller station</option>
+              <option value={1}>{t('devicesTab.deviceTypeLabels.AccessController')}</option>
+              <option value={2}>{t('devicesTab.deviceTypeLabels.Intercom')}</option>
+              <option value={3}>{t('devicesTab.deviceTypeLabels.AttendanceTerminal')}</option>
+              <option value={4}>{t('devicesTab.deviceTypeLabels.ElevatorController')}</option>
+              <option value={5}>{t('devicesTab.deviceTypeLabels.EnrollerStation')}</option>
             </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Username</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.username')}</label>
               <Input
                 value={formData.username}
                 onChange={(e) => setFormData((p) => ({ ...p, username: e.target.value }))}
@@ -808,7 +810,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Secret Key / Password</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.secretKeyPassword')}</label>
               <Input
                 type="password"
                 value={formData.password}
@@ -820,14 +822,14 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
           <div className="flex gap-2 pt-4">
             <Button fullWidth onClick={modalMode === 'create' ? handleCreate : handleUpdate} isLoading={isSubmitting} disabled={!canCreateOrUpdate || isSubmitting}>
-              {modalMode === 'create' ? 'Register Device' : 'Save Changes'}
+              {modalMode === 'create' ? t('devicesTab.registerDevice') : t('common.saveChanges')}
             </Button>
-            <Button fullWidth variant="outline" onClick={closeModals}>Cancel</Button>
+            <Button fullWidth variant="outline" onClick={closeModals}>{t('common.cancel')}</Button>
           </div>
 
           {modalMode === 'edit' && (
             <div className="pt-4 border-t border-divider-light">
-              <Button fullWidth variant="danger" icon="delete" onClick={() => openDeleteModal(editingDevice!)}>Remove Device</Button>
+              <Button fullWidth variant="danger" icon="delete" onClick={() => openDeleteModal(editingDevice!)}>{t('devicesTab.removeDevice')}</Button>
             </div>
           )}
         </div>
@@ -837,7 +839,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       <Modal
         isOpen={modalMode === 'discover' || modalMode === 'activate'}
         onClose={closeModals}
-        title="Network Discovery"
+        title={t('devicesTab.networkDiscovery')}
         fullScreen
         className="bg-background-light"
       >
@@ -845,7 +847,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <p className="text-xs font-bold text-text-muted uppercase tracking-widest min-w-[100px]">
-                {isDiscovering ? 'Scanning...' : `Found (${discovered.length})`}
+                {isDiscovering ? t('devicesTab.scanning') : t('devicesTab.foundCount', { count: discovered.length })}
               </p>
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input
@@ -854,13 +856,13 @@ export const DevicesTab = forwardRef((_props, ref) => {
                   onChange={(e) => setShowAddedDevices(e.target.checked)}
                   className="w-4 h-4 rounded border-divider-light text-primary focus:ring-primary/20 transition-all"
                 />
-                <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Show Registered</span>
+                <span className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('devicesTab.showRegistered')}</span>
               </label>
             </div>
             <div className="flex-1 max-w-md relative">
               <Input
                 size="sm"
-                placeholder="Search by IP, Serial, or Model..."
+                placeholder={t('devicesTab.searchByIpSerialModel')}
                 value={discoverSearchQuery}
                 onChange={(e) => setDiscoverSearchQuery(e.target.value)}
                 icon="search"
@@ -868,20 +870,20 @@ export const DevicesTab = forwardRef((_props, ref) => {
               />
             </div>
             <Button size="sm" variant="outline" icon="sync" onClick={handleDiscoverRefresh} isLoading={isDiscovering}>
-              {isDiscovering ? 'Scanning' : 'Rescan'}
+              {isDiscovering ? t('devicesTab.scanningShort') : t('devicesTab.rescan')}
             </Button>
           </div>
 
           {/* Discovery Filter Tabs */}
           <div className="flex overflow-x-auto no-scrollbar gap-6 border-b border-divider-light">
-            {DISCOVER_TYPE_TABS.map((t) => (
+            {DISCOVER_TYPE_TABS.map((tab) => (
               <button
-                key={t.value}
-                onClick={() => setDiscoverTypeTab(t.value)}
-                className={`pb-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${discoverTypeTab === t.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                key={tab.value}
+                onClick={() => setDiscoverTypeTab(tab.value)}
+                className={`pb-2 text-[10px] font-black uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${discoverTypeTab === tab.value ? 'border-primary text-primary' : 'border-transparent text-text-light'
                   }`}
               >
-                {t.label}
+                {t(tab.labelKey)}
               </button>
             ))}
           </div>
@@ -915,7 +917,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
                 return (
                   <div className="py-20 text-center">
                     <span className="material-symbols-outlined text-4xl text-text-light mb-2">radar</span>
-                    <p className="text-xs font-bold text-text-muted uppercase tracking-widest">No matching devices</p>
+                    <p className="text-xs font-bold text-text-muted uppercase tracking-widest">{t('devicesTab.noMatchingDevices')}</p>
                   </div>
                 )
               }
@@ -933,17 +935,17 @@ export const DevicesTab = forwardRef((_props, ref) => {
                     <div className="flex justify-between items-start mb-3">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-black text-text-dark leading-none">{d.model || 'Unknown Model'}</p>
+                          <p className="text-sm font-black text-text-dark leading-none">{d.model || t('devicesTab.unknownModel')}</p>
                           {added ? (
-                            <Badge variant="success" className="text-[8px] px-1.5 py-0">Added</Badge>
+                            <Badge variant="success" className="text-[8px] px-1.5 py-0">{t('devicesTab.added')}</Badge>
                           ) : (
-                            <Badge variant={d.isActive ? 'neutral' : 'error'} className="text-[8px] px-1.5 py-0">{d.isActive ? 'Activated' : 'Inactive'}</Badge>
+                            <Badge variant={d.isActive ? 'neutral' : 'error'} className="text-[8px] px-1.5 py-0">{d.isActive ? t('devicesTab.activated') : t('devicesTab.inactive')}</Badge>
                           )}
                         </div>
                         <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{d.ipAddress}:{d.port}</p>
                         <div className="flex flex-wrap gap-x-4 gap-y-1">
                           <div className="flex items-center gap-1.5 opacity-60">
-                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">MAC: {d.macAddress || 'NO MAC'}</span>
+                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider">MAC: {d.macAddress || t('devicesTab.noMac')}</span>
                           </div>
                           <div className="flex items-center gap-1.5 opacity-60">
                             <span className="text-[9px] font-mono font-bold uppercase tracking-wider">SN: {d.deviceIdentifier}</span>
@@ -953,9 +955,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
                     </div>
                     <div className="flex gap-2 justify-end">
                       {added ? null : d.isActive ? (
-                        <Button className="w-full md:w-fit md:px-6" size="sm" icon="add" onClick={() => openAddFromDiscoveredModal(d)}>Add Device</Button>
+                        <Button className="w-full md:w-fit md:px-6" size="sm" icon="add" onClick={() => openAddFromDiscoveredModal(d)}>{t('devicesTab.addDevice')}</Button>
                       ) : (
-                        <Button className="w-full md:w-fit md:px-6" variant="outline" icon="lock_open" onClick={() => openActivateModal(d)}>Activate</Button>
+                        <Button className="w-full md:w-fit md:px-6" variant="outline" icon="lock_open" onClick={() => openActivateModal(d)}>{t('devicesTab.activate')}</Button>
                       )}
                     </div>
                   </div>
@@ -965,54 +967,54 @@ export const DevicesTab = forwardRef((_props, ref) => {
           </div>
 
           <div className="flex justify-end">
-            <Button className="w-full md:w-fit md:px-12" variant="outline" onClick={closeModals}>Close Explorer</Button>
+            <Button className="w-full md:w-fit md:px-12" variant="outline" onClick={closeModals}>{t('devicesTab.closeExplorer')}</Button>
           </div>
         </div>
       </Modal>
 
       {/* Activation Sub-Modal */}
-      <Modal isOpen={modalMode === 'activate'} onClose={closeActivateModal} title="Security Activation">
+      <Modal isOpen={modalMode === 'activate'} onClose={closeActivateModal} title={t('devicesTab.securityActivation')}>
         <div className="space-y-4 p-2">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Set activation password for {activatingDevice?.ipAddress}</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('devicesTab.setActivationPassword', { ip: activatingDevice?.ipAddress })}</p>
           <div className="space-y-4">
             <div className="bg-slate-50 p-4 rounded-2xl shadow-inner border-none">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">New Password (Min 8)</label>
-              <Input type="password" value={activatePassword} onChange={e => setActivatePassword(e.target.value)} placeholder="Minimum 8 characters" className="bg-white" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">{t('devicesTab.newPasswordMin8')}</label>
+              <Input type="password" value={activatePassword} onChange={e => setActivatePassword(e.target.value)} placeholder={t('devicesTab.minimum8Characters')} className="bg-white" />
             </div>
             <div className="bg-slate-50 p-4 rounded-2xl shadow-inner border-none">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">Confirm Identity</label>
-              <Input type="password" value={activateConfirm} onChange={e => setActivateConfirm(e.target.value)} placeholder="Repeat password" className="bg-white" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2 px-1">{t('devicesTab.confirmIdentity')}</label>
+              <Input type="password" value={activateConfirm} onChange={e => setActivateConfirm(e.target.value)} placeholder={t('devicesTab.repeatPassword')} className="bg-white" />
             </div>
           </div>
           {activateError && <div className="p-3 bg-error-bg text-error-text rounded-xl text-xs font-bold border border-error-text/10">{activateError}</div>}
           <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleActivate} isLoading={isSubmitting} disabled={activatePassword.length < 8 || activatePassword !== activateConfirm || isSubmitting}>Activate</Button>
-            <Button fullWidth variant="outline" onClick={closeActivateModal}>Abort</Button>
+            <Button fullWidth onClick={handleActivate} isLoading={isSubmitting} disabled={activatePassword.length < 8 || activatePassword !== activateConfirm || isSubmitting}>{t('devicesTab.activate')}</Button>
+            <Button fullWidth variant="outline" onClick={closeActivateModal}>{t('devicesTab.abort')}</Button>
           </div>
         </div>
       </Modal>
 
       {/* Add from Discovery Shortcut Modal */}
-      <Modal isOpen={!!addFromDevice} onClose={closeAddFromDiscoveredModal} title="Register Discovered">
+      <Modal isOpen={!!addFromDevice} onClose={closeAddFromDiscoveredModal} title={t('devicesTab.registerDiscovered')}>
         <div className="space-y-4">
-          <p className="text-xs font-bold text-text-muted uppercase tracking-widest">Add {addFromDevice?.ipAddress} to fleet</p>
+          <p className="text-xs font-bold text-text-muted uppercase tracking-widest">{t('devicesTab.addToFleet', { ip: addFromDevice?.ipAddress })}</p>
           <div className="space-y-3">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Friendly Name</label>
-              <Input value={addDeviceName} onChange={e => setAddDeviceName(e.target.value)} placeholder="e.g. Back Door Intercom" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.friendlyName')}</label>
+              <Input value={addDeviceName} onChange={e => setAddDeviceName(e.target.value)} placeholder={t('devicesTab.friendlyNamePlaceholder')} />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Credentials (Username)</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.credentialsUsername')}</label>
               <Input value={addDeviceUsername} onChange={e => setAddDeviceUsername(e.target.value)} placeholder="admin" />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Secret Key / Password</label>
-              <Input type="password" value={addDevicePassword} onChange={e => setAddDevicePassword(e.target.value)} placeholder="Required" />
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.secretKeyPassword')}</label>
+              <Input type="password" value={addDevicePassword} onChange={e => setAddDevicePassword(e.target.value)} placeholder={t('devicesTab.required')} />
             </div>
           </div>
           <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleAddFromDiscoveredSubmit} isLoading={isSubmitting} disabled={!addDeviceName || !addDevicePassword || isSubmitting}>Add Device</Button>
-            <Button fullWidth variant="outline" onClick={closeAddFromDiscoveredModal}>Cancel</Button>
+            <Button fullWidth onClick={handleAddFromDiscoveredSubmit} isLoading={isSubmitting} disabled={!addDeviceName || !addDevicePassword || isSubmitting}>{t('devicesTab.addDevice')}</Button>
+            <Button fullWidth variant="outline" onClick={closeAddFromDiscoveredModal}>{t('common.cancel')}</Button>
           </div>
         </div>
       </Modal>
@@ -1021,28 +1023,28 @@ export const DevicesTab = forwardRef((_props, ref) => {
       <Modal
         isOpen={!!networkWarningMessage}
         onClose={() => setNetworkWarningMessage(null)}
-        title="Network Configuration Alert"
+        title={t('devicesTab.networkConfigurationAlert')}
       >
         <div className="space-y-4">
           <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 mb-2">
             <span className="material-symbols-outlined text-2xl">router</span>
           </div>
-          <p className="text-sm font-black text-text-dark leading-tight">{networkWarningMessage ?? 'Subnet mismatch detected.'}</p>
+          <p className="text-sm font-black text-text-dark leading-tight">{networkWarningMessage ?? t('devicesTab.subnetMismatch')}</p>
           <p className="text-xs text-text-light leading-relaxed">
-            The target device must be reachable on the same local network as the server to perform activation or registration.
+            {t('devicesTab.subnetMismatchExplanation')}
           </p>
-          <Button fullWidth variant="outline" onClick={() => setNetworkWarningMessage(null)}>Acknowledge</Button>
+          <Button fullWidth variant="outline" onClick={() => setNetworkWarningMessage(null)}>{t('devicesTab.acknowledge')}</Button>
         </div>
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title="System Deletion">
+      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title={t('devicesTab.systemDeletion')}>
         <div className="space-y-4">
-          <p className="text-sm font-bold text-text-dark">Remove {deletingDevice?.name} from your fleet management?</p>
-          <p className="text-xs text-text-light leading-relaxed">Warning: This will stop all monitoring and data collection for this device. This operation is permanent.</p>
+          <p className="text-sm font-bold text-text-dark">{t('devicesTab.removeFromFleetQuestion', { name: deletingDevice?.name })}</p>
+          <p className="text-xs text-text-light leading-relaxed">{t('devicesTab.deletionWarning')}</p>
           <div className="flex gap-2 pt-4">
-            <Button variant="danger" fullWidth onClick={handleDelete} isLoading={isSubmitting}>Confirm Deletion</Button>
-            <Button variant="outline" fullWidth onClick={closeModals} disabled={isSubmitting}>Cancel</Button>
+            <Button variant="danger" fullWidth onClick={handleDelete} isLoading={isSubmitting}>{t('devicesTab.confirmDeletion')}</Button>
+            <Button variant="outline" fullWidth onClick={closeModals} disabled={isSubmitting}>{t('common.cancel')}</Button>
           </div>
         </div>
       </Modal>

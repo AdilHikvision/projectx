@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
@@ -37,6 +38,7 @@ interface GeoZone {
 }
 
 export function GeoZonesPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const [zones, setZones] = useState<GeoZone[]>([])
   const [loading, setLoading] = useState(false)
@@ -66,13 +68,13 @@ export function GeoZonesPage() {
   }
 
   const useCurrentLocation = async () => {
-    if (!('geolocation' in navigator)) { alert('Geolocation not supported.'); return }
+    if (!('geolocation' in navigator)) { alert(t('geoZones.geolocationNotSupported')); return }
     try {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: true })
       )
       setForm((p) => ({ ...p, latitude: pos.coords.latitude.toFixed(6), longitude: pos.coords.longitude.toFixed(6) }))
-    } catch { alert('Failed to get current location.') }
+    } catch { alert(t('geoZones.failedToGetLocation')) }
   }
 
   const save = async () => {
@@ -108,16 +110,16 @@ export function GeoZonesPage() {
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <PageHeader
               className="p-0 border-none shadow-none bg-transparent"
-              title="Geo-zones"
-              description="Define geo-fenced zones. Self-service check-ins inside any active zone are auto-approved; outside zones go to admin approval."
+              title={t('geoZones.title')}
+              description={t('geoZones.description')}
             />
-            <Button icon="add" onClick={openCreate}>New zone</Button>
+            <Button icon="add" onClick={openCreate}>{t('geoZones.newZone')}</Button>
           </div>
 
           {zones.length > 0 && (
             <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border">
-                <p className="text-xs font-black text-text-light uppercase tracking-widest">All zones</p>
+                <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('geoZones.allZones')}</p>
               </div>
               <MapContainer
                 center={[zones[0].latitude, zones[0].longitude]}
@@ -143,7 +145,7 @@ export function GeoZonesPage() {
 
           <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-border">
-              <p className="text-xs font-black text-text-light uppercase tracking-widest">{zones.length} zone{zones.length === 1 ? '' : 's'}</p>
+              <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('geoZones.zoneCount', { count: zones.length })}</p>
             </div>
             {loading ? (
               <div className="flex items-center justify-center py-16">
@@ -152,19 +154,19 @@ export function GeoZonesPage() {
             ) : zones.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
                 <span className="material-symbols-outlined text-4xl">location_off</span>
-                <p className="text-sm">No geo-zones yet.</p>
+                <p className="text-sm">{t('geoZones.emptyState')}</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                      <th className="px-5 py-3 text-left">Name</th>
-                      <th className="px-5 py-3 text-left">Latitude</th>
-                      <th className="px-5 py-3 text-left">Longitude</th>
-                      <th className="px-5 py-3 text-right">Radius (m)</th>
-                      <th className="px-5 py-3 text-left">Active</th>
-                      <th className="px-5 py-3 text-right">Actions</th>
+                      <th className="px-5 py-3 text-left">{t('common.name')}</th>
+                      <th className="px-5 py-3 text-left">{t('geoZones.columns.latitude')}</th>
+                      <th className="px-5 py-3 text-left">{t('geoZones.columns.longitude')}</th>
+                      <th className="px-5 py-3 text-right">{t('geoZones.columns.radiusMeters')}</th>
+                      <th className="px-5 py-3 text-left">{t('common.active')}</th>
+                      <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -176,12 +178,12 @@ export function GeoZonesPage() {
                         <td className="px-5 py-3 text-right text-text-dark">{z.radiusMeters}</td>
                         <td className="px-5 py-3">
                           {z.isActive
-                            ? <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full text-green-600 bg-green-50">Active</span>
-                            : <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full text-text-light bg-background-light">Off</span>}
+                            ? <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full text-green-600 bg-green-50">{t('common.active')}</span>
+                            : <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full text-text-light bg-background-light">{t('geoZones.off')}</span>}
                         </td>
                         <td className="px-5 py-3 text-right">
-                          <button onClick={() => openEdit(z)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline mr-3">Edit</button>
-                          <button onClick={() => { setEditing(z); setModal('delete') }} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">Delete</button>
+                          <button onClick={() => openEdit(z)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline mr-3">{t('common.edit')}</button>
+                          <button onClick={() => { setEditing(z); setModal('delete') }} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">{t('common.delete')}</button>
                         </td>
                       </tr>
                     ))}
@@ -193,23 +195,23 @@ export function GeoZonesPage() {
         </div>
       </div>
 
-      <Modal isOpen={modal === 'create' || modal === 'edit'} onClose={() => { setModal(null); setEditing(null) }} title={modal === 'create' ? 'New geo-zone' : 'Edit geo-zone'}>
+      <Modal isOpen={modal === 'create' || modal === 'edit'} onClose={() => { setModal(null); setEditing(null) }} title={modal === 'create' ? t('geoZones.newGeoZone') : t('geoZones.editGeoZone')}>
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Name</label>
-            <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} placeholder="Office HQ" />
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.name')}</label>
+            <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} placeholder={t('geoZones.namePlaceholder')} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Latitude</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('geoZones.columns.latitude')}</label>
               <Input value={form.latitude} onChange={(e) => setForm((p) => ({ ...p, latitude: e.target.value }))} placeholder="40.4093" />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Longitude</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('geoZones.columns.longitude')}</label>
               <Input value={form.longitude} onChange={(e) => setForm((p) => ({ ...p, longitude: e.target.value }))} placeholder="49.8671" />
             </div>
           </div>
-          <Button variant="outline" icon="my_location" onClick={useCurrentLocation}>Use current location</Button>
+          <Button variant="outline" icon="my_location" onClick={useCurrentLocation}>{t('geoZones.useCurrentLocation')}</Button>
           {(() => {
             const lat = parseFloat(form.latitude)
             const lon = parseFloat(form.longitude)
@@ -218,7 +220,7 @@ export function GeoZonesPage() {
             const center: [number, number] = valid ? [lat, lon] : [40.4093, 49.8671] // fallback Baku
             return (
               <div className="rounded-xl overflow-hidden border border-border-light">
-                <p className="px-3 py-2 text-[10px] font-bold text-text-light bg-slate-50 border-b border-border-light">Click on map to set zone center</p>
+                <p className="px-3 py-2 text-[10px] font-bold text-text-light bg-slate-50 border-b border-border-light">{t('geoZones.clickToSetCenter')}</p>
                 <MapContainer center={center} zoom={valid ? 16 : 12} style={{ height: 240, width: '100%' }}>
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -233,26 +235,28 @@ export function GeoZonesPage() {
             )
           })()}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Radius (meters)</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('geoZones.radiusMeters')}</label>
             <Input type="number" min={1} value={form.radiusMeters} onChange={(e) => setForm((p) => ({ ...p, radiusMeters: e.target.value }))} />
           </div>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={form.isActive} onChange={(e) => setForm((p) => ({ ...p, isActive: e.target.checked }))} className="w-4 h-4 rounded border-border-light text-primary focus:ring-primary/30" />
-            <span className="text-sm font-bold text-text-dark">Active</span>
+            <span className="text-sm font-bold text-text-dark">{t('common.active')}</span>
           </label>
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => { setModal(null); setEditing(null) }}>Cancel</Button>
-            <Button fullWidth isLoading={saving} onClick={save} disabled={!form.name.trim()}>{modal === 'create' ? 'Create' : 'Save'}</Button>
+            <Button variant="outline" fullWidth onClick={() => { setModal(null); setEditing(null) }}>{t('common.cancel')}</Button>
+            <Button fullWidth isLoading={saving} onClick={save} disabled={!form.name.trim()}>{modal === 'create' ? t('common.create') : t('common.save')}</Button>
           </div>
         </div>
       </Modal>
 
-      <Modal isOpen={modal === 'delete'} onClose={() => { setModal(null); setEditing(null) }} title="Delete zone">
+      <Modal isOpen={modal === 'delete'} onClose={() => { setModal(null); setEditing(null) }} title={t('geoZones.deleteZone')}>
         <div className="space-y-4 pt-2">
-          <p className="text-sm text-text-dark">Delete <strong>{editing?.name}</strong>?</p>
+          <p className="text-sm text-text-dark">
+            {t('geoZones.deletePrefix')} <strong>{editing?.name}</strong>?
+          </p>
           <div className="flex gap-3">
-            <Button variant="outline" fullWidth onClick={() => { setModal(null); setEditing(null) }}>Cancel</Button>
-            <Button variant="danger" fullWidth isLoading={saving} onClick={remove}>Delete</Button>
+            <Button variant="outline" fullWidth onClick={() => { setModal(null); setEditing(null) }}>{t('common.cancel')}</Button>
+            <Button variant="danger" fullWidth isLoading={saving} onClick={remove}>{t('common.delete')}</Button>
           </div>
         </div>
       </Modal>

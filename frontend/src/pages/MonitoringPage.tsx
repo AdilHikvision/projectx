@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { HubConnection, HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
@@ -63,17 +64,6 @@ interface DoorGroup {
 const GROUPS_KEY = 'monitoring_door_groups_v2'
 const TIMELINE_PAGE_SIZE = 10
 
-const EVENT_TYPES: Record<number, string> = {
-  0: 'Unknown',
-  1: 'Door opened',
-  2: 'Access granted',
-  3: 'Access denied',
-  4: 'Heartbeat',
-  5: 'Door closed',
-  6: 'Auth timeout',
-  7: 'Device operation',
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getDoorKey(d: { deviceId: string; doorIndex: number }) {
@@ -92,30 +82,45 @@ function saveGroups(groups: DoorGroup[]) {
   try { localStorage.setItem(GROUPS_KEY, JSON.stringify(groups)) } catch { /* ignore */ }
 }
 
-function buildActivityPresentation(
-  evt: DeviceEvent,
-  deviceByIdentifier: Map<string, DeviceSummary>,
-  accessLevelByDeviceId: Map<string, string>,
-): { headline: string; category: string; lines: { label: string; value: string }[] } {
-  const category = EVENT_TYPES[evt.eventType] ?? 'Event'
-  const baseSummary = (evt.summary && evt.summary.trim()) || category
-  const headline =
-    evt.personName && baseSummary.toLowerCase().includes('face authentication')
-      ? `${evt.personName} — ${baseSummary}`
-      : baseSummary
-  const lines: { label: string; value: string }[] = []
-  if (evt.personName) lines.push({ label: 'Person', value: evt.personName })
-  const device = deviceByIdentifier.get(evt.deviceIdentifier)
-  lines.push({ label: 'Device', value: device?.name ?? evt.deviceIdentifier })
-  const accessLevelName = device ? accessLevelByDeviceId.get(device.id) : undefined
-  lines.push({ label: 'Access level', value: accessLevelName ?? '—' })
-  return { headline, category, lines }
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function MonitoringPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
+
+  const eventTypeLabel = useCallback((eventType: number): string => {
+    switch (eventType) {
+      case 0: return t('monitoring.eventTypes.unknown')
+      case 1: return t('monitoring.eventTypes.doorOpened')
+      case 2: return t('monitoring.eventTypes.accessGranted')
+      case 3: return t('monitoring.eventTypes.accessDenied')
+      case 4: return t('monitoring.eventTypes.heartbeat')
+      case 5: return t('monitoring.eventTypes.doorClosed')
+      case 6: return t('monitoring.eventTypes.authTimeout')
+      case 7: return t('monitoring.eventTypes.deviceOperation')
+      default: return t('monitoring.eventTypes.event')
+    }
+  }, [t])
+
+  const buildActivityPresentation = useCallback((
+    evt: DeviceEvent,
+    deviceByIdentifier: Map<string, DeviceSummary>,
+    accessLevelByDeviceId: Map<string, string>,
+  ): { headline: string; category: string; lines: { label: string; value: string }[] } => {
+    const category = eventTypeLabel(evt.eventType)
+    const baseSummary = (evt.summary && evt.summary.trim()) || category
+    const headline =
+      evt.personName && baseSummary.toLowerCase().includes('face authentication')
+        ? `${evt.personName} — ${baseSummary}`
+        : baseSummary
+    const lines: { label: string; value: string }[] = []
+    if (evt.personName) lines.push({ label: t('monitoring.fields.person'), value: evt.personName })
+    const device = deviceByIdentifier.get(evt.deviceIdentifier)
+    lines.push({ label: t('monitoring.fields.device'), value: device?.name ?? evt.deviceIdentifier })
+    const accessLevelName = device ? accessLevelByDeviceId.get(device.id) : undefined
+    lines.push({ label: t('monitoring.fields.accessLevel'), value: accessLevelName ?? '—' })
+    return { headline, category, lines }
+  }, [t, eventTypeLabel])
 
   // Data
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
@@ -262,7 +267,7 @@ export function MonitoringPage() {
         method: 'POST', token, body: JSON.stringify({ action }),
       })
     } catch (e) {
-      setError(e instanceof Error ? e.message : `Door control failed: ${action}`)
+      setError(e instanceof Error ? e.message : t('monitoring.errors.doorControlFailed', { action }))
     } finally {
       setDoorControlLoading(null)
     }
@@ -272,9 +277,10 @@ export function MonitoringPage() {
 
   function addGroup() {
     const id = crypto.randomUUID()
-    setGroups(prev => [...prev, { id, name: 'New Group', doorKeys: [], collapsed: false, visible: true }])
+    const defaultName = t('monitoring.newGroup')
+    setGroups(prev => [...prev, { id, name: defaultName, doorKeys: [], collapsed: false, visible: true }])
     setEditingGroupId(id)
-    setEditingName('New Group')
+    setEditingName(defaultName)
   }
 
   function startEdit(group: DoorGroup) {
@@ -284,7 +290,7 @@ export function MonitoringPage() {
 
   function commitEdit() {
     if (!editingGroupId) return
-    const name = editingName.trim() || 'Group'
+    const name = editingName.trim() || t('monitoring.group')
     setGroups(prev => prev.map(g => g.id === editingGroupId ? { ...g, name } : g))
     setEditingGroupId(null)
   }
@@ -375,8 +381,12 @@ export function MonitoringPage() {
   function renderDoorCard(d: DeviceDoor) {
     const doorKey = getDoorKey(d)
     const floorNo = d.doorIndex + 1
-    const label = d.doorName ?? (d.isElevator ? `Floor ${floorNo}` : `Door ${floorNo}`)
-    const sublabel = d.doorName ? (d.isElevator ? `Floor ${floorNo} · ${d.deviceName}` : `Door ${floorNo} · ${d.deviceName}`) : d.deviceName
+    const label = d.doorName ?? (d.isElevator ? t('monitoring.floorN', { n: floorNo }) : t('monitoring.doorN', { n: floorNo }))
+    const sublabel = d.doorName
+      ? (d.isElevator
+        ? `${t('monitoring.floorN', { n: floorNo })} · ${d.deviceName}`
+        : `${t('monitoring.doorN', { n: floorNo })} · ${d.deviceName}`)
+      : d.deviceName
 
     return (
       <div
@@ -396,17 +406,17 @@ export function MonitoringPage() {
         <div className="shrink-0 flex items-center gap-1 ml-2">
           {d.isElevator ? (
             <div className="flex gap-1">
-              <Button variant="ghost" size="icon" icon="lock_open" title="Open relay" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="lock" title="Close relay" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock_open" title={t('monitoring.controls.openRelay')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock" title={t('monitoring.controls.closeRelay')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="door_open" title={t('monitoring.controls.remainOpen')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock_clock" title={t('monitoring.controls.remainClosed')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
             </div>
           ) : (
             <div className="flex gap-1">
-              <Button variant="ghost" size="icon" icon="lock_open" title="Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="lock" title="Close" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="door_open" title="Remain Open" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
-              <Button variant="ghost" size="icon" icon="lock_clock" title="Remain Closed" onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock_open" title={t('monitoring.controls.open')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'open')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock" title={t('monitoring.controls.close')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'close')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="door_open" title={t('monitoring.controls.remainOpen')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysopen')} disabled={!!doorControlLoading} />
+              <Button variant="ghost" size="icon" icon="lock_clock" title={t('monitoring.controls.remainClosed')} onClick={() => handleDoorControl(d.deviceId, d.doorIndex, 'alwaysclose')} disabled={!!doorControlLoading} />
             </div>
           )}
         </div>
@@ -451,7 +461,7 @@ export function MonitoringPage() {
             <h3
               className="flex-1 text-sm font-black text-text-dark leading-tight cursor-pointer hover:text-primary transition-colors truncate"
               onDoubleClick={() => startEdit(group)}
-              title="Double-click to rename"
+              title={t('monitoring.doubleClickToRename')}
             >
               {group.name}
             </h3>
@@ -464,21 +474,21 @@ export function MonitoringPage() {
           <button
             onClick={() => startEdit(group)}
             className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-slate-200 transition-colors shrink-0"
-            title="Rename"
+            title={t('monitoring.rename')}
           >
             <span className="material-symbols-outlined text-sm text-text-light">edit</span>
           </button>
           <button
             onClick={() => toggleVisibility(group.id)}
             className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-slate-200 transition-colors shrink-0"
-            title="Hide group"
+            title={t('monitoring.hideGroup')}
           >
             <span className="material-symbols-outlined text-sm text-text-light">visibility_off</span>
           </button>
           <button
             onClick={() => toggleCollapse(group.id)}
             className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-slate-200 transition-colors shrink-0"
-            title={group.collapsed ? 'Expand' : 'Collapse'}
+            title={group.collapsed ? t('monitoring.expand') : t('monitoring.collapse')}
           >
             <span className={`material-symbols-outlined text-sm text-text-light transition-transform duration-200 ${group.collapsed ? '' : 'rotate-180'}`}>
               expand_less
@@ -487,7 +497,7 @@ export function MonitoringPage() {
           <button
             onClick={() => deleteGroup(group.id)}
             className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-50 transition-colors shrink-0"
-            title="Delete group"
+            title={t('monitoring.deleteGroup')}
           >
             <span className="material-symbols-outlined text-sm text-text-light hover:text-error-text">delete</span>
           </button>
@@ -503,7 +513,7 @@ export function MonitoringPage() {
             ) : (
               <div className={`py-6 flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed transition-colors ${isDragTarget ? 'border-primary bg-primary/5' : 'border-divider-light'}`}>
                 <span className="material-symbols-outlined text-2xl text-text-light/50">drag_indicator</span>
-                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Drag doors here</p>
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">{t('monitoring.dragDoorsHere')}</p>
               </div>
             )}
           </div>
@@ -520,11 +530,11 @@ export function MonitoringPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title="Real-time Monitoring"
-            description="Live oversight of your entire security infrastructure."
+            title={t('monitoring.pageTitle')}
+            description={t('monitoring.pageDescription')}
             actions={
               <Button variant="outline" icon="refresh" onClick={() => { loadAccessLevels(); loadOnlineDoors(); loadDevices() }}>
-                Sync Fleet
+                {t('monitoring.syncFleet')}
               </Button>
             }
           />
@@ -538,16 +548,16 @@ export function MonitoringPage() {
           {/* ── Global Status ── */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Global Status</h2>
-              <Badge variant="primary" className="animate-pulse">Live Feed</Badge>
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('monitoring.globalStatus')}</h2>
+              <Badge variant="primary" className="animate-pulse">{t('monitoring.liveFeed')}</Badge>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-surface p-4 rounded-2xl shadow-md">
-                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Active Doors</p>
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('monitoring.activeDoors')}</p>
                 <p className="text-2xl font-black text-primary leading-none">{onlineDoors.length}</p>
               </div>
               <div className="bg-surface p-4 rounded-2xl shadow-md">
-                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Groups</p>
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('monitoring.groups')}</p>
                 <p className="text-2xl font-black text-text-dark leading-none">{groups.length}</p>
               </div>
             </div>
@@ -556,16 +566,16 @@ export function MonitoringPage() {
           {/* ── Doors / Floors ── */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Doors / Floors</h2>
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('monitoring.doorsFloors')}</h2>
               <Button variant="outline" size="sm" icon="create_new_folder" onClick={addGroup}>
-                Add Group
+                {t('monitoring.addGroup')}
               </Button>
             </div>
 
             {onlineDoors.length === 0 ? (
               <div className="py-20 text-center bg-surface rounded-2xl border border-dashed border-divider-light shadow-sm">
                 <span className="material-symbols-outlined text-4xl text-text-light mb-2 block">device_hub</span>
-                <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">No devices online</p>
+                <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">{t('monitoring.noDevicesOnline')}</p>
               </div>
             ) : (
               <>
@@ -582,7 +592,7 @@ export function MonitoringPage() {
                   >
                     <div className="px-4 py-3 border-b border-border-light bg-slate-50/40 flex items-center gap-2">
                       <span className="material-symbols-outlined text-base text-text-light select-none">inbox</span>
-                      <h3 className="flex-1 text-sm font-black text-text-dark">Ungrouped</h3>
+                      <h3 className="flex-1 text-sm font-black text-text-dark">{t('monitoring.ungrouped')}</h3>
                       <Badge variant="neutral">{ungroupedDoors.length}</Badge>
                     </div>
                     <div className="p-2 divide-y divide-divider-light/50">
@@ -596,7 +606,7 @@ export function MonitoringPage() {
                   <div className="px-4 py-3 bg-primary/5 rounded-xl border border-primary/20 flex items-center gap-3">
                     <span className="material-symbols-outlined text-primary text-xl shrink-0">info</span>
                     <p className="text-[10px] font-bold text-primary leading-snug">
-                      Click <strong>Add Group</strong>, then drag doors from Ungrouped into named groups to organize your workspace.
+                      {t('monitoring.firstUseTipBefore')} <strong>{t('monitoring.addGroup')}</strong>{t('monitoring.firstUseTipAfter')}
                     </p>
                   </div>
                 )}
@@ -606,7 +616,7 @@ export function MonitoringPage() {
             {/* Hidden groups bar */}
             {hiddenGroups.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap pt-1">
-                <span className="text-[9px] font-black text-text-light uppercase tracking-widest shrink-0">Hidden:</span>
+                <span className="text-[9px] font-black text-text-light uppercase tracking-widest shrink-0">{t('monitoring.hiddenLabel')}</span>
                 {hiddenGroups.map(g => {
                   const count = g.doorKeys.filter(k => onlineDoorMap.has(k)).length
                   return (
@@ -614,7 +624,7 @@ export function MonitoringPage() {
                       key={g.id}
                       onClick={() => toggleVisibility(g.id)}
                       className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface border border-divider-light text-[10px] font-bold text-text-muted hover:text-text-dark hover:border-primary/40 transition-colors shadow-sm"
-                      title="Show group"
+                      title={t('monitoring.showGroup')}
                     >
                       <span className="material-symbols-outlined text-sm">visibility</span>
                       {g.name}
@@ -629,7 +639,7 @@ export function MonitoringPage() {
           {/* ── Live Activity Timeline ── */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">Live Activity Timeline</h2>
+              <h2 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('monitoring.liveActivityTimeline')}</h2>
               <div className="flex gap-1 border border-divider-light rounded-lg p-0.5 bg-white">
                 {(['all', 'doors', 'access'] as const).map(f => (
                   <button
@@ -637,7 +647,7 @@ export function MonitoringPage() {
                     onClick={() => setEventsFilter(f)}
                     className={`px-3 py-1 rounded-md text-[9px] font-black uppercase tracking-widest transition-all ${eventsFilter === f ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
                   >
-                    {f}
+                    {t(`monitoring.filters.${f}`)}
                   </button>
                 ))}
               </div>
@@ -647,7 +657,7 @@ export function MonitoringPage() {
               {filteredEvents.length === 0 ? (
                 <div className="py-20 text-center bg-surface/50 rounded-2xl border border-dashed border-divider-light">
                   <span className="material-symbols-outlined text-4xl text-text-light/50 mb-2">browse_activity</span>
-                  <p className="text-[10px] font-black text-text-light uppercase tracking-widest">No activity yet — connect a device or wait for events.</p>
+                  <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('monitoring.noActivityYet')}</p>
                 </div>
               ) : (
                 <>
@@ -704,7 +714,7 @@ export function MonitoringPage() {
                                     faceId={evt.primaryFaceId}
                                     token={token}
                                     className="w-14 h-14 rounded-xl object-cover shrink-0 border border-divider-light shadow-sm"
-                                    alt={evt.personName ?? 'Person'}
+                                    alt={evt.personName ?? t('monitoring.person')}
                                   />
                                 ) : (
                                   <div className="w-14 h-14 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 border border-divider-light">
@@ -715,7 +725,7 @@ export function MonitoringPage() {
                                   {evt.personName ? (
                                     <p className="text-sm font-black text-text-dark truncate">{evt.personName}</p>
                                   ) : (
-                                    <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Unknown person</p>
+                                    <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{t('monitoring.unknownPerson')}</p>
                                   )}
                                 </div>
                               </div>
@@ -738,16 +748,16 @@ export function MonitoringPage() {
 
                   {timelinePage.totalPages > 1 ? (
                     <div className="flex items-center justify-center gap-3 pt-2 pb-4">
-                      <Button variant="outline" size="icon" icon="chevron_left" title="Previous page" disabled={timelinePage.page <= 1} onClick={() => setEventsPage(p => Math.max(1, p - 1))} />
+                      <Button variant="outline" size="icon" icon="chevron_left" title={t('monitoring.previousPage')} disabled={timelinePage.page <= 1} onClick={() => setEventsPage(p => Math.max(1, p - 1))} />
                       <span className="text-[10px] font-black text-text-light uppercase tracking-widest tabular-nums">
-                        Page {timelinePage.page} / {timelinePage.totalPages}
-                        <span className="text-text-muted font-bold normal-case"> ({filteredEvents.length} total)</span>
+                        {t('monitoring.pageOf', { page: timelinePage.page, total: timelinePage.totalPages })}
+                        <span className="text-text-muted font-bold normal-case"> {t('monitoring.totalCount', { count: filteredEvents.length })}</span>
                       </span>
-                      <Button variant="outline" size="icon" icon="chevron_right" title="Next page" disabled={timelinePage.page >= timelinePage.totalPages} onClick={() => setEventsPage(p => Math.min(timelinePage.totalPages, p + 1))} />
+                      <Button variant="outline" size="icon" icon="chevron_right" title={t('monitoring.nextPage')} disabled={timelinePage.page >= timelinePage.totalPages} onClick={() => setEventsPage(p => Math.min(timelinePage.totalPages, p + 1))} />
                     </div>
                   ) : (
                     <p className="text-center text-[9px] font-bold text-text-light uppercase tracking-widest pb-2 opacity-60">
-                      {filteredEvents.length} event{filteredEvents.length === 1 ? '' : 's'}
+                      {t('monitoring.eventCount', { count: filteredEvents.length })}
                     </p>
                   )}
                 </>

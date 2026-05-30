@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Sidebar, TopBar, BottomBar } from '../../organisms';
 
 interface AppLayoutProps {
@@ -7,26 +8,41 @@ interface AppLayoutProps {
     onAction?: () => void;
 }
 
-const routeMeta: Record<string, { title: string; breadcrumb?: string; actionText?: string; actionIcon?: string; searchPlaceholder: string }> = {
-    '/': { title: 'Dashboard', searchPlaceholder: 'Search dashboard...' },
-    '/monitoring': { title: 'Monitoring', breadcrumb: 'Dashboard', searchPlaceholder: 'Search monitoring...' },
-    '/people': { title: 'People', breadcrumb: 'Dashboard', actionText: 'Add People', actionIcon: 'person_add', searchPlaceholder: 'Search People & Visitors...' },
-    '/access-levels': { title: 'Access Levels', breadcrumb: 'Dashboard', actionText: 'Create Policy', actionIcon: 'add', searchPlaceholder: 'Search policies...' },
-    '/work-hours': { title: 'Work Hours', breadcrumb: 'Dashboard', actionText: 'Export Report', actionIcon: 'download', searchPlaceholder: 'Search attendance...' },
-    '/approvals': { title: 'Approvals', breadcrumb: 'Dashboard', searchPlaceholder: 'Search requests...' },
-    '/geo-zones': { title: 'Geo-zones', breadcrumb: 'Dashboard', searchPlaceholder: 'Search zones...' },
-    '/payroll': { title: 'Payroll', breadcrumb: 'Dashboard', actionText: 'Process All', actionIcon: 'payments', searchPlaceholder: 'Search payroll...' },
-    '/settings': { title: 'Settings', breadcrumb: 'Dashboard', actionText: 'Save Changes', actionIcon: 'save', searchPlaceholder: 'Search settings...' },
-    '/status': { title: 'System Status', breadcrumb: 'Dashboard', searchPlaceholder: 'Search logs...' },
+interface RouteMeta {
+    titleKey: string;
+    breadcrumbKey?: string;
+    actionTextKey?: string;
+    actionIcon?: string;
+    searchPlaceholderKey: string;
+}
+
+const ROUTE_META: Record<string, RouteMeta> = {
+    '/': { titleKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchDashboard' },
+    '/monitoring': { titleKey: 'nav.monitoring', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchMonitoring' },
+    '/people': { titleKey: 'nav.people', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.addPeople', actionIcon: 'person_add', searchPlaceholderKey: 'topBar.searchPeople' },
+    '/access-levels': { titleKey: 'nav.accessLevels', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.createPolicy', actionIcon: 'add', searchPlaceholderKey: 'topBar.searchPolicies' },
+    '/work-hours': { titleKey: 'nav.workHours', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.exportReport', actionIcon: 'download', searchPlaceholderKey: 'topBar.searchAttendance' },
+    '/approvals': { titleKey: 'nav.approvals', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchRequests' },
+    '/schedule-planner': { titleKey: 'nav.schedulePlanner', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/geo-zones': { titleKey: 'nav.geoZones', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchZones' },
+    '/payroll': { titleKey: 'nav.payroll', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.processAll', actionIcon: 'payments', searchPlaceholderKey: 'topBar.searchPayroll' },
+    '/settings': { titleKey: 'nav.settings', breadcrumbKey: 'nav.dashboard', actionTextKey: 'common.saveChanges', actionIcon: 'save', searchPlaceholderKey: 'topBar.searchSettings' },
+    '/status': { titleKey: 'nav.systemStatus', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchLogs' },
 };
 
 export function AppLayout({ children, onAction }: AppLayoutProps) {
     const location = useLocation();
-    const meta = routeMeta[location.pathname] || {
-        title: 'Dashboard',
-        breadcrumb: 'Dashboard',
-        searchPlaceholder: 'Search...',
+    const { t } = useTranslation();
+
+    const meta = ROUTE_META[location.pathname] ?? {
+        titleKey: 'nav.dashboard',
+        breadcrumbKey: 'nav.dashboard',
+        searchPlaceholderKey: 'common.search',
     };
+
+    const title = t(meta.titleKey);
+    const breadcrumb = meta.breadcrumbKey ? t(meta.breadcrumbKey) : undefined;
+    const searchPlaceholder = t(meta.searchPlaceholderKey);
 
     return (
         <div className="flex h-screen overflow-hidden bg-background-light font-sans antialiased text-text-dark">
@@ -37,9 +53,9 @@ export function AppLayout({ children, onAction }: AppLayoutProps) {
             <main className="flex-1 flex flex-col min-w-0 bg-background-light overflow-hidden">
                 {/* Unified Top Header Bar */}
                 <TopBar
-                    title={meta.title}
-                    breadcrumb={meta.breadcrumb !== meta.title ? meta.breadcrumb : undefined}
-                    searchPlaceholder={meta.searchPlaceholder}
+                    title={title}
+                    breadcrumb={breadcrumb !== title ? breadcrumb : undefined}
+                    searchPlaceholder={searchPlaceholder}
                     actionIcon={meta.actionIcon}
                     onAction={onAction}
                 />

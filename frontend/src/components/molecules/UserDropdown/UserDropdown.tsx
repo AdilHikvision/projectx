@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Avatar } from '../../atoms';
 
 interface UserDropdownProps {
@@ -14,6 +15,7 @@ export function UserDropdown({
 }: UserDropdownProps) {
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
+    const { t } = useTranslation();
 
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {
@@ -51,7 +53,7 @@ export function UserDropdown({
                         className="flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm font-semibold text-text-dark hover:bg-slate-75 transition-colors"
                     >
                         <span className="material-symbols-outlined text-lg">logout</span>
-                        Log Out
+                        {t('common.logout')}
                     </button>
                 </div>
             )}

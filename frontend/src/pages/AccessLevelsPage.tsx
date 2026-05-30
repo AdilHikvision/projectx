@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
@@ -49,21 +50,22 @@ const emptyForm: AccessLevelFormData = {
   description: '',
 }
 
-function floorOrDoorLabel(doorIndex: number, doorName: string | null | undefined, isElevator?: boolean) {
-  const n = doorName?.trim()
-  if (n) return n
-  const no = doorIndex + 1
-  return isElevator ? `Floor ${no}` : `Door ${no}`
-}
-
 const ACCESS_TABS = [
-  { value: 'access-level', label: 'Access Level' },
-  { value: 'doors', label: 'Doors / Floors' },
+  { value: 'access-level', labelKey: 'accessLevels.tabAccessLevel' },
+  { value: 'doors', labelKey: 'accessLevels.tabDoorsFloors' },
 ] as const
 
 export function AccessLevelsPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { startLoading, stopLoading, isLoading } = useLoading()
+
+  const floorOrDoorLabel = useCallback((doorIndex: number, doorName: string | null | undefined, isElevator?: boolean) => {
+    const n = doorName?.trim()
+    if (n) return n
+    const no = doorIndex + 1
+    return isElevator ? t('accessLevels.floorN', { n: no }) : t('accessLevels.doorN', { n: no })
+  }, [t])
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -89,11 +91,11 @@ export function AccessLevelsPage() {
       const list = await apiRequest<AccessLevel[]>('/api/access-levels', { token })
       setAccessLevels(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load access levels')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.loadFailed'))
     } finally {
       stopLoading()
     }
-  }, [token, startLoading, stopLoading])
+  }, [token, startLoading, stopLoading, t])
 
   useEffect(() => {
     loadData()
@@ -107,12 +109,12 @@ export function AccessLevelsPage() {
       const list = await apiRequest<DeviceDoor[]>('/api/devices/doors', { token })
       setDoorsList(list)
     } catch (e) {
-      setDoorsError(e instanceof Error ? e.message : 'Failed to load doors')
+      setDoorsError(e instanceof Error ? e.message : t('accessLevels.errors.loadDoorsFailed'))
       setDoorsList([])
     } finally {
       setDoorsLoading(false)
     }
-  }, [token])
+  }, [token, t])
 
   useEffect(() => {
     if (token) {
@@ -197,7 +199,7 @@ export function AccessLevelsPage() {
       setAccessLevels((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create access level')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.createFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -223,7 +225,7 @@ export function AccessLevelsPage() {
       )
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to update access level')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.updateFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -238,7 +240,7 @@ export function AccessLevelsPage() {
       setAccessLevels((prev) => prev.filter((x) => x.id !== deletingItem.id))
       closeModals()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete access level')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.deleteFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -277,7 +279,7 @@ export function AccessLevelsPage() {
       setAddDoorDeviceId('')
       setAddDoorIndex(0)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add door')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.addDoorFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -298,7 +300,7 @@ export function AccessLevelsPage() {
         prev ? { ...prev, doors: (prev.doors ?? []).filter((d) => d.deviceId !== deviceId || d.doorIndex !== doorIndex) } : null
       )
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to remove door')
+      setError(e instanceof Error ? e.message : t('accessLevels.errors.removeDoorFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -310,11 +312,11 @@ export function AccessLevelsPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title="Access Control Policies"
-            description="Manage access levels for employees and visitors."
+            title={t('accessLevels.pageTitle')}
+            description={t('accessLevels.pageDescription')}
             actions={
               <Button icon="add_moderator" size="md" onClick={openCreateModal}>
-                Create New Policy
+                {t('accessLevels.createNewPolicy')}
               </Button>
             }
           />
@@ -328,23 +330,23 @@ export function AccessLevelsPage() {
           {/* Top Stats Tier */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6 mb-2">
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Policies</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('accessLevels.totalPolicies')}</p>
               <p className="text-2xl font-black text-primary leading-none">{accessLevels.length}</p>
             </div>
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">System Zones</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('accessLevels.systemZones')}</p>
               <p className="text-2xl font-black text-primary leading-none">{doorsLoading ? '...' : doorsList.length}</p>
             </div>
           </div>
 
           {/* Search + Tabs Section */}
           <div className="space-y-4">
-            <h2 className="text-sm font-black text-text-dark uppercase tracking-widest pt-4">Defined Levels</h2>
+            <h2 className="text-sm font-black text-text-dark uppercase tracking-widest pt-4">{t('accessLevels.definedLevels')}</h2>
 
             <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
               <div className="flex-1 relative">
                 <Input
-                  placeholder="Search access levels..."
+                  placeholder={t('accessLevels.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   icon="search"
@@ -354,17 +356,17 @@ export function AccessLevelsPage() {
             </div>
 
             <div className="flex overflow-x-auto no-scrollbar gap-8">
-              {ACCESS_TABS.map((t) => (
+              {ACCESS_TABS.map((tab) => (
                 <button
-                  key={t.value}
+                  key={tab.value}
                   type="button"
-                  onClick={() => setTabFilter(t.value)}
-                  className={`pb-2.5 text-xs font-black whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${tabFilter === t.value
+                  onClick={() => setTabFilter(tab.value)}
+                  className={`pb-2.5 text-xs font-black whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${tabFilter === tab.value
                     ? 'border-primary text-primary'
                     : 'border-transparent text-text-light hover:text-text-muted'
                     }`}
                 >
-                  {t.label}
+                  {t(tab.labelKey)}
                 </button>
               ))}
             </div>
@@ -375,8 +377,8 @@ export function AccessLevelsPage() {
               {filteredLevels.length === 0 ? (
                 <div className="p-12 text-center text-text-light italic text-sm bg-surface rounded-2xl shadow-md border-none">
                   {accessLevels.length === 0 && !isLoading
-                    ? 'No access levels yet.'
-                    : 'No results found.'}
+                    ? t('accessLevels.noLevelsYet')
+                    : t('accessLevels.noResultsFound')}
                 </div>
               ) : (
                 filteredLevels.map((item) => (
@@ -394,7 +396,7 @@ export function AccessLevelsPage() {
                       <div>
                         <h4 className="text-base font-black text-text-dark leading-tight">{item.name}</h4>
                         <p className="text-xs font-bold text-text-light mt-1">
-                          {(item.doors ?? []).length} assigned zones • Active Protocol
+                          {t('accessLevels.assignedZonesProtocol', { count: (item.doors ?? []).length })}
                         </p>
                       </div>
                     </div>
@@ -407,7 +409,7 @@ export function AccessLevelsPage() {
           {tabFilter === 'doors' && (
             <div className="grid gap-3">
               {doorsLoading ? (
-                <div className="p-12 text-center text-sm font-bold text-text-light uppercase tracking-widest">Loading doors...</div>
+                <div className="p-12 text-center text-sm font-bold text-text-light uppercase tracking-widest">{t('accessLevels.loadingDoors')}</div>
               ) : doorsError ? (
                 <div className="p-4 bg-error-bg text-error-text rounded-xl text-sm font-bold shadow-sm">{doorsError}</div>
               ) : (
@@ -422,7 +424,7 @@ export function AccessLevelsPage() {
                         <p className="text-[10px] font-bold text-text-light uppercase tracking-widest mt-0.5">{floorOrDoorLabel(door.doorIndex, door.doorName, door.isElevator)}</p>
                       </div>
                     </div>
-                    <Badge variant={door.status === 'Online' ? 'success' : 'neutral'}>{door.status || 'Offline'}</Badge>
+                    <Badge variant={door.status === 'Online' ? 'success' : 'neutral'}>{door.status === 'Online' ? t('accessLevels.online') : (door.status || t('accessLevels.offline'))}</Badge>
                   </div>
                 ))
               )}
@@ -436,7 +438,7 @@ export function AccessLevelsPage() {
       <Modal
         isOpen={modalMode === 'create' || modalMode === 'edit'}
         onClose={closeModals}
-        title={modalMode === 'create' ? 'Create Policy' : 'Edit Policy'}
+        title={modalMode === 'create' ? t('accessLevels.createPolicy') : t('accessLevels.editPolicy')}
       >
         <form
           className="space-y-4"
@@ -447,36 +449,36 @@ export function AccessLevelsPage() {
           }}
         >
           <div>
-            <label className="block text-xs font-bold text-text-muted mb-1">Name</label>
+            <label className="block text-xs font-bold text-text-muted mb-1">{t('common.name')}</label>
             <Input
               value={formData.name}
               onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
-              placeholder="e.g. Full Access"
+              placeholder={t('accessLevels.namePlaceholder')}
               required
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-text-muted mb-1">Description (optional)</label>
+            <label className="block text-xs font-bold text-text-muted mb-1">{t('accessLevels.descriptionOptional')}</label>
             <Input
               value={formData.description}
               onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))}
-              placeholder="Brief description of this access level"
+              placeholder={t('accessLevels.descriptionPlaceholder')}
             />
           </div>
           <div className="flex flex-wrap gap-2 pt-4">
             <Button type="submit" disabled={!canCreateOrUpdate || isSubmitting} isLoading={isSubmitting}>
-              {modalMode === 'create' ? 'Create Policy' : 'Save'}
+              {modalMode === 'create' ? t('accessLevels.createPolicy') : t('common.save')}
             </Button>
             {modalMode === 'edit' && editingItem && (
               <Button type="button" variant="outline" icon="door_front" onClick={() => {
                 closeModals();
                 openDoorsModal(editingItem);
               }}>
-                Doors / floors
+                {t('accessLevels.doorsFloors')}
               </Button>
             )}
             <Button type="button" variant="outline" onClick={closeModals} disabled={isSubmitting}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             {modalMode === 'edit' && editingItem && (
               <Button
@@ -489,38 +491,38 @@ export function AccessLevelsPage() {
                   openDeleteModal(editingItem);
                 }}
               >
-                Delete
+                {t('common.delete')}
               </Button>
             )}
           </div>
         </form>
       </Modal>
 
-      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title="Delete Policy">
+      <Modal isOpen={modalMode === 'delete'} onClose={closeModals} title={t('accessLevels.deletePolicy')}>
         {deletingItem && (
           <div className="space-y-4">
             <p className="text-sm text-text-dark">
-              Are you sure you want to delete <strong>{deletingItem.name}</strong>? This action cannot be undone.
+              {t('accessLevels.confirmDeletePrefix')} <strong>{deletingItem.name}</strong>{t('accessLevels.confirmDeleteSuffix')}
             </p>
             <div className="flex gap-2">
               <Button variant="danger" onClick={handleDelete} isLoading={isSubmitting}>
-                Delete
+                {t('common.delete')}
               </Button>
               <Button variant="outline" onClick={closeModals} disabled={isSubmitting}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </div>
           </div>
         )}
       </Modal>
 
-      <Modal isOpen={modalMode === 'doors'} onClose={closeModals} title={doorsItem ? `Access: ${doorsItem.name}` : 'Manage access points'}>
+      <Modal isOpen={modalMode === 'doors'} onClose={closeModals} title={doorsItem ? t('accessLevels.accessTitle', { name: doorsItem.name }) : t('accessLevels.manageAccessPoints')}>
         {doorsItem && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-text-muted">Assigned doors / floors</label>
+              <label className="block text-xs font-bold text-text-muted">{t('accessLevels.assignedDoorsFloors')}</label>
               {(doorsItem.doors ?? []).length === 0 ? (
-                <p className="text-sm text-text-light italic py-2">No doors or floors assigned yet.</p>
+                <p className="text-sm text-text-light italic py-2">{t('accessLevels.noDoorsAssigned')}</p>
               ) : (
                 <ul className="space-y-1">
                   {(doorsItem.doors ?? []).map((d) => (
@@ -542,7 +544,7 @@ export function AccessLevelsPage() {
               )}
             </div>
             <div className="border-t border-border-base pt-4 space-y-3">
-              <label className="block text-xs font-bold text-text-muted">Add door or floor</label>
+              <label className="block text-xs font-bold text-text-muted">{t('accessLevels.addDoorOrFloor')}</label>
               <div className="flex gap-2">
                 <select
                   value={addDoorDeviceId ? `${addDoorDeviceId}:${addDoorIndex}` : ''}
@@ -559,7 +561,7 @@ export function AccessLevelsPage() {
                   }}
                   className="flex-1 h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
                 >
-                  <option value="">Select door / floor</option>
+                  <option value="">{t('accessLevels.selectDoorFloor')}</option>
                   {doorsList.map((d) => (
                     <option key={`${d.deviceId}-${d.doorIndex}`} value={`${d.deviceId}:${d.doorIndex}`}>
                       {d.deviceName} — {floorOrDoorLabel(d.doorIndex, d.doorName, d.isElevator)}
@@ -567,12 +569,12 @@ export function AccessLevelsPage() {
                   ))}
                 </select>
                 <Button onClick={handleAddDoor} disabled={!addDoorDeviceId || isSubmitting} isLoading={isSubmitting} icon="add">
-                  Add
+                  {t('common.add')}
                 </Button>
               </div>
             </div>
             <div className="flex justify-end pt-2">
-              <Button variant="outline" onClick={closeModals}>Close</Button>
+              <Button variant="outline" onClick={closeModals}>{t('common.close')}</Button>
             </div>
           </div>
         )}

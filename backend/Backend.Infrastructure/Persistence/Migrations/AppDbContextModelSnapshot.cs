@@ -202,6 +202,68 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("attendance_requests", (string)null);
                 });
 
+            modelBuilder.Entity("Backend.Domain.Entities.AuditLogEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserEmail")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Category");
+
+                    b.HasIndex("TimestampUtc");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("audit_logs", (string)null);
+                });
+
             modelBuilder.Entity("Backend.Domain.Entities.Card", b =>
                 {
                     b.Property<Guid>("Id")
@@ -700,6 +762,16 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(8)")
                         .HasDefaultValue("AZN");
 
+                    b.Property<bool>("EarlyLeaveDeductionEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EarlyLeaveDeductionMode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EarlyLeaveTiersJson")
+                        .HasColumnType("text");
+
                     b.Property<DateOnly>("EffectiveFrom")
                         .HasColumnType("date");
 
@@ -708,6 +780,10 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("LatenessDeductionEnabled")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("LatenessDeductionMode")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("LatenessTiersJson")
                         .HasColumnType("text");
@@ -1025,12 +1101,30 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)");
 
+                    b.Property<int>("EarlyLeaveDaysCount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("EarlyLeaveDeduction")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("EarlyLeaveMinutes")
+                        .HasColumnType("numeric");
+
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid");
 
                     b.Property<decimal>("GrossPay")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)");
+
+                    b.Property<int>("LatenessDaysCount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("LatenessDeduction")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("LatenessMinutes")
+                        .HasColumnType("numeric");
 
                     b.Property<decimal>("NetPay")
                         .HasPrecision(14, 2)
@@ -1039,6 +1133,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("OvertimeBreakdownJson")
+                        .HasColumnType("text");
 
                     b.Property<decimal>("OvertimeHours")
                         .HasPrecision(8, 2)
@@ -1061,6 +1158,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("TaxRate")
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
+
+                    b.Property<int>("TotalWorkingDays")
+                        .HasColumnType("integer");
 
                     b.Property<DateTime?>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1100,12 +1200,21 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateOnly?>("EndDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("HoursConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("Month")
                         .HasColumnType("integer");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<DateOnly?>("StartDate")
+                        .HasColumnType("date");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
@@ -1117,9 +1226,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Year", "Month")
-                        .IsUnique();
 
                     b.ToTable("payroll_periods", (string)null);
                 });
@@ -1241,6 +1347,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(7)")
                         .HasDefaultValue("#6366f1");
 
+                    b.Property<bool>("CountEarlyArrival")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -1248,6 +1357,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
+
+                    b.Property<int>("OvertimeDailyThresholdMinutes")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("RequiredHoursPerDay")
                         .HasPrecision(5, 2)
@@ -1268,6 +1380,52 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("work_schedules", (string)null);
+                });
+
+            modelBuilder.Entity("Backend.Domain.Entities.WorkScheduleShift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<decimal>("RequiredHoursPerDay")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)");
+
+                    b.Property<TimeSpan>("ShiftEnd")
+                        .HasColumnType("interval");
+
+                    b.Property<TimeSpan>("ShiftStart")
+                        .HasColumnType("interval");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<TimeSpan>("ValidEntryFrom")
+                        .HasColumnType("interval");
+
+                    b.Property<TimeSpan>("ValidEntryTo")
+                        .HasColumnType("interval");
+
+                    b.Property<Guid>("WorkScheduleId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkScheduleId");
+
+                    b.ToTable("work_schedule_shifts", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Infrastructure.Identity.ApplicationUser", b =>
@@ -1803,6 +1961,17 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Visitor");
                 });
 
+            modelBuilder.Entity("Backend.Domain.Entities.WorkScheduleShift", b =>
+                {
+                    b.HasOne("Backend.Domain.Entities.WorkSchedule", "WorkSchedule")
+                        .WithMany("Shifts")
+                        .HasForeignKey("WorkScheduleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("WorkSchedule");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", null)
@@ -1943,6 +2112,8 @@ namespace Backend.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Backend.Domain.Entities.WorkSchedule", b =>
                 {
                     b.Navigation("Employees");
+
+                    b.Navigation("Shifts");
                 });
 #pragma warning restore 612, 618
         }

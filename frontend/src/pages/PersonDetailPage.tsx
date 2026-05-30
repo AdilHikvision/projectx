@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import QRCode from 'qrcode'
 import { FaceThumbnail } from '../components/FaceThumbnail'
@@ -142,6 +143,7 @@ export interface DeviceCapabilities {
 }
 
 function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void }) {
+  const { t } = useTranslation()
   const [dataUrl, setDataUrl] = useState<string>('')
   const [showModal, setShowModal] = useState(false)
 
@@ -165,17 +167,17 @@ function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void
           <button
             onClick={() => setShowModal(true)}
             className="shrink-0 w-20 h-20 bg-white rounded-xl shadow-inner flex items-center justify-center overflow-hidden hover:scale-105 transition-transform"
-            title="Click to enlarge QR code"
+            title={t('personDetail.qr.clickToEnlarge')}
           >
             {dataUrl
-              ? <img src={dataUrl} alt="QR code" className="w-full h-full object-contain" />
+              ? <img src={dataUrl} alt={t('personDetail.qr.alt')} className="w-full h-full object-contain" />
               : <span className="material-symbols-outlined text-3xl text-text-light">qr_code_2</span>
             }
           </button>
           <div className="flex-1 min-w-0 space-y-1">
-            <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">QR Code (visitor entry)</p>
+            <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">{t('personDetail.qr.label')}</p>
             <p className="text-xs font-mono text-text-dark truncate">{cardNo}</p>
-            <p className="text-[10px] text-text-light">Present this QR code at the reader to enter. Synced to access control devices.</p>
+            <p className="text-[10px] text-text-light">{t('personDetail.qr.hint')}</p>
             <div className="flex gap-2 mt-2">
               <button
                 onClick={handleDownload}
@@ -183,21 +185,21 @@ function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void
                 className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary/70 transition-colors disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-sm">download</span>
-                Download
+                {t('common.download')}
               </button>
               <button
                 onClick={() => setShowModal(true)}
                 className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-text-dark transition-colors"
               >
                 <span className="material-symbols-outlined text-sm">zoom_in</span>
-                Enlarge
+                {t('personDetail.qr.enlarge')}
               </button>
             </div>
           </div>
           <button
             onClick={onDelete}
             className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-error-text"
-            title="Delete QR card"
+            title={t('personDetail.qr.deleteCard')}
           >
             <span className="material-symbols-outlined text-xl">delete</span>
           </button>
@@ -213,8 +215,8 @@ function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void
             className="bg-white rounded-3xl p-8 shadow-2xl flex flex-col items-center gap-4 max-w-xs w-full mx-4"
             onClick={e => e.stopPropagation()}
           >
-            <p className="text-[10px] font-black uppercase tracking-widest text-text-light">Visitor QR Code</p>
-            {dataUrl && <img src={dataUrl} alt="QR code" className="w-56 h-56 object-contain" />}
+            <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{t('personDetail.qr.visitorQr')}</p>
+            {dataUrl && <img src={dataUrl} alt={t('personDetail.qr.alt')} className="w-56 h-56 object-contain" />}
             <p className="text-xs font-mono text-text-dark text-center break-all">{cardNo}</p>
             <div className="flex gap-3 w-full">
               <button
@@ -222,13 +224,13 @@ function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void
                 className="flex-1 py-2.5 rounded-xl bg-primary text-white text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1"
               >
                 <span className="material-symbols-outlined text-sm">download</span>
-                Download
+                {t('common.download')}
               </button>
               <button
                 onClick={() => setShowModal(false)}
                 className="flex-1 py-2.5 rounded-xl bg-background-light text-text-dark text-[10px] font-black uppercase tracking-widest"
               >
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -239,6 +241,7 @@ function QrCardItem({ cardNo, onDelete }: { cardNo: string; onDelete: () => void
 }
 
 export function PersonDetailPage() {
+  const { t } = useTranslation()
   const { type, id } = useParams<{ type: 'employee' | 'visitor'; id: string }>()
   const navigate = useNavigate()
   const { token } = useAuth()
@@ -303,9 +306,9 @@ export function PersonDetailPage() {
       const data = await apiRequest<PersonDetail>(`${apiPath}/${id}`, { token })
       setDetail(data)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.loadFailed'))
     }
-  }, [token, id, apiPath])
+  }, [token, id, apiPath, t])
 
   const loadCompanies = useCallback(async (): Promise<Company[]> => {
     if (!token) return []
@@ -476,7 +479,7 @@ export function PersonDetailPage() {
         streamRef.current = stream
         if (videoRef.current) videoRef.current.srcObject = stream
       })
-      .catch((err) => setWebcamError(err.message || 'Could not access the camera'))
+      .catch((err) => setWebcamError(err.message || t('personDetail.errors.cameraAccess')))
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
@@ -602,7 +605,7 @@ export function PersonDetailPage() {
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
     if (Array.isArray(w) && w.length > 0) {
-      setError('Device synchronization errors:\n' + w.join('\n'))
+      setError(t('personDetail.errors.deviceSyncErrors') + '\n' + w.join('\n'))
     }
   }
 
@@ -615,12 +618,12 @@ export function PersonDetailPage() {
       !cap.isSupportEventCardLinkageCfg &&
       !cap.isSupportCardInfo
     ) {
-      setError('This device does not support card enrollment.')
+      setError(t('personDetail.errors.deviceNoCardSupport'))
       return
     }
     setIsSubmitting(true)
     setError(null)
-    setCardCaptureProgress({ status: 'starting', message: 'Starting capture...' })
+    setCardCaptureProgress({ status: 'starting', message: t('personDetail.capture.starting') })
     try {
       const startRes = await fetch(`${getApiBaseUrl()}/api/devices/${cardCaptureDeviceId}/cards/capture`, {
         method: 'POST',
@@ -629,7 +632,7 @@ export function PersonDetailPage() {
       })
       if (!startRes.ok) {
         const err = await startRes.json().catch(() => ({}))
-        throw new Error(err.message || 'Failed to start card capture')
+        throw new Error(err.message || t('personDetail.errors.startCardCaptureFailed'))
       }
       const pollProgress = async (): Promise<void> => {
         const progRes = await fetch(`${getApiBaseUrl()}/api/devices/${cardCaptureDeviceId}/cards/capture/progress`, {
@@ -645,13 +648,13 @@ export function PersonDetailPage() {
           await loadDetail()
           return
         }
-        if (st === 'failed') throw new Error(prog.message || 'Card capture failed')
+        if (st === 'failed') throw new Error(prog.message || t('personDetail.errors.cardCaptureFailed'))
         await new Promise((r) => setTimeout(r, 1500))
         return pollProgress()
       }
       await pollProgress()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Card capture error from device')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.cardCaptureError'))
       setCardCaptureProgress(null)
     } finally {
       setIsSubmitting(false)
@@ -665,7 +668,7 @@ export function PersonDetailPage() {
       return
     }
     if (!cardForm.cardNo.trim()) {
-      setError('Card number is required')
+      setError(t('personDetail.errors.cardNumberRequired'))
       return
     }
     setIsSubmitting(true)
@@ -687,7 +690,7 @@ export function PersonDetailPage() {
       setCardForm({ cardNo: '' })
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add card')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.addCardFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -706,7 +709,7 @@ export function PersonDetailPage() {
       body: fd,
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.message || 'Failed to upload face')
+    if (!res.ok) throw new Error(data.message || t('personDetail.errors.uploadFaceFailed'))
     showSyncWarnings(data)
     setAddModal(null)
     setFaceFile(null)
@@ -729,7 +732,7 @@ export function PersonDetailPage() {
     try {
       await uploadFaceImage(faceFile)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to upload face')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.uploadFaceFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -744,12 +747,12 @@ export function PersonDetailPage() {
       !cap.isSupportFDLib &&
       !cap.isSupportCaptureFace
     ) {
-      setError('This device does not support face enrollment.')
+      setError(t('personDetail.errors.deviceNoFaceSupport'))
       return
     }
     setIsSubmitting(true)
     setError(null)
-    setFaceCaptureProgress({ status: 'starting', message: 'Starting capture...' })
+    setFaceCaptureProgress({ status: 'starting', message: t('personDetail.capture.starting') })
     try {
       const startRes = await fetch(`${getApiBaseUrl()}/api/devices/${faceCaptureDeviceId}/faces/capture`, {
         method: 'POST',
@@ -758,7 +761,7 @@ export function PersonDetailPage() {
       })
       if (!startRes.ok) {
         const err = await startRes.json().catch(() => ({}))
-        throw new Error(err.message || 'Failed to start capture')
+        throw new Error(err.message || t('personDetail.errors.startCaptureFailed'))
       }
       const pollProgress = async (): Promise<void> => {
         const progRes = await fetch(`${getApiBaseUrl()}/api/devices/${faceCaptureDeviceId}/faces/capture/progress`, {
@@ -774,13 +777,13 @@ export function PersonDetailPage() {
           else if (prog.message) setError(prog.message)
           return
         }
-        if (prog.status === 'failed') throw new Error(prog.message || 'Capture failed')
+        if (prog.status === 'failed') throw new Error(prog.message || t('personDetail.errors.captureFailed'))
         await new Promise((r) => setTimeout(r, 1500))
         return pollProgress()
       }
       await pollProgress()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Capture error from device')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.captureError'))
       setFaceCaptureProgress(null)
     } finally {
       setIsSubmitting(false)
@@ -804,7 +807,7 @@ export function PersonDetailPage() {
         try {
           await uploadFaceImage(blob)
         } catch (e) {
-          setError(e instanceof Error ? e.message : 'Upload failed')
+          setError(e instanceof Error ? e.message : t('personDetail.errors.uploadFailed'))
         } finally {
           setIsSubmitting(false)
         }
@@ -818,17 +821,17 @@ export function PersonDetailPage() {
     if (!token || !detail || !fingerprintCaptureDeviceId) return
     const slot = nextFingerprintSlot(detail.fingerprints)
     if (slot === null) {
-      setError('Maximum 10 fingerprints on this Hikvision terminal. Delete one to add another.')
+      setError(t('personDetail.errors.maxFingerprints'))
       return
     }
     const cap = deviceCapabilities[fingerprintCaptureDeviceId]
     if (!isEnrollerDeviceId(fingerprintCaptureDeviceId) && cap != null && !cap.isSupportFingerPrintCfg) {
-      setError('This device does not support fingerprint enrollment.')
+      setError(t('personDetail.errors.deviceNoFingerprintSupport'))
       return
     }
     setIsSubmitting(true)
     setError(null)
-    setFingerprintCaptureProgress({ status: 'starting', message: `Starting capture (finger slot ${slot})…` })
+    setFingerprintCaptureProgress({ status: 'starting', message: t('personDetail.capture.startingFingerSlot', { slot }) })
     try {
       const startRes = await fetch(`${getApiBaseUrl()}/api/devices/${fingerprintCaptureDeviceId}/fingerprints/capture`, {
         method: 'POST',
@@ -837,7 +840,7 @@ export function PersonDetailPage() {
       })
       if (!startRes.ok) {
         const err = await startRes.json().catch(() => ({}))
-        throw new Error(err.message || 'Failed to start fingerprint capture')
+        throw new Error(err.message || t('personDetail.errors.startFingerprintCaptureFailed'))
       }
       const pollProgress = async (): Promise<void> => {
         const progRes = await fetch(`${getApiBaseUrl()}/api/devices/${fingerprintCaptureDeviceId}/fingerprints/capture/progress`, {
@@ -853,13 +856,13 @@ export function PersonDetailPage() {
           else if (prog.message) setError(prog.message)
           return
         }
-        if (prog.status === 'failed') throw new Error(prog.message || 'Fingerprint capture failed')
+        if (prog.status === 'failed') throw new Error(prog.message || t('personDetail.errors.fingerprintCaptureFailed'))
         await new Promise((r) => setTimeout(r, 1500))
         return pollProgress()
       }
       await pollProgress()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Fingerprint capture error from device')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.fingerprintCaptureError'))
       setFingerprintCaptureProgress(null)
     } finally {
       setIsSubmitting(false)
@@ -872,7 +875,7 @@ export function PersonDetailPage() {
   }
 
   async function handleDeleteCard(cardId: string) {
-    if (!token || !confirm('Delete card?')) return
+    if (!token || !confirm(t('personDetail.confirm.deleteCard'))) return
     setError(null)
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/cards/${cardId}`, {
@@ -884,16 +887,16 @@ export function PersonDetailPage() {
         return
       }
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error((data as { message?: string }).message || 'Delete failed')
+      if (!res.ok) throw new Error((data as { message?: string }).message || t('personDetail.errors.deleteFailed'))
       showSyncWarnings(data as { syncWarnings?: string[] | null })
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.deleteFailed'))
     }
   }
 
   async function handleDeleteFace(faceId: string) {
-    if (!token || !confirm('Delete face? It will be removed from all devices.')) return
+    if (!token || !confirm(t('personDetail.confirm.deleteFace'))) return
     setError(null)
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/faces/${faceId}`, {
@@ -905,16 +908,16 @@ export function PersonDetailPage() {
         return
       }
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.message || 'Delete failed')
+      if (!res.ok) throw new Error(data.message || t('personDetail.errors.deleteFailed'))
       showSyncWarnings(data)
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete face')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.deleteFaceFailed'))
     }
   }
 
   async function handleDeleteFingerprint(fpId: string) {
-    if (!token || !confirm('Delete fingerprint?')) return
+    if (!token || !confirm(t('personDetail.confirm.deleteFingerprint'))) return
     setError(null)
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/fingerprints/${fpId}`, {
@@ -926,11 +929,11 @@ export function PersonDetailPage() {
         return
       }
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error((data as { message?: string }).message || 'Delete failed')
+      if (!res.ok) throw new Error((data as { message?: string }).message || t('personDetail.errors.deleteFailed'))
       showSyncWarnings(data as { syncWarnings?: string[] | null })
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.deleteFailed'))
     }
   }
 
@@ -944,18 +947,18 @@ export function PersonDetailPage() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error((data as { message?: string }).message || 'Delete failed')
+        throw new Error((data as { message?: string }).message || t('personDetail.errors.deleteFailed'))
       }
       await loadDetail()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.deleteFailed'))
     }
   }
 
   async function handleSave() {
     if (!token || !id || !detail) return
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
-      setError('First and last name are required')
+      setError(t('personDetail.errors.namesRequired'))
       return
     }
 
@@ -975,7 +978,7 @@ export function PersonDetailPage() {
       total: 0,
       deviceName: '',
       stage: 'syncing',
-      message: 'Сохранение профиля...',
+      message: t('personDetail.sync.savingProfile'),
       skipped: 0,
       errors: 0,
     })
@@ -1064,7 +1067,7 @@ export function PersonDetailPage() {
         setDetail(res)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.saveFailed'))
     } finally {
       setSaveLoading(false)
       setSyncProgress(null)
@@ -1095,9 +1098,9 @@ export function PersonDetailPage() {
         ? (res as { syncWarnings: string[] }).syncWarnings
         : null
       setDeleteConfirmOpen(false)
-      navigate('/people', { state: warnings?.length ? { syncError: 'Device synchronization errors:\n' + warnings.join('\n') } : undefined })
+      navigate('/people', { state: warnings?.length ? { syncError: t('personDetail.errors.deviceSyncErrors') + '\n' + warnings.join('\n') } : undefined })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to delete profile')
+      setError(e instanceof Error ? e.message : t('personDetail.errors.deleteProfileFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -1113,18 +1116,18 @@ export function PersonDetailPage() {
               className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-primary transition-colors"
             >
               <span className="material-symbols-outlined text-base">arrow_back</span>
-              {type === 'employee' ? 'Employees' : 'Visitors'}
+              {type === 'employee' ? t('personDetail.backToEmployees') : t('personDetail.backToVisitors')}
             </button>
           </div>
           <div className="flex-1 flex items-center justify-center">
             {error ? (
               <div className="text-error-text font-black uppercase tracking-widest text-[10px] animate-pulse">
-                Error Protocol: {error}
+                {t('personDetail.errorProtocol', { error })}
               </div>
             ) : (
               <div className="flex flex-col items-center gap-4">
                 <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-                <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Initializing Profile Data...</p>
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.initializingProfile')}</p>
               </div>
             )}
           </div>
@@ -1133,7 +1136,7 @@ export function PersonDetailPage() {
     )
   }
 
-  const name = `${formData.firstName || detail.firstName} ${formData.lastName || detail.lastName}`.trim() || 'Profile'
+  const name = `${formData.firstName || detail.firstName} ${formData.lastName || detail.lastName}`.trim() || t('personDetail.profile')
   const initials = `${(formData.firstName || detail.firstName)[0] || ''}${(formData.lastName || detail.lastName)[0] || ''}`.toUpperCase()
 
   return (
@@ -1145,7 +1148,7 @@ export function PersonDetailPage() {
             className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-primary transition-colors"
           >
             <span className="material-symbols-outlined text-base">arrow_back</span>
-            {type === 'employee' ? 'Employees' : 'Visitors'}
+            {type === 'employee' ? t('personDetail.backToEmployees') : t('personDetail.backToVisitors')}
           </button>
           {error && (
             <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest border border-error-text/10 shadow-sm animate-in zoom-in-95 duration-300">
@@ -1164,45 +1167,45 @@ export function PersonDetailPage() {
             </div>
             <div className="flex-1 w-full space-y-4">
               <div className="flex flex-wrap items-center gap-2 mb-4">
-                <Badge variant="primary" className="px-3 py-1">{type === 'employee' ? 'Employee' : 'Visitor'}</Badge>
+                <Badge variant="primary" className="px-3 py-1">{type === 'employee' ? t('personDetail.employee') : t('personDetail.visitor')}</Badge>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">First name</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.firstName')}</label>
                   <Input
                     value={formData.firstName}
                     onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
-                    placeholder="Required"
+                    placeholder={t('common.required')}
                     className="bg-white"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Last name</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.lastName')}</label>
                   <Input
                     value={formData.lastName}
                     onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
-                    placeholder="Required"
+                    placeholder={t('common.required')}
                     className="bg-white"
                   />
                 </div>
                 {type === 'employee' ? (
                   <>
                     <div>
-                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Gender</label>
+                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.gender')}</label>
                       <select
                         value={formData.gender}
                         onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
                         className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
                       >
-                        <option value="">Not specified</option>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
+                        <option value="">{t('personDetail.notSpecified')}</option>
+                        <option value="male">{t('personDetail.male')}</option>
+                        <option value="female">{t('personDetail.female')}</option>
                       </select>
                     </div>
                   </>
                 ) : null}
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid from</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.validFrom')}</label>
                   <Input
                     type="date"
                     value={formData.validFrom}
@@ -1211,7 +1214,7 @@ export function PersonDetailPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid to</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.validTo')}</label>
                   <Input
                     type="date"
                     value={formData.validTo}
@@ -1228,7 +1231,7 @@ export function PersonDetailPage() {
                   <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
                     <div className="flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary">corporate_fare</span>
-                      <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Company</h3>
+                      <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.company')}</h3>
                     </div>
                     {companyMode === 'Multiple' ? (
                       <select
@@ -1236,31 +1239,31 @@ export function PersonDetailPage() {
                         onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
                         className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
                       >
-                        <option value="">— Not selected —</option>
+                        <option value="">{t('personDetail.notSelected')}</option>
                         {companies.map((c) => (
                           <option key={c.id} value={c.id}>{c.name}</option>
                         ))}
                       </select>
                     ) : companyMode === 'Single' ? (
                       <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
-                        {companies.find(c => c.id === formData.companyId)?.name || 'Primary company'}
+                        {companies.find(c => c.id === formData.companyId)?.name || t('personDetail.primaryCompany')}
                       </div>
                     ) : (
-                      <p className="text-xs text-text-muted">Companies are not used</p>
+                      <p className="text-xs text-text-muted">{t('personDetail.companiesNotUsed')}</p>
                     )}
                   </div>
                   {/* Department */}
               <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary">business</span>
-                  <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Department</h3>
+                  <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.department')}</h3>
                 </div>
                 <select
                   value={formData.departmentId ?? ''}
                   onChange={(e) => setFormData((p) => ({ ...p, departmentId: e.target.value || null }))}
                   className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
                 >
-                  <option value="">— Not assigned —</option>
+                  <option value="">{t('personDetail.notAssigned')}</option>
                   {departments.map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
@@ -1271,7 +1274,7 @@ export function PersonDetailPage() {
               <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary">security</span>
-                  <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Access levels</h3>
+                  <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.accessLevels')}</h3>
                 </div>
                 {accessLevels.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
@@ -1295,7 +1298,7 @@ export function PersonDetailPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-text-muted">No access levels available</p>
+                  <p className="text-xs text-text-muted">{t('personDetail.noAccessLevels')}</p>
                 )}
               </div>
 
@@ -1303,14 +1306,14 @@ export function PersonDetailPage() {
               <div className="bg-surface rounded-3xl shadow-md overflow-hidden border-none text-text-light">
                 <div className="px-6 py-4 border-b border-border-light flex items-center justify-between bg-slate-50/50">
                   <div className="flex gap-1 bg-white border border-divider-light p-1 rounded-xl">
-                    {CREDENTIAL_TABS.map((t) => (
+                    {CREDENTIAL_TABS.map((tab) => (
                       <button
-                        key={t.value}
-                        onClick={() => setCredentialTab(t.value)}
-                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${credentialTab === t.value ? 'bg-primary text-white shadow-md' : 'text-text-light hover:text-text-dark'
+                        key={tab.value}
+                        onClick={() => setCredentialTab(tab.value)}
+                        className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${credentialTab === tab.value ? 'bg-primary text-white shadow-md' : 'text-text-light hover:text-text-dark'
                           }`}
                       >
-                        {t.label}
+                        {t(`personDetail.credentialTabs.${tab.value}`)}
                       </button>
                     ))}
                   </div>
@@ -1318,7 +1321,7 @@ export function PersonDetailPage() {
                     size="sm"
                     icon="add"
                     disabled={credentialTab === 'irises'}
-                    title={credentialTab === 'irises' ? 'Import irises from a device via People → Import' : undefined}
+                    title={credentialTab === 'irises' ? t('personDetail.irisImportHint') : undefined}
                     onClick={() => {
                       if (credentialTab === 'irises') return
                       if (credentialTab === 'fingerprints') setFingerprintSourceMode('device')
@@ -1331,7 +1334,7 @@ export function PersonDetailPage() {
                       )
                     }}
                   >
-                    Enroll
+                    {t('personDetail.enroll')}
                   </Button>
                 </div>
 
@@ -1339,7 +1342,7 @@ export function PersonDetailPage() {
                   {credentialTab === 'cards' && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {detail.cards.length === 0 ? (
-                        <div className="col-span-full py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">No proximity tokens enrolled</div>
+                        <div className="col-span-full py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">{t('personDetail.noCards')}</div>
                       ) : (
                         detail.cards.map((c) => (
                           c.cardType === 'qrCode'
@@ -1351,7 +1354,7 @@ export function PersonDetailPage() {
                                     <span className="material-symbols-outlined text-2xl">nfc</span>
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50 mb-0.5">Token ID</p>
+                                    <p className="text-[10px] font-black text-text-light uppercase tracking-widest opacity-50 mb-0.5">{t('personDetail.tokenId')}</p>
                                     <p className="text-sm font-mono font-black text-text-dark truncate tracking-wider">{c.cardNo}</p>
                                   </div>
                                   <Button
@@ -1372,7 +1375,7 @@ export function PersonDetailPage() {
                   {credentialTab === 'faces' && (
                     <div className="flex flex-col items-center gap-4">
                       {detail.faces.length === 0 ? (
-                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">No face enrolled</div>
+                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">{t('personDetail.noFace')}</div>
                       ) : (
                         <div className="relative group">
                           <div className="w-48 h-48 rounded-2xl overflow-hidden shadow-md transition-transform group-hover:scale-105 border-none">
@@ -1388,8 +1391,8 @@ export function PersonDetailPage() {
                       )}
                       <p className="text-[10px] text-text-light text-center">
                         {detail.faces.length > 0
-                          ? 'Click Enroll to replace the face. It syncs when you save the profile.'
-                          : 'Click Enroll to capture a face from the device.'}
+                          ? t('personDetail.faceReplaceHint')
+                          : t('personDetail.faceCaptureHint')}
                       </p>
                     </div>
                   )}
@@ -1397,7 +1400,7 @@ export function PersonDetailPage() {
                   {credentialTab === 'fingerprints' && (
                     <div className="space-y-3">
                       {detail.fingerprints.length === 0 ? (
-                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">No biological signatures registered</div>
+                        <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">{t('personDetail.noFingerprints')}</div>
                       ) : (
                         detail.fingerprints.map((fp) => (
                           <div key={fp.id} className="flex items-center justify-between p-4 bg-background-light rounded-2xl shadow-md group hover:shadow-xl transition-all border-none">
@@ -1406,8 +1409,8 @@ export function PersonDetailPage() {
                                 <span className="material-symbols-outlined text-2xl">fingerprint</span>
                               </div>
                               <div>
-                                <p className="text-xs font-black text-text-dark">Index ID #{fp.fingerIndex}</p>
-                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Biometric Template</p>
+                                <p className="text-xs font-black text-text-dark">{t('personDetail.indexId', { index: fp.fingerIndex })}</p>
+                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{t('personDetail.biometricTemplate')}</p>
                               </div>
                             </div>
                             <Button
@@ -1427,7 +1430,7 @@ export function PersonDetailPage() {
                     <div className="space-y-3">
                       {(detail.irises ?? []).length === 0 ? (
                         <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest opacity-50">
-                          No iris templates enrolled
+                          {t('personDetail.noIrises')}
                         </div>
                       ) : (
                         (detail.irises ?? []).map((ir) => (
@@ -1440,8 +1443,8 @@ export function PersonDetailPage() {
                                 <span className="material-symbols-outlined text-2xl">visibility</span>
                               </div>
                               <div>
-                                <p className="text-xs font-black text-text-dark">Iris ID #{ir.irisIndex}</p>
-                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Iris template</p>
+                                <p className="text-xs font-black text-text-dark">{t('personDetail.irisId', { index: ir.irisIndex })}</p>
+                                <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{t('personDetail.irisTemplate')}</p>
                               </div>
                             </div>
                             <Button
@@ -1462,10 +1465,10 @@ export function PersonDetailPage() {
 
             <div className="space-y-6">
               <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none">
-                <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Status</h3>
+                <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.status')}</h3>
                 <label className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors">
                   <span className="text-xs font-black text-text-dark uppercase tracking-widest">
-                    {type === 'employee' ? (formData.isActive ? 'Active' : 'Terminated') : (formData.isActive ? 'Active' : 'Blocked')}
+                    {type === 'employee' ? (formData.isActive ? t('common.active') : t('personDetail.terminated')) : (formData.isActive ? t('common.active') : t('personDetail.blocked'))}
                   </span>
                   <div className="flex items-center gap-2">
                     <input
@@ -1475,7 +1478,7 @@ export function PersonDetailPage() {
                       className="w-5 h-5 rounded border-divider-light text-primary focus:ring-primary"
                     />
                     <Badge variant={formData.isActive ? 'success' : 'error'} dot>
-                      {type === 'employee' ? (formData.isActive ? 'Active' : 'Terminated') : (formData.isActive ? 'Active' : 'Blocked')}
+                      {type === 'employee' ? (formData.isActive ? t('common.active') : t('personDetail.terminated')) : (formData.isActive ? t('common.active') : t('personDetail.blocked'))}
                     </Badge>
                   </div>
                 </label>
@@ -1488,8 +1491,8 @@ export function PersonDetailPage() {
                       className="w-5 h-5 mt-0.5 rounded border-divider-light text-primary focus:ring-primary"
                     />
                     <div>
-                      <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Time attendance only</span>
-                      <p className="text-[10px] text-text-light mt-1 leading-relaxed">When enabled, attendance is tracked but the door will not unlock.</p>
+                      <span className="text-xs font-black text-text-dark uppercase tracking-widest block">{t('personDetail.timeAttendanceOnly')}</span>
+                      <p className="text-[10px] text-text-light mt-1 leading-relaxed">{t('personDetail.timeAttendanceOnlyHint')}</p>
                     </div>
                   </label>
                 )}
@@ -1498,7 +1501,7 @@ export function PersonDetailPage() {
               {/* Work Schedule & Self-Service */}
               {type === 'employee' && (
                 <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100 space-y-4">
-                  <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Schedule & self-service</h3>
+                  <h3 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{t('personDetail.scheduleAndSelfService')}</h3>
 
                   {/* Self-Service Toggle */}
                   <label className="flex items-start gap-3 p-4 bg-white rounded-2xl cursor-pointer hover:bg-indigo-50 transition-colors border border-indigo-100">
@@ -1509,18 +1512,18 @@ export function PersonDetailPage() {
                       className="w-5 h-5 mt-0.5 rounded border-divider-light text-indigo-500 focus:ring-indigo-400"
                     />
                     <div>
-                      <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Self-service portal</span>
-                      <p className="text-[10px] text-text-light mt-1 leading-relaxed">The employee can submit check-in, check-out, leave, and other requests.</p>
+                      <span className="text-xs font-black text-text-dark uppercase tracking-widest block">{t('personDetail.selfServicePortal')}</span>
+                      <p className="text-[10px] text-text-light mt-1 leading-relaxed">{t('personDetail.selfServicePortalHint')}</p>
                     </div>
                   </label>
 
                   {formData.selfServiceEnabled && (
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Sign-in email</label>
+                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.signInEmail')}</label>
                       <div className="relative">
                         <input
                           type="email"
-                          placeholder="employee@company.com"
+                          placeholder={t('personDetail.signInEmailPlaceholder')}
                           value={formData.selfServiceEmail}
                           onChange={(e) => setFormData((p) => ({ ...p, selfServiceEmail: e.target.value }))}
                           className="w-full rounded-xl bg-white border-none px-4 pl-10 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none shadow-sm"
@@ -1532,27 +1535,27 @@ export function PersonDetailPage() {
 
                   {selfServiceTempPassword && (
                     <div className="p-3 bg-green-50 rounded-xl border border-green-200 space-y-1">
-                      <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">Account created!</p>
-                      <p className="text-xs text-green-700">Temporary password: <span className="font-mono font-bold">{selfServiceTempPassword}</span></p>
-                      <p className="text-[10px] text-green-600">Save this password — it will not be shown again.</p>
+                      <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">{t('personDetail.accountCreated')}</p>
+                      <p className="text-xs text-green-700">{t('personDetail.temporaryPassword')} <span className="font-mono font-bold">{selfServiceTempPassword}</span></p>
+                      <p className="text-[10px] text-green-600">{t('personDetail.savePasswordHint')}</p>
                       <button
                         type="button"
                         onClick={() => setSelfServiceTempPassword(null)}
                         className="text-[10px] text-green-500 underline"
-                      >Close</button>
+                      >{t('common.close')}</button>
                     </div>
                   )}
 
                   {/* Work Schedule Assignment */}
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Default work schedule</label>
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.defaultWorkSchedule')}</label>
                     <div className="relative">
                       <select
                         value={formData.workScheduleId ?? ''}
                         onChange={(e) => setFormData((p) => ({ ...p, workScheduleId: e.target.value || null }))}
                         className="w-full rounded-xl bg-white border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none shadow-sm appearance-none pr-8"
                       >
-                        <option value="">— No schedule —</option>
+                        <option value="">{t('personDetail.noSchedule')}</option>
                         {workSchedules.map((ws) => (
                           <option key={ws.id} value={ws.id}>
                             {ws.name} ({ws.type})
@@ -1562,17 +1565,17 @@ export function PersonDetailPage() {
                       <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 text-text-light text-base pointer-events-none">expand_more</span>
                     </div>
                     <p className="text-[10px] text-text-light leading-relaxed">
-                      Used as the default schedule in time attendance reports. Per-day overrides can be set in the Schedule Planner.
+                      {t('personDetail.defaultWorkScheduleHint')}
                     </p>
                   </div>
                 </div>
               )}
 
               <div className="p-6 bg-primary/5 rounded-3xl border border-primary/10 space-y-4">
-                <h3 className="text-[10px] font-black text-primary uppercase tracking-widest">Actions</h3>
-                <Button fullWidth icon="save" size="md" onClick={handleSave} isLoading={saveLoading}>Save</Button>
-                <Button fullWidth variant="danger" icon="delete" size="md" onClick={() => setDeleteConfirmOpen(true)}>Delete profile</Button>
-                <p className="text-[9px] text-text-light text-center leading-relaxed">Deleting the profile revokes all access rights and credentials.</p>
+                <h3 className="text-[10px] font-black text-primary uppercase tracking-widest">{t('common.actions')}</h3>
+                <Button fullWidth icon="save" size="md" onClick={handleSave} isLoading={saveLoading}>{t('common.save')}</Button>
+                <Button fullWidth variant="danger" icon="delete" size="md" onClick={() => setDeleteConfirmOpen(true)}>{t('personDetail.deleteProfile')}</Button>
+                <p className="text-[9px] text-text-light text-center leading-relaxed">{t('personDetail.deleteProfileHint')}</p>
               </div>
             </div>
           </div>
@@ -1591,11 +1594,11 @@ export function PersonDetailPage() {
                 <span className="material-symbols-outlined text-xl animate-spin">sync</span>
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-black text-text-dark">Saving profile</h3>
+                <h3 className="text-sm font-black text-text-dark">{t('personDetail.sync.savingProfileTitle')}</h3>
                 <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">
                   {syncProgress.total > 0
-                    ? `Device ${syncProgress.current} of ${syncProgress.total}`
-                    : 'Preparing...'}
+                    ? t('personDetail.sync.deviceProgress', { current: syncProgress.current, total: syncProgress.total })
+                    : t('personDetail.sync.preparing')}
                 </p>
               </div>
             </div>
@@ -1643,10 +1646,10 @@ export function PersonDetailPage() {
             {(syncProgress.skipped > 0 || syncProgress.errors > 0) && (
               <div className="flex gap-3 text-[10px] font-bold text-text-light pt-2 border-t border-divider-light">
                 {syncProgress.skipped > 0 && (
-                  <span className="text-amber-700">⊘ Skipped (offline): {syncProgress.skipped}</span>
+                  <span className="text-amber-700">{t('personDetail.sync.skipped', { count: syncProgress.skipped })}</span>
                 )}
                 {syncProgress.errors > 0 && (
-                  <span className="text-error-text">✕ Errors: {syncProgress.errors}</span>
+                  <span className="text-error-text">{t('personDetail.sync.errors', { count: syncProgress.errors })}</span>
                 )}
               </div>
             )}
@@ -1658,7 +1661,7 @@ export function PersonDetailPage() {
       {addModal === 'card' && (
         <Modal
           isOpen
-          title="Add card"
+          title={t('personDetail.addCard')}
           onClose={() => {
             setAddModal(null)
             setCardCaptureProgress(null)
@@ -1680,7 +1683,7 @@ export function PersonDetailPage() {
                     cardSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
                   }`}
                 >
-                  {mode === 'device' ? 'From device' : mode === 'enroller' ? 'From enroller' : 'Manual'}
+                  {mode === 'device' ? t('personDetail.source.device') : mode === 'enroller' ? t('personDetail.source.enroller') : t('personDetail.source.manual')}
                 </button>
               ))}
             </div>
@@ -1688,7 +1691,7 @@ export function PersonDetailPage() {
               <>
                 <div>
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                    {cardSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+                    {cardSourceMode === 'enroller' ? t('personDetail.enrollerStation') : t('personDetail.device')}
                   </label>
                   <select
                     value={
@@ -1699,19 +1702,19 @@ export function PersonDetailPage() {
                     onChange={(e) => setCardCaptureDeviceId(e.target.value)}
                     className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
                   >
-                    <option value="">Select device</option>
+                    <option value="">{t('personDetail.selectDevice')}</option>
                     {(cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
                   {cardSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
                     <p className="text-xs text-text-light mt-1.5">
-                      Enroller list uses device type &quot;Enroller station&quot; or a Hikvision DS-K1F… serial/model in the name or identifier. Add the device in Devices or edit its name to include the model.
+                      {t('personDetail.enrollerListHint')}
                     </p>
                   )}
                   {(cardSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingCardTerminal).length === 0 &&
                     (cardSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length > 0 && (
-                    <p className="text-xs text-error-text mt-1.5">No compatible devices for this capture mode (check ISAPI capabilities).</p>
+                    <p className="text-xs text-error-text mt-1.5">{t('personDetail.noCompatibleDevices')}</p>
                   )}
                 </div>
                 {cardCaptureProgress && (
@@ -1724,11 +1727,11 @@ export function PersonDetailPage() {
             {cardSourceMode === 'manual' && (
               <>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">Serial ID / Label</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5 ml-1">{t('personDetail.serialIdLabel')}</label>
                   <Input
                     value={cardForm.cardNo}
                     onChange={(e) => setCardForm((p) => ({ ...p, cardNo: e.target.value }))}
-                    placeholder="Required"
+                    placeholder={t('common.required')}
                     icon="nfc"
                   />
                 </div>
@@ -1746,9 +1749,9 @@ export function PersonDetailPage() {
                       !cardCaptureDeviceId
                 }
               >
-                {cardSourceMode === 'manual' ? 'Enroll Token' : 'Start capture'}
+                {cardSourceMode === 'manual' ? t('personDetail.enrollToken') : t('personDetail.startCapture')}
               </Button>
-              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Cancel</Button>
+              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>{t('common.cancel')}</Button>
             </div>
           </div>
         </Modal>
@@ -1757,7 +1760,7 @@ export function PersonDetailPage() {
       {addModal === 'face' && (
         <Modal
           isOpen
-          title="Add face"
+          title={t('personDetail.addFace')}
           onClose={() => {
             setAddModal(null)
             setFaceCaptureProgress(null)
@@ -1780,12 +1783,12 @@ export function PersonDetailPage() {
                   }`}
                 >
                   {mode === 'device'
-                    ? 'From device'
+                    ? t('personDetail.source.device')
                     : mode === 'enroller'
-                      ? 'From enroller'
+                      ? t('personDetail.source.enroller')
                       : mode === 'computer'
-                        ? 'From computer'
-                        : 'From webcam'}
+                        ? t('personDetail.source.computer')
+                        : t('personDetail.source.webcam')}
                 </button>
               ))}
             </div>
@@ -1794,7 +1797,7 @@ export function PersonDetailPage() {
               <>
                 <div>
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                    {faceSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+                    {faceSourceMode === 'enroller' ? t('personDetail.enrollerStation') : t('personDetail.device')}
                   </label>
                   <select
                     value={
@@ -1807,19 +1810,19 @@ export function PersonDetailPage() {
                     onChange={(e) => setFaceCaptureDeviceId(e.target.value)}
                     className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
                   >
-                    <option value="">Select device</option>
+                    <option value="">{t('personDetail.selectDevice')}</option>
                     {(faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).map((d) => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
                   {faceSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
                     <p className="text-xs text-text-light mt-1.5">
-                      Set type &quot;Enroller station&quot; or put DS-K1F… in the device name/identifier (see Devices).
+                      {t('personDetail.enrollerListShortHint')}
                     </p>
                   )}
                   {(faceSourceMode === 'enroller' ? enrollerCaptureDeviceList : devicesSupportingFaceTerminal).length === 0 &&
                     (faceSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length > 0 && (
-                    <p className="text-xs text-error-text mt-1.5">No devices support face enrollment for this mode.</p>
+                    <p className="text-xs text-error-text mt-1.5">{t('personDetail.noFaceDevices')}</p>
                   )}
                 </div>
                 {faceCaptureProgress && (
@@ -1838,11 +1841,11 @@ export function PersonDetailPage() {
             {faceSourceMode === 'computer' && (
               <div className="p-10 border-2 border-dashed border-divider-light rounded-3xl bg-slate-50 flex flex-col items-center justify-center group hover:border-primary/50 transition-all relative overflow-hidden min-h-[160px]">
                 {faceFile ? (
-                  <img src={URL.createObjectURL(faceFile)} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
+                  <img src={URL.createObjectURL(faceFile)} alt={t('personDetail.preview')} className="absolute inset-0 w-full h-full object-cover" />
                 ) : (
                   <>
                     <span className="material-symbols-outlined text-4xl text-text-light/50 mb-3">add_a_photo</span>
-                    <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Choose image file</p>
+                    <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('personDetail.chooseImage')}</p>
                   </>
                 )}
                 <input
@@ -1870,7 +1873,7 @@ export function PersonDetailPage() {
 
             {(faceSourceMode === 'computer' || faceSourceMode === 'webcam') && (
               <p className="text-[10px] text-text-light bg-slate-50 rounded-xl p-3">
-                The face will sync to devices from assigned access levels when you save the profile.
+                {t('personDetail.faceSyncHint')}
               </p>
             )}
 
@@ -1890,12 +1893,12 @@ export function PersonDetailPage() {
                 }
               >
                 {faceSourceMode === 'device' || faceSourceMode === 'enroller'
-                  ? 'Start capture'
+                  ? t('personDetail.startCapture')
                   : faceSourceMode === 'webcam'
-                    ? 'Take photo'
-                    : 'Upload'}
+                    ? t('personDetail.takePhoto')
+                    : t('common.upload')}
               </Button>
-              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Cancel</Button>
+              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>{t('common.cancel')}</Button>
             </div>
           </div>
         </Modal>
@@ -1904,7 +1907,7 @@ export function PersonDetailPage() {
       {addModal === 'fingerprint' && (
         <Modal
           isOpen
-          title="Add fingerprint"
+          title={t('personDetail.addFingerprint')}
           onClose={() => {
             setAddModal(null)
             setFingerprintCaptureProgress(null)
@@ -1926,13 +1929,13 @@ export function PersonDetailPage() {
                     fingerprintSourceMode === mode ? 'bg-white text-primary shadow' : 'text-text-light hover:text-text-dark'
                   }`}
                 >
-                  {mode === 'device' ? 'From device' : 'From enroller'}
+                  {mode === 'device' ? t('personDetail.source.device') : t('personDetail.source.enroller')}
                 </button>
               ))}
             </div>
             <div>
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">
-                {fingerprintSourceMode === 'enroller' ? 'Enroller station' : 'Device'}
+                {fingerprintSourceMode === 'enroller' ? t('personDetail.enrollerStation') : t('personDetail.device')}
               </label>
               <select
                 value={
@@ -1946,7 +1949,7 @@ export function PersonDetailPage() {
                 onChange={(e) => setFingerprintCaptureDeviceId(e.target.value)}
                 className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold"
               >
-                <option value="">Select device</option>
+                <option value="">{t('personDetail.selectDevice')}</option>
                 {(fingerprintSourceMode === 'enroller'
                   ? enrollerCaptureDeviceList
                   : devicesSupportingFingerprintTerminal
@@ -1956,7 +1959,7 @@ export function PersonDetailPage() {
               </select>
               {fingerprintSourceMode === 'enroller' && enrollerEnrollmentDevices.length === 0 && (
                 <p className="text-xs text-text-light mt-1.5">
-                  Set type &quot;Enroller station&quot; or DS-K1F… in name/identifier (see Devices).
+                  {t('personDetail.enrollerListShortHint2')}
                 </p>
               )}
               {(fingerprintSourceMode === 'enroller'
@@ -1965,15 +1968,15 @@ export function PersonDetailPage() {
               ).length === 0 &&
                 (fingerprintSourceMode === 'enroller' ? enrollerEnrollmentDevices : terminalEnrollmentCandidates).length >
                   0 && (
-                  <p className="text-xs text-error-text mt-1.5">No devices support fingerprint enrollment for this mode.</p>
+                  <p className="text-xs text-error-text mt-1.5">{t('personDetail.noFingerprintDevices')}</p>
                 )}
               {nextFreeFingerprintSlot != null && (
                 <p className="text-xs text-text-light mt-1.5">
-                  Next free slot on device: <span className="font-black text-text-dark">#{nextFreeFingerprintSlot}</span> (max 10)
+                  {t('personDetail.nextFreeSlot')} <span className="font-black text-text-dark">#{nextFreeFingerprintSlot}</span> {t('personDetail.maxTen')}
                 </p>
               )}
               {detail && nextFreeFingerprintSlot === null && (
-                <p className="text-xs text-error-text mt-1.5">All 10 fingerprint slots are full. Delete a fingerprint to add a new one.</p>
+                <p className="text-xs text-error-text mt-1.5">{t('personDetail.allSlotsFull')}</p>
               )}
             </div>
             {fingerprintCaptureProgress && (
@@ -1995,9 +1998,9 @@ export function PersonDetailPage() {
                   nextFreeFingerprintSlot === null
                 }
               >
-                Start capture
+                {t('personDetail.startCapture')}
               </Button>
-              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>Cancel</Button>
+              <Button fullWidth variant="outline" onClick={() => setAddModal(null)}>{t('common.cancel')}</Button>
             </div>
           </div>
         </Modal>
@@ -2007,9 +2010,9 @@ export function PersonDetailPage() {
         isOpen={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
         onConfirm={handleRetireProfile}
-        title="Retire Profile"
-        message={`Are you sure you want to permanently delete ${name}? This will remove all cards, faces, and fingerprints from the system and from all devices.`}
-        confirmText="Delete"
+        title={t('personDetail.retireProfile')}
+        message={t('personDetail.retireProfileMessage', { name })}
+        confirmText={t('common.delete')}
         variant="danger"
         isLoading={isSubmitting}
       />

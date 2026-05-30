@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input } from '../components/atoms'
 import { apiRequest } from '../lib/api'
 
 export function ResetPasswordPage() {
+  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   const [email, setEmail] = useState(() => searchParams.get('email') ?? '')
   const [token, setToken] = useState(() => searchParams.get('token') ?? '')
@@ -18,19 +20,19 @@ export function ResetPasswordPage() {
     e.preventDefault()
     setError(null)
     if (!email?.trim()) {
-      setError('Enter your email.')
+      setError(t('auth.enterEmail'))
       return
     }
     if (!token?.trim()) {
-      setError('Enter the reset token.')
+      setError(t('auth.enterToken'))
       return
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match.')
+      setError(t('auth.passwordsDoNotMatch'))
       return
     }
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+      setError(t('auth.passwordMinLength'))
       return
     }
     startLoading()
@@ -47,7 +49,7 @@ export function ResetPasswordPage() {
       setSuccess(true)
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Password reset failed.')
+      setError(msg || t('auth.passwordResetFailed'))
     } finally {
       stopLoading()
     }
@@ -66,13 +68,13 @@ export function ResetPasswordPage() {
                 <span className="material-symbols-outlined text-3xl">check_circle</span>
               </div>
               <div className="space-y-1">
-                <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Password updated</h1>
-                <p className="text-text-light text-[10px] font-black uppercase tracking-widest">You can now sign in with your new password</p>
+                <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.passwordUpdatedTitle')}</h1>
+                <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.passwordUpdatedSubtitle')}</p>
               </div>
             </div>
             <Link to="/login" className="block">
               <Button fullWidth size="lg" className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20">
-                Sign in
+                {t('auth.signIn')}
               </Button>
             </Link>
           </div>
@@ -94,8 +96,8 @@ export function ResetPasswordPage() {
               <span className="material-symbols-outlined text-3xl">key</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">New password</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Enter the token and your new password</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.newPasswordTitle')}</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.newPasswordSubtitle')}</p>
             </div>
           </div>
 
@@ -111,10 +113,10 @@ export function ResetPasswordPage() {
 
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Email</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.email')}</label>
                 <Input
                   type="email"
-                  placeholder="name@company.com"
+                  placeholder={t('auth.emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full"
@@ -123,10 +125,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Reset token</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.resetTokenLabel')}</label>
                 <Input
                   type="text"
-                  placeholder="Paste token from email"
+                  placeholder={t('auth.resetTokenPlaceholder')}
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full font-mono text-xs"
@@ -135,10 +137,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">New password</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.newPasswordLabel')}</label>
                 <Input
                   type="password"
-                  placeholder="At least 8 characters"
+                  placeholder={t('auth.newPasswordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full"
@@ -148,10 +150,10 @@ export function ResetPasswordPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Confirm password</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.confirmPasswordLabel')}</label>
                 <Input
                   type="password"
-                  placeholder="Repeat password"
+                  placeholder={t('auth.confirmPasswordPlaceholder')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-4 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold w-full"
@@ -168,17 +170,17 @@ export function ResetPasswordPage() {
               size="lg"
               className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
             >
-              Reset password
+              {t('auth.resetPasswordButton')}
             </Button>
           </form>
 
           <div className="pt-4 text-center">
             <Link to="/forgot-password" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              Request new token
+              {t('auth.requestNewToken')}
             </Link>
             <span className="text-text-light/50 mx-2">|</span>
             <Link to="/login" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              Back to sign in
+              {t('auth.backToSignInPlain')}
             </Link>
           </div>
         </div>

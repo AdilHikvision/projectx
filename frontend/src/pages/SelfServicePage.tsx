@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Button } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
@@ -35,26 +36,18 @@ interface AttendanceRequest {
 
 type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'Vacation' | 'Overtime'
 
-const REQUEST_TYPES: { type: RequestType; label: string; icon: string; color: string }[] = [
-  { type: 'CheckIn', label: 'Check-in correction', icon: 'login', color: 'bg-green-500/10 text-green-600' },
-  { type: 'CheckOut', label: 'Check-out correction', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
-  { type: 'Absence', label: 'Absence', icon: 'person_off', color: 'bg-amber-500/10 text-amber-600' },
-  { type: 'Vacation', label: 'Vacation', icon: 'beach_access', color: 'bg-purple-500/10 text-purple-600' },
-  { type: 'Overtime', label: 'Overtime', icon: 'more_time', color: 'bg-indigo-500/10 text-indigo-600' },
+const REQUEST_TYPE_CONFIG: { type: RequestType; icon: string; color: string }[] = [
+  { type: 'CheckIn', icon: 'login', color: 'bg-green-500/10 text-green-600' },
+  { type: 'CheckOut', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
+  { type: 'Absence', icon: 'person_off', color: 'bg-amber-500/10 text-amber-600' },
+  { type: 'Vacation', icon: 'beach_access', color: 'bg-purple-500/10 text-purple-600' },
+  { type: 'Overtime', icon: 'more_time', color: 'bg-indigo-500/10 text-indigo-600' },
 ]
 
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'text-amber-600 bg-amber-50' },
-  Approved: { label: 'Approved', color: 'text-green-600 bg-green-50' },
-  Rejected: { label: 'Rejected', color: 'text-red-600 bg-red-50' },
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  CheckIn: 'Check-in correction',
-  CheckOut: 'Check-out correction',
-  Absence: 'Absence',
-  Vacation: 'Vacation',
-  Overtime: 'Overtime',
+const STATUS_COLORS: Record<string, string> = {
+  Pending: 'text-amber-600 bg-amber-50',
+  Approved: 'text-green-600 bg-green-50',
+  Rejected: 'text-red-600 bg-red-50',
 }
 
 function maskHHMM(input: string): string {
@@ -77,6 +70,7 @@ function formatDateTime(iso: string) {
 }
 
 export function SelfServicePage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [me, setMe] = useState<SelfServiceMe | null>(null)
   const [requests, setRequests] = useState<AttendanceRequest[]>([])
@@ -125,8 +119,8 @@ export function SelfServicePage() {
   const submitPasswordChange = async (e: React.FormEvent) => {
     e.preventDefault()
     setPwError(null)
-    if (pwNew.length < 6) { setPwError('Password must be at least 6 characters.'); return }
-    if (pwNew !== pwConfirm) { setPwError('Passwords do not match.'); return }
+    if (pwNew.length < 6) { setPwError(t('selfService.passwordMinLength')); return }
+    if (pwNew !== pwConfirm) { setPwError(t('selfService.passwordsDoNotMatch')); return }
     setPwSubmitting(true)
     try {
       await ssApiRequest('/api/self-service/change-password', {
@@ -143,7 +137,7 @@ export function SelfServicePage() {
       setPwModal(false)
       setPwCurrent(''); setPwNew(''); setPwConfirm('')
     } catch (err) {
-      setPwError(err instanceof Error ? err.message : 'Failed to change password.')
+      setPwError(err instanceof Error ? err.message : t('selfService.failedChangePassword'))
     } finally {
       setPwSubmitting(false)
     }
@@ -164,7 +158,7 @@ export function SelfServicePage() {
         navigate('/login')
         return
       }
-      setError('Failed to load data. Please sign in again.')
+      setError(t('selfService.failedLoadData'))
     } finally {
       setLoading(false)
     }
@@ -195,7 +189,7 @@ export function SelfServicePage() {
       if (selectedType === 'CheckIn' || selectedType === 'CheckOut') {
         const m = corrCheckIn.match(/^([01][0-9]|2[0-3]):([0-5][0-9])$/)
         if (!m) {
-          setSubmitError('Enter time in HH:MM format (e.g. 09:00).')
+          setSubmitError(t('selfService.enterTimeHHMM'))
           setSubmitting(false)
           return
         }
@@ -233,7 +227,7 @@ export function SelfServicePage() {
       setSubmitSuccess(true)
       await loadData()
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Failed to submit request.')
+      setSubmitError(err instanceof Error ? err.message : t('selfService.failedSubmitRequest'))
     } finally {
       setSubmitting(false)
     }
@@ -265,7 +259,7 @@ export function SelfServicePage() {
           latitude = pos.coords.latitude
           longitude = pos.coords.longitude
         } catch {
-          setQuickResult('Location access denied — request will need admin approval.')
+          setQuickResult(t('selfService.locationDenied'))
         }
       }
       const res = await ssApiRequest<{ status: string; autoApproved?: boolean; matchedZone?: string | null }>(
@@ -283,13 +277,15 @@ export function SelfServicePage() {
         }
       )
       if (res.autoApproved) {
-        setQuickResult(`✓ ${type === 'CheckIn' ? 'Checked in' : 'Checked out'} (zone: ${res.matchedZone ?? 'verified'})`)
+        const action = type === 'CheckIn' ? t('selfService.checkedIn') : t('selfService.checkedOut')
+        const zone = res.matchedZone ?? t('selfService.verified')
+        setQuickResult(`✓ ${action} (${t('selfService.zone')}: ${zone})`)
       } else {
-        setQuickResult(`Sent — pending admin approval (you are outside any geo-zone or location was unavailable).`)
+        setQuickResult(t('selfService.sentPending'))
       }
       await loadData()
     } catch {
-      setQuickResult('Failed to send. Try again.')
+      setQuickResult(t('selfService.failedSendTryAgain'))
     } finally {
       setQuickBusy(null)
     }
@@ -306,8 +302,8 @@ export function SelfServicePage() {
   if (error || !me) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-background-light gap-4">
-        <p className="text-error-text font-bold">{error ?? 'Failed to load.'}</p>
-        <Button onClick={handleLogout}>Sign out</Button>
+        <p className="text-error-text font-bold">{error ?? t('selfService.failedToLoad')}</p>
+        <Button onClick={handleLogout}>{t('selfService.signOut')}</Button>
       </div>
     )
   }
@@ -326,24 +322,24 @@ export function SelfServicePage() {
             </div>
             <div>
               <p className="font-black text-text-dark text-sm">{me.firstName} {me.lastName}</p>
-              <p className="text-text-light text-xs">{me.department ?? 'No department'}</p>
+              <p className="text-text-light text-xs">{me.department ?? t('selfService.noDepartment')}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => { setPwCurrent(''); setPwNew(''); setPwConfirm(''); setPwError(null); setPwModal(true) }}
               className="flex items-center gap-1 text-text-light hover:text-primary text-xs font-bold uppercase tracking-widest transition-colors"
-              title="Change password"
+              title={t('selfService.changePassword')}
             >
               <span className="material-symbols-outlined text-base">key</span>
-              Password
+              {t('selfService.password')}
             </button>
             <button
               onClick={handleLogout}
               className="flex items-center gap-1 text-text-light hover:text-error-text text-xs font-bold uppercase tracking-widest transition-colors"
             >
               <span className="material-symbols-outlined text-base">logout</span>
-              Sign out
+              {t('selfService.signOut')}
             </button>
           </div>
         </div>
@@ -375,16 +371,15 @@ export function SelfServicePage() {
             </div>
           )}
           {me.todayRecords.length === 0 && (
-            <p className="text-text-light text-xs mt-2">No events today.</p>
+            <p className="text-text-light text-xs mt-2">{t('selfService.noEventsToday')}</p>
           )}
         </div>
 
         {/* Quick check-in / check-out by location */}
         <div className="bg-surface rounded-2xl p-5 shadow-sm space-y-3">
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">Check by location</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.checkByLocation')}</p>
           <p className="text-[12px] text-text-light">
-            We'll use your current location. If you're inside an authorized zone, the entry is auto-approved.
-            Otherwise the request is sent to admin for approval.
+            {t('selfService.checkByLocationDescription')}
           </p>
           <div className="grid grid-cols-2 gap-3">
             <Button
@@ -396,7 +391,7 @@ export function SelfServicePage() {
               onClick={() => quickCheck('CheckIn')}
               className="rounded-2xl"
             >
-              Check in now
+              {t('selfService.checkInNow')}
             </Button>
             <Button
               type="button"
@@ -408,7 +403,7 @@ export function SelfServicePage() {
               onClick={() => quickCheck('CheckOut')}
               className="rounded-2xl"
             >
-              Check out now
+              {t('selfService.checkOutNow')}
             </Button>
           </div>
           {quickResult && (
@@ -420,16 +415,16 @@ export function SelfServicePage() {
 
         {/* Action Buttons */}
         <div>
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">Submit a request</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">{t('selfService.submitARequest')}</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {REQUEST_TYPES.map(({ type, label, icon, color }) => (
+            {REQUEST_TYPE_CONFIG.map(({ type, icon, color }) => (
               <button
                 key={type}
                 onClick={() => handleOpenModal(type)}
                 className={`flex flex-col items-center justify-center gap-2 p-4 rounded-2xl ${color} font-bold text-sm transition-all active:scale-95 hover:shadow-md`}
               >
                 <span className="material-symbols-outlined text-3xl">{icon}</span>
-                {label}
+                {t(`selfService.requestTypes.${type}`)}
               </button>
             ))}
           </div>
@@ -437,24 +432,26 @@ export function SelfServicePage() {
 
         {/* Recent Requests */}
         <div>
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">My requests</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">{t('selfService.myRequests')}</p>
           {requests.length === 0 ? (
             <div className="bg-surface rounded-2xl p-6 text-center text-text-light text-sm">
-              No requests yet.
+              {t('selfService.noRequestsYet')}
             </div>
           ) : (
             <div className="space-y-2">
               {requests.map((r) => {
-                const statusInfo = STATUS_LABELS[r.status] ?? { label: r.status, color: 'text-text-light bg-background-light' }
+                const statusColor = STATUS_COLORS[r.status] ?? 'text-text-light bg-background-light'
+                const statusLabel = STATUS_COLORS[r.status] ? t(`selfService.statuses.${r.status}`) : r.status
+                const typeLabel = REQUEST_TYPE_CONFIG.find((c) => c.type === r.type) ? t(`selfService.requestTypes.${r.type}`) : r.type
                 return (
                   <div key={r.id} className="bg-surface rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3">
                     <div className="space-y-0.5">
-                      <p className="font-bold text-text-dark text-sm">{TYPE_LABELS[r.type] ?? r.type}</p>
+                      <p className="font-bold text-text-dark text-sm">{typeLabel}</p>
                       <p className="text-text-light text-xs">{formatDateTime(r.requestedTimeUtc)}</p>
                       {r.comment && <p className="text-text-light text-xs italic">"{r.comment}"</p>}
                     </div>
-                    <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusInfo.color}`}>
-                      {statusInfo.label}
+                    <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusColor}`}>
+                      {statusLabel}
                     </span>
                   </div>
                 )
@@ -468,22 +465,22 @@ export function SelfServicePage() {
       <Modal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={`Request: ${TYPE_LABELS[selectedType]}`}
+        title={t('selfService.requestPrefix', { type: t(`selfService.requestTypes.${selectedType}`) })}
       >
         {submitSuccess ? (
           <div className="py-6 flex flex-col items-center gap-4 text-center">
             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center">
               <span className="material-symbols-outlined text-green-500 text-4xl">check_circle</span>
             </div>
-            <p className="font-bold text-text-dark">Request submitted for review.</p>
-            <Button onClick={() => setModalOpen(false)}>Close</Button>
+            <p className="font-bold text-text-dark">{t('selfService.requestSubmittedForReview')}</p>
+            <Button onClick={() => setModalOpen(false)}>{t('common.close')}</Button>
           </div>
         ) : (
           <form onSubmit={handleSubmitRequest} className="space-y-4 pt-2">
             {selectedType === 'CheckIn' || selectedType === 'CheckOut' ? (
               <>
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Date</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
                   <input
                     type="date"
                     value={corrDate}
@@ -494,7 +491,7 @@ export function SelfServicePage() {
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-                    {selectedType === 'CheckIn' ? 'Check-in time (HH:MM)' : 'Check-out time (HH:MM)'}
+                    {selectedType === 'CheckIn' ? t('selfService.checkInTimeLabel') : t('selfService.checkOutTimeLabel')}
                   </label>
                   <input
                     type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
@@ -509,7 +506,7 @@ export function SelfServicePage() {
               <>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-                    {needsEndDate ? 'Start date & time' : 'Date & time'}
+                    {needsEndDate ? t('selfService.startDateTime') : t('selfService.dateTime')}
                   </label>
                   <div className="grid grid-cols-[1fr_auto] gap-2">
                     <input
@@ -530,7 +527,7 @@ export function SelfServicePage() {
                 </div>
                 {needsEndDate && (
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">End date & time</label>
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.endDateTime')}</label>
                     <div className="grid grid-cols-[1fr_auto] gap-2">
                       <input
                         type="date"
@@ -550,12 +547,12 @@ export function SelfServicePage() {
               </>
             )}
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Comment (optional)</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.commentOptional')}</label>
               <textarea
                 value={reqComment}
                 onChange={(e) => setReqComment(e.target.value)}
                 rows={3}
-                placeholder="Reason or details..."
+                placeholder={t('selfService.reasonOrDetails')}
                 className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm text-text-dark focus:ring-2 focus:ring-primary/20 outline-none resize-none"
               />
             </div>
@@ -563,7 +560,7 @@ export function SelfServicePage() {
               <p className="text-red-600 text-xs font-bold bg-red-50 rounded-xl px-3 py-2">{submitError}</p>
             )}
             <Button type="submit" isLoading={submitting} fullWidth size="lg" className="rounded-2xl">
-              Submit request
+              {t('selfService.submitRequest')}
             </Button>
           </form>
         )}
@@ -582,8 +579,8 @@ export function SelfServicePage() {
         title={(() => {
           try {
             const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
-            return u.requiresPasswordSetup ? 'Set your password' : 'Change password'
-          } catch { return 'Change password' }
+            return u.requiresPasswordSetup ? t('selfService.setYourPassword') : t('selfService.changePassword')
+          } catch { return t('selfService.changePassword') }
         })()}
       >
         <form onSubmit={submitPasswordChange} className="space-y-4 pt-2">
@@ -595,16 +592,16 @@ export function SelfServicePage() {
             } catch { /* ignore */ }
             return mustSetup ? (
               <p className="text-[12px] text-text-light">
-                You signed in with a temporary password. Please set your own password to continue.
+                {t('selfService.tempPasswordNotice')}
               </p>
             ) : (
               <p className="text-[12px] text-text-light">
-                Enter your current password and a new one to update.
+                {t('selfService.enterCurrentAndNew')}
               </p>
             )
           })()}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Current password</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.currentPassword')}</label>
             <input
               type="password"
               value={pwCurrent}
@@ -614,7 +611,7 @@ export function SelfServicePage() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">New password</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.newPassword')}</label>
             <input
               type="password"
               value={pwNew}
@@ -625,7 +622,7 @@ export function SelfServicePage() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Confirm new password</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.confirmNewPassword')}</label>
             <input
               type="password"
               value={pwConfirm}
@@ -643,7 +640,7 @@ export function SelfServicePage() {
                 mustSetup = !!u.requiresPasswordSetup
               } catch { /* ignore */ }
               return !mustSetup
-                ? <Button type="button" variant="outline" fullWidth onClick={() => setPwModal(false)}>Cancel</Button>
+                ? <Button type="button" variant="outline" fullWidth onClick={() => setPwModal(false)}>{t('common.cancel')}</Button>
                 : null
             })()}
             <Button type="submit" isLoading={pwSubmitting} fullWidth size="lg" className="rounded-2xl">
@@ -653,7 +650,7 @@ export function SelfServicePage() {
                   const u = JSON.parse(localStorage.getItem('projectx.ss.user') ?? '{}')
                   mustSetup = !!u.requiresPasswordSetup
                 } catch { /* ignore */ }
-                return mustSetup ? 'Set password' : 'Update password'
+                return mustSetup ? t('selfService.setPassword') : t('selfService.updatePassword')
               })()}
             </Button>
           </div>

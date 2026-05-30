@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { useLoading } from '../context/LoadingContext'
@@ -37,29 +38,32 @@ interface SdkHealthResponse {
   librarySearchPaths: string[]
 }
 
-function formatSdkError(sdk: SdkHealthResponse): { summary: string; detail: string } {
-  if (!sdk.lastErrorCode) return { summary: 'No errors', detail: '' }
+type TFn = (key: string, opts?: Record<string, unknown>) => string
+
+function formatSdkError(sdk: SdkHealthResponse, t: TFn): { summary: string; detail: string } {
+  if (!sdk.lastErrorCode) return { summary: t('systemStatus.sdkError.noErrors'), detail: '' }
   const cat = sdk.lastErrorCategory || 'other'
   const device = sdk.lastErrorDevice ? ` (${sdk.lastErrorDevice})` : ''
   if (cat === 'network') {
     return {
-      summary: `Device offline or unreachable${device}`,
-      detail: sdk.lastErrorMessage || 'Check connection, routing, and device availability.'
+      summary: t('systemStatus.sdkError.networkSummary', { device }),
+      detail: sdk.lastErrorMessage || t('systemStatus.sdkError.networkDetail')
     }
   }
   if (cat === 'auth') {
     return {
-      summary: `Check login and access rights${device}`,
-      detail: sdk.lastErrorMessage || 'Account does not have the required device privileges.'
+      summary: t('systemStatus.sdkError.authSummary', { device }),
+      detail: sdk.lastErrorMessage || t('systemStatus.sdkError.authDetail')
     }
   }
   return {
-    summary: `${sdk.lastErrorCode}: ${sdk.lastErrorMessage || 'SDK Error'}${device}`,
+    summary: `${sdk.lastErrorCode}: ${sdk.lastErrorMessage || t('systemStatus.sdkError.genericLabel')}${device}`,
     detail: sdk.lastErrorHint || ''
   }
 }
 
 export function SystemStatusPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { startLoading, stopLoading, isLoading } = useLoading()
   const [status, setStatus] = useState<SystemStatusResponse | null>(null)
@@ -95,7 +99,7 @@ export function SystemStatusPage() {
           await loadStatus(true)
         } catch (e) {
           if (!isDisposed) {
-            setError(e instanceof Error ? e.message : 'Failed to load system status')
+            setError(e instanceof Error ? e.message : t('systemStatus.errors.loadFailed'))
           }
         }
       })()
@@ -127,7 +131,7 @@ export function SystemStatusPage() {
       setActionMessage(response.message)
       await loadStatus()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Service operation failed')
+      setError(e instanceof Error ? e.message : t('systemStatus.errors.serviceFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -141,11 +145,11 @@ export function SystemStatusPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title="Operational Integrity"
-            description="Deep diagnostics and orchestration of core system services."
+            title={t('systemStatus.title')}
+            description={t('systemStatus.description')}
             actions={
               <Button variant="outline" icon="sync" onClick={() => loadStatus(true)} isLoading={isLoading}>
-                Sync Diagnostics
+                {t('systemStatus.syncDiagnostics')}
               </Button>
             }
           />
@@ -176,25 +180,25 @@ export function SystemStatusPage() {
                   <span className="material-symbols-outlined">dns</span>
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-text-dark leading-tight lowercase first-letter:uppercase">Master Controller</h3>
-                  <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">Global Node Status</p>
+                  <h3 className="text-sm font-black text-text-dark leading-tight lowercase first-letter:uppercase">{t('systemStatus.masterController')}</h3>
+                  <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{t('systemStatus.globalNodeStatus')}</p>
                 </div>
               </div>
               <Badge variant={status?.serverStatus === 'Online' ? 'success' : 'error'} dot>
-                {status?.serverStatus || 'Offline'}
+                {status?.serverStatus || t('systemStatus.offline')}
               </Badge>
             </div>
 
             <div className="p-6 space-y-6">
               {!status ? (
-                <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest">Awaiting status broadcast...</div>
+                <div className="py-12 text-center text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemStatus.awaitingBroadcast')}</div>
               ) : (
                 <div className="grid grid-cols-2 gap-4">
                   {[
-                    { label: 'Latency', value: status.dbLatencyMs ? `${status.dbLatencyMs.toFixed(1)}ms` : '—', icon: 'speed' },
-                    { label: 'Platform', value: status.serviceState, icon: 'deployed_code' },
-                    { label: 'Database', value: status.dbStatus, icon: 'database' },
-                    { label: 'Check-in', value: new Date(status.utc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }), icon: 'schedule' },
+                    { label: t('systemStatus.metrics.latency'), value: status.dbLatencyMs ? `${status.dbLatencyMs.toFixed(1)}ms` : '—', icon: 'speed' },
+                    { label: t('systemStatus.metrics.platform'), value: status.serviceState, icon: 'deployed_code' },
+                    { label: t('systemStatus.metrics.database'), value: status.dbStatus, icon: 'database' },
+                    { label: t('systemStatus.metrics.checkIn'), value: new Date(status.utc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }), icon: 'schedule' },
                   ].map((item) => (
                     <div key={item.label} className="p-3 bg-background-light rounded-2xl shadow-sm border-none">
                       <div className="flex items-center gap-2 mb-1 opacity-50">
@@ -208,9 +212,9 @@ export function SystemStatusPage() {
               )}
 
               <div className="grid grid-cols-3 gap-2">
-                <Button fullWidth size="sm" onClick={() => controlMainService('start')} isLoading={isSubmitting} icon="play_arrow">Start</Button>
-                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting} icon="stop">Stop</Button>
-                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('restart')} isLoading={isSubmitting} icon="restart_alt">Reset</Button>
+                <Button fullWidth size="sm" onClick={() => controlMainService('start')} isLoading={isSubmitting} icon="play_arrow">{t('systemStatus.actions.start')}</Button>
+                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting} icon="stop">{t('systemStatus.actions.stop')}</Button>
+                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('restart')} isLoading={isSubmitting} icon="restart_alt">{t('systemStatus.actions.reset')}</Button>
               </div>
             </div>
           </div>
@@ -219,22 +223,22 @@ export function SystemStatusPage() {
             {/* SDK Card */}
             <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none text-text-light leading-none">
               <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">SDK Health Profile</h3>
-                <Badge variant={sdkHealth?.initialized ? 'primary' : 'error'}>{sdkHealth?.initialized ? 'Initialized' : 'Void'}</Badge>
+                <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemStatus.sdkHealth.title')}</h3>
+                <Badge variant={sdkHealth?.initialized ? 'primary' : 'error'}>{sdkHealth?.initialized ? t('systemStatus.sdkHealth.initialized') : t('systemStatus.sdkHealth.void')}</Badge>
               </div>
 
               {!sdkHealth ? (
-                <div className="py-8 text-center text-xs italic text-text-light">Synchronizing library...</div>
+                <div className="py-8 text-center text-xs italic text-text-light">{t('systemStatus.sdkHealth.synchronizing')}</div>
               ) : (
                 <>
                   <div className="flex items-center justify-between p-3 bg-background-light rounded-xl hover:shadow-sm transition-shadow">
-                    <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Active Links</span>
-                    <span className="text-sm font-black text-primary">{sdkHealth.connectedDevices} Stations</span>
+                    <span className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemStatus.sdkHealth.activeLinks')}</span>
+                    <span className="text-sm font-black text-primary">{t('systemStatus.sdkHealth.stationCount', { count: sdkHealth.connectedDevices })}</span>
                   </div>
 
                   <div className={`p-4 rounded-2xl shadow-sm ${sdkHealth.lastErrorCode ? 'bg-error-bg text-error-text' : 'bg-slate-50 text-text-dark'}`}>
                     {(() => {
-                      const { summary, detail } = formatSdkError(sdkHealth)
+                      const { summary, detail } = formatSdkError(sdkHealth, t)
                       return (
                         <>
                           <div className="flex items-center gap-2 mb-1">
@@ -252,7 +256,7 @@ export function SystemStatusPage() {
 
             {/* Library Paths */}
             <div className="bg-surface rounded-3xl shadow-md p-6 space-y-4 border-none text-text-light">
-              <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">Runtime Binary Paths</h3>
+              <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemStatus.runtimeBinaryPaths')}</h3>
               <div className="space-y-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
                 {sdkHealth?.librarySearchPaths.map((path, idx) => (
                   <code key={idx} className="block w-full text-[9px] font-mono bg-slate-50 px-2 py-1.5 rounded-lg truncate text-text-muted hover:shadow-sm transition-shadow">

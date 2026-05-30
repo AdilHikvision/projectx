@@ -3,6 +3,7 @@ import { useAuth } from '../../../auth/AuthContext';
 import { useNotifications } from '../../../hooks/useNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface TopBarProps {
     title: string;
@@ -13,24 +14,24 @@ interface TopBarProps {
 }
 
 interface NavItem {
-    label: string;
+    labelKey: string;
     path: string;
     icon: string;
-    keywords: string;
+    keywordsKey: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-    { label: 'Dashboard', path: '/', icon: 'grid_view', keywords: 'dashboard home overview stats' },
-    { label: 'People', path: '/people', icon: 'group', keywords: 'people employees visitors staff hr' },
-    { label: 'Monitoring', path: '/monitoring', icon: 'monitor_heart', keywords: 'monitoring live events realtime access' },
-    { label: 'Access Levels', path: '/access-levels', icon: 'admin_panel_settings', keywords: 'access levels doors floors policies permissions' },
-    { label: 'Work Hours', path: '/work-hours', icon: 'schedule', keywords: 'work hours attendance daily weekly monthly records schedules leaves vacations' },
-    { label: 'Schedule Planner', path: '/schedule-planner', icon: 'calendar_month', keywords: 'schedule planner calendar shifts patterns' },
-    { label: 'Approvals', path: '/approvals', icon: 'approval', keywords: 'approvals requests attendance corrections' },
-    { label: 'Geo Zones', path: '/geo-zones', icon: 'my_location', keywords: 'geo zones location geofence radius' },
-    { label: 'Payroll', path: '/payroll', icon: 'payments', keywords: 'payroll salary calculation periods overtime deductions' },
-    { label: 'Settings', path: '/settings', icon: 'settings', keywords: 'settings configuration system global' },
-    { label: 'System Status', path: '/status', icon: 'monitoring', keywords: 'system status devices logs health' },
+    { labelKey: 'nav.dashboard', path: '/', icon: 'grid_view', keywordsKey: 'topBar.navKeywords.dashboard' },
+    { labelKey: 'nav.people', path: '/people', icon: 'group', keywordsKey: 'topBar.navKeywords.people' },
+    { labelKey: 'nav.monitoring', path: '/monitoring', icon: 'monitor_heart', keywordsKey: 'topBar.navKeywords.monitoring' },
+    { labelKey: 'nav.accessLevels', path: '/access-levels', icon: 'admin_panel_settings', keywordsKey: 'topBar.navKeywords.accessLevels' },
+    { labelKey: 'nav.workHours', path: '/work-hours', icon: 'schedule', keywordsKey: 'topBar.navKeywords.workHours' },
+    { labelKey: 'nav.schedulePlanner', path: '/schedule-planner', icon: 'calendar_month', keywordsKey: 'topBar.navKeywords.schedulePlanner' },
+    { labelKey: 'nav.approvals', path: '/approvals', icon: 'approval', keywordsKey: 'topBar.navKeywords.approvals' },
+    { labelKey: 'nav.geoZones', path: '/geo-zones', icon: 'my_location', keywordsKey: 'topBar.navKeywords.geoZones' },
+    { labelKey: 'nav.payroll', path: '/payroll', icon: 'payments', keywordsKey: 'topBar.navKeywords.payroll' },
+    { labelKey: 'nav.settings', path: '/settings', icon: 'settings', keywordsKey: 'topBar.navKeywords.settings' },
+    { labelKey: 'nav.systemStatus', path: '/status', icon: 'monitoring', keywordsKey: 'topBar.navKeywords.systemStatus' },
 ]
 
 function getInitials(email: string | null | undefined): string {
@@ -44,6 +45,7 @@ function getInitials(email: string | null | undefined): string {
 
 export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAction }: TopBarProps) {
     const { user, logout } = useAuth();
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
     const initials = getInitials(user?.email);
@@ -56,8 +58,8 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
 
     const results = query.trim()
         ? NAV_ITEMS.filter(item =>
-            item.label.toLowerCase().includes(query.toLowerCase()) ||
-            item.keywords.toLowerCase().includes(query.toLowerCase())
+            t(item.labelKey).toLowerCase().includes(query.toLowerCase()) ||
+            t(item.keywordsKey).toLowerCase().includes(query.toLowerCase())
         )
         : [];
 
@@ -138,7 +140,7 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                                 value={query}
                                 onChange={e => setQuery(e.target.value)}
                                 onKeyDown={handleKeyDown}
-                                placeholder={searchPlaceholder || 'Search pages...'}
+                                placeholder={searchPlaceholder || t('topBar.searchPages')}
                                 className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-border bg-background-light text-text-dark placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
                             />
                         </div>
@@ -159,7 +161,7 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                                         <span className={`material-symbols-outlined text-[18px] shrink-0 ${i === activeIndex ? 'text-primary' : 'text-text-muted'}`}>
                                             {item.icon}
                                         </span>
-                                        <span className="text-sm font-semibold">{item.label}</span>
+                                        <span className="text-sm font-semibold">{t(item.labelKey)}</span>
                                     </button>
                                 ))}
                             </div>

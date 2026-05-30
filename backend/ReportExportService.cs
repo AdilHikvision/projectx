@@ -22,6 +22,18 @@ public sealed record AttendancePeriodRow(
     int? LateMinutes,
     bool Corrected);
 
+public sealed record SchedulePlannerRow(
+    string EmployeeName,
+    string? Department,
+    DateOnly Date,
+    string? ScheduleName,
+    string? ShiftStart,
+    string? ShiftEnd,
+    bool IsDayOff,
+    string? LeaveType,
+    string? Color,
+    string? ScheduleType);
+
 public sealed record PayrollReportRow(
     string EmployeeName,
     string? EmployeeNo,
@@ -196,6 +208,105 @@ public static class ExcelReportBuilder
         }
 
         ws.Columns().AdjustToContents();
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    public static byte[] BuildSchedulePlanner(
+        IReadOnlyList<SchedulePlannerRow> rows, DateOnly from, DateOnly to)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Schedule Planner");
+
+        ws.Cell("A1").Value = "Schedule Planner";
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 14;
+        ws.Cell("A2").Value = $"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}";
+
+        var dates = new List<DateOnly>();
+        for (var d = from; d <= to; d = d.AddDays(1)) dates.Add(d);
+
+        var employees = rows.GroupBy(r => r.EmployeeName)
+            .Select(g => new { Name = g.Key, Dept = g.First().Department, ByDate = g.ToDictionary(x => x.Date) })
+            .OrderBy(x => x.Name).ToList();
+
+        int headerRow = 4;
+        ws.Cell(headerRow, 1).Value = "Employee";
+        ws.Cell(headerRow, 2).Value = "Department";
+        for (int i = 0; i < dates.Count; i++)
+        {
+            var c = ws.Cell(headerRow, 3 + i);
+            c.Value = dates[i].ToString("dd MMM");
+            var isWeekend = dates[i].DayOfWeek == DayOfWeek.Saturday || dates[i].DayOfWeek == DayOfWeek.Sunday;
+            c.Style.Font.FontColor = isWeekend ? XLColor.FromHtml("#dc2626") : XLColor.White;
+            c.Style.Fill.BackgroundColor = isWeekend ? XLColor.FromHtml("#fef2f2") : XLColor.FromHtml("#4f46e5");
+            c.Style.Font.Bold = true;
+            c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        }
+        ws.Cell(headerRow, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+        ws.Cell(headerRow, 1).Style.Font.FontColor = XLColor.White;
+        ws.Cell(headerRow, 1).Style.Font.Bold = true;
+        ws.Cell(headerRow, 2).Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+        ws.Cell(headerRow, 2).Style.Font.FontColor = XLColor.White;
+        ws.Cell(headerRow, 2).Style.Font.Bold = true;
+
+        int row = headerRow + 1;
+        foreach (var emp in employees)
+        {
+            ws.Cell(row, 1).Value = emp.Name;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 2).Value = emp.Dept ?? "";
+            ws.Cell(row, 2).Style.Font.FontColor = XLColor.FromHtml("#666666");
+            for (int i = 0; i < dates.Count; i++)
+            {
+                var cell = ws.Cell(row, 3 + i);
+                if (!emp.ByDate.TryGetValue(dates[i], out var cellRow))
+                {
+                    cell.Value = "";
+                    continue;
+                }
+                if (cellRow.IsDayOff)
+                {
+                    cell.Value = "OFF";
+                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#fee2e2");
+                    cell.Style.Font.FontColor = XLColor.FromHtml("#dc2626");
+                    cell.Style.Font.Bold = true;
+                }
+                else
+                {
+                    var schedShort = string.IsNullOrEmpty(cellRow.ScheduleName)
+                        ? "—"
+                        : (cellRow.ScheduleName.Length > 14 ? cellRow.ScheduleName.Substring(0, 14) + "…" : cellRow.ScheduleName);
+                    var times = (cellRow.ShiftStart is null && cellRow.ShiftEnd is null)
+                        ? cellRow.ScheduleType ?? ""
+                        : $"{cellRow.ShiftStart ?? "—"}–{cellRow.ShiftEnd ?? "—"}";
+                    cell.Value = string.IsNullOrEmpty(times) ? schedShort : $"{schedShort}\n{times}";
+                    cell.Style.Alignment.WrapText = true;
+                    if (!string.IsNullOrEmpty(cellRow.Color))
+                    {
+                        try
+                        {
+                            cell.Style.Fill.BackgroundColor = XLColor.FromHtml(cellRow.Color + "22");
+                            cell.Style.Font.FontColor = XLColor.FromHtml(cellRow.Color);
+                        }
+                        catch { }
+                    }
+                }
+                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+                cell.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                cell.Style.Border.OutsideBorderColor = XLColor.FromHtml("#e5e7eb");
+            }
+            row++;
+        }
+
+        ws.Column(1).Width = 22;
+        ws.Column(2).Width = 16;
+        for (int i = 0; i < dates.Count; i++) ws.Column(3 + i).Width = 11;
+        ws.SheetView.FreezeColumns(2);
+        ws.SheetView.FreezeRows(headerRow);
+
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         return ms.ToArray();
@@ -416,6 +527,107 @@ public static class PdfReportBuilder
                         x.Span(" of ").FontSize(7);
                         x.TotalPages().FontSize(7);
                     });
+            });
+        });
+
+        using var ms = new MemoryStream();
+        doc.GeneratePdf(ms);
+        return ms.ToArray();
+    }
+
+    public static byte[] BuildSchedulePlanner(
+        IReadOnlyList<SchedulePlannerRow> rows, DateOnly from, DateOnly to)
+    {
+        var dates = new List<DateOnly>();
+        for (var d = from; d <= to; d = d.AddDays(1)) dates.Add(d);
+
+        var employees = rows.GroupBy(r => r.EmployeeName)
+            .Select(g => new { Name = g.Key, Dept = g.First().Department, ByDate = g.ToDictionary(x => x.Date) })
+            .OrderBy(x => x.Name).ToList();
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A3.Landscape());
+                page.Margin(1f, Unit.Centimetre);
+                page.DefaultTextStyle(t => t.FontSize(7).FontFamily("Arial"));
+
+                page.Header().Column(col =>
+                {
+                    col.Item().Text("Schedule Planner").FontSize(14).Bold().FontColor(PrimaryHex);
+                    col.Item().Text($"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}").FontSize(8).FontColor("#555555");
+                    col.Item().PaddingTop(4).LineHorizontal(1).LineColor(PrimaryHex);
+                });
+
+                page.Content().PaddingTop(6).Table(table =>
+                {
+                    table.ColumnsDefinition(c =>
+                    {
+                        c.ConstantColumn(110); // Employee
+                        c.ConstantColumn(70);  // Department
+                        foreach (var _ in dates) c.RelativeColumn(1);
+                    });
+
+                    table.Header(h =>
+                    {
+                        h.Cell().Background(PrimaryHex).Padding(2).Text("Employee").FontColor("#ffffff").Bold().FontSize(7);
+                        h.Cell().Background(PrimaryHex).Padding(2).Text("Department").FontColor("#ffffff").Bold().FontSize(7);
+                        foreach (var d in dates)
+                        {
+                            var isWeekend = d.DayOfWeek == DayOfWeek.Saturday || d.DayOfWeek == DayOfWeek.Sunday;
+                            h.Cell().Background(isWeekend ? "#fef2f2" : PrimaryHex)
+                                .Padding(2).AlignCenter().Text(d.ToString("dd"))
+                                .FontColor(isWeekend ? "#dc2626" : "#ffffff").Bold().FontSize(7);
+                        }
+                    });
+
+                    bool alt = false;
+                    foreach (var emp in employees)
+                    {
+                        var rowBg = alt ? "#fafafa" : "#ffffff"; alt = !alt;
+                        table.Cell().Background(rowBg).Padding(3).Text(emp.Name).Bold().FontSize(7);
+                        table.Cell().Background(rowBg).Padding(3).Text(emp.Dept ?? "—").FontColor("#666666").FontSize(7);
+                        foreach (var d in dates)
+                        {
+                            if (!emp.ByDate.TryGetValue(d, out var cellRow))
+                            {
+                                table.Cell().Background(rowBg).Padding(2).Text("");
+                                continue;
+                            }
+                            if (cellRow.IsDayOff)
+                            {
+                                table.Cell().Background("#fee2e2").Padding(2).AlignCenter()
+                                    .Text("OFF").FontColor("#dc2626").Bold().FontSize(6.5f);
+                            }
+                            else
+                            {
+                                var color = string.IsNullOrEmpty(cellRow.Color) ? "#6366f1" : cellRow.Color;
+                                var sched = string.IsNullOrEmpty(cellRow.ScheduleName) ? "—" : cellRow.ScheduleName!;
+                                var schedShort = sched.Length > 10 ? sched.Substring(0, 10) + "…" : sched;
+                                var times = (cellRow.ShiftStart is null && cellRow.ShiftEnd is null)
+                                    ? (cellRow.ScheduleType ?? "")
+                                    : $"{cellRow.ShiftStart ?? "—"}-{cellRow.ShiftEnd ?? "—"}";
+                                string bg;
+                                try { bg = color + "22"; } catch { bg = rowBg; }
+                                table.Cell().Background(bg).Padding(2).Column(col =>
+                                {
+                                    col.Item().AlignCenter().Text(schedShort).FontColor(color).Bold().FontSize(6.5f);
+                                    if (!string.IsNullOrEmpty(times))
+                                        col.Item().AlignCenter().Text(times).FontColor(color).FontSize(6);
+                                });
+                            }
+                        }
+                    }
+                });
+
+                page.Footer().AlignRight().Text(x =>
+                {
+                    x.Span("Page ").FontSize(7).FontColor("#888888");
+                    x.CurrentPageNumber().FontSize(7);
+                    x.Span(" of ").FontSize(7);
+                    x.TotalPages().FontSize(7);
+                });
             });
         });
 

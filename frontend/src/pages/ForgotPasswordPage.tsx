@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input } from '../components/atoms'
 import { apiRequest } from '../lib/api'
@@ -10,6 +11,7 @@ interface ForgotPasswordResponse {
 }
 
 export function ForgotPasswordPage() {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const { startLoading, stopLoading, isLoading } = useLoading()
   const [error, setError] = useState<string | null>(null)
@@ -21,7 +23,7 @@ export function ForgotPasswordPage() {
     setError(null)
     setSuccess(null)
     if (!email?.trim()) {
-      setError('Enter your email.')
+      setError(t('auth.enterEmail'))
       return
     }
     startLoading()
@@ -38,7 +40,7 @@ export function ForgotPasswordPage() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Password reset request failed.')
+      setError(msg || t('auth.passwordResetRequestFailed'))
     } finally {
       stopLoading()
     }
@@ -57,8 +59,8 @@ export function ForgotPasswordPage() {
               <span className="material-symbols-outlined text-3xl">lock_reset</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Reset password</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Enter your email to receive a link</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.forgotPasswordTitle')}</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.forgotPasswordSubtitle')}</p>
             </div>
           </div>
 
@@ -69,7 +71,7 @@ export function ForgotPasswordPage() {
               </div>
               <Link to="/login" className="block">
                 <Button fullWidth size="lg" className="rounded-2xl font-black uppercase tracking-widest h-12">
-                  Back to sign in
+                  {t('auth.backToSignInPlain')}
                 </Button>
               </Link>
             </div>
@@ -85,11 +87,11 @@ export function ForgotPasswordPage() {
               )}
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Email</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.email')}</label>
                 <div className="relative">
                   <Input
                     type="email"
-                    placeholder="name@company.com"
+                    placeholder={t('auth.emailPlaceholder')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -106,14 +108,14 @@ export function ForgotPasswordPage() {
                 size="lg"
                 className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
               >
-                Send
+                {t('auth.send')}
               </Button>
             </form>
           )}
 
           <div className="pt-4 text-center">
             <Link to="/login" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
-              ← Back to sign in
+              {t('auth.backToSignIn')}
             </Link>
           </div>
         </div>

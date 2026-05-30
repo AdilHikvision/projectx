@@ -177,6 +177,40 @@ public sealed class DatabaseInitializer(
             }
         }
 
+        // role_permissions: связь role-name → permission-key
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                "RoleName" character varying(128) NOT NULL,
+                "Permission" character varying(128) NOT NULL,
+                PRIMARY KEY ("RoleName", "Permission")
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_role_permissions_RoleName" ON role_permissions ("RoleName")
+            """, cancellationToken);
+
+        // Seed default permission rows ONLY for system roles that have ZERO rows yet.
+        // Это значит: первая инициализация раздаёт дефолты, последующие правки админа не перетираются.
+        foreach (var (roleName, defaults) in Permissions.Defaults)
+        {
+            // Admin не сидим в таблицу — он получает все permission'ы через short-circuit в PermissionService.
+            if (string.Equals(roleName, SystemRoles.Admin, StringComparison.OrdinalIgnoreCase)) continue;
+            if (defaults.Count == 0) continue;
+
+            var hasAny = await dbContext.RolePermissions.AnyAsync(r => r.RoleName == roleName, cancellationToken);
+            if (hasAny) continue;
+
+            foreach (var perm in defaults)
+            {
+                dbContext.RolePermissions.Add(new Backend.Domain.Entities.RolePermission
+                {
+                    RoleName = roleName,
+                    Permission = perm
+                });
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
         // Первый администратор создаётся только вручную через /api/auth/setup-admin-password (страница Initial Setup), не из конфигурации.
         if (!await userManager.Users.AnyAsync(cancellationToken))
         {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input } from '../components/atoms'
 import { apiRequest } from '../lib/api'
@@ -10,6 +11,7 @@ interface SetupRequiredResponse {
 }
 
 export function SetupPasswordPage() {
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -45,15 +47,15 @@ export function SetupPasswordPage() {
     e.preventDefault()
     setError(null)
     if (!email?.trim()) {
-      setError('Please enter an email.')
+      setError(t('auth.pleaseEnterEmail'))
       return
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match.')
+      setError(t('auth.passwordsDoNotMatch'))
       return
     }
     if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
+      setError(t('auth.passwordMinLength'))
       return
     }
     startLoading()
@@ -65,7 +67,7 @@ export function SetupPasswordPage() {
       navigate('/login', { replace: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg || 'Failed to set password.')
+      setError(msg || t('auth.failedToSetPassword'))
     } finally {
       stopLoading()
     }
@@ -76,7 +78,7 @@ export function SetupPasswordPage() {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background-light" aria-busy="true">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-slate-100 border-t-primary rounded-full animate-spin" />
-          <p className="text-[10px] font-black text-text-light uppercase tracking-widest animate-pulse">Initializing Setup...</p>
+          <p className="text-[10px] font-black text-text-light uppercase tracking-widest animate-pulse">{t('auth.initializingSetup')}</p>
         </div>
       </div>
     )
@@ -96,8 +98,8 @@ export function SetupPasswordPage() {
               <span className="material-symbols-outlined text-3xl">admin_panel_settings</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Initial Setup</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest leading-relaxed">Create your administrative account</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.setupTitle')}</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest leading-relaxed">{t('auth.setupSubtitle')}</p>
             </div>
           </div>
 
@@ -110,11 +112,11 @@ export function SetupPasswordPage() {
 
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Admin Email</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.adminEmail')}</label>
                 <div className="relative">
                   <Input
                     type="email"
-                    placeholder="admin@company.com"
+                    placeholder={t('auth.adminEmailPlaceholder')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -126,11 +128,11 @@ export function SetupPasswordPage() {
 
               <div className="grid grid-cols-1 gap-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Master Password</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.masterPassword')}</label>
                   <div className="relative">
                     <Input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Minimum 8 characters"
+                      placeholder={t('auth.masterPasswordPlaceholder')}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -149,11 +151,11 @@ export function SetupPasswordPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Confirm Password</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.confirmPasswordLabel')}</label>
                   <div className="relative">
                     <Input
                       type={showConfirmPassword ? 'text' : 'password'}
-                      placeholder="Repeat master password"
+                      placeholder={t('auth.repeatMasterPassword')}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -181,13 +183,13 @@ export function SetupPasswordPage() {
                 size="lg"
                 className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
               >
-                Complete Setup
+                {t('auth.completeSetup')}
               </Button>
             </div>
           </form>
 
           <div className="pt-4 text-center">
-            <p className="text-text-light/50 text-[9px] font-black uppercase tracking-[0.4em]">Powered by Unifi Architecture</p>
+            <p className="text-text-light/50 text-[9px] font-black uppercase tracking-[0.4em]">{t('auth.poweredBy')}</p>
           </div>
         </div>
       </div>

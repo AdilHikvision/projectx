@@ -7,6 +7,7 @@ interface AuthUser {
   id: string
   email: string
   roles: string[]
+  permissions: string[]
 }
 
 interface LoginRequest {
@@ -21,6 +22,7 @@ interface LoginResponse {
     id: string
     email: string
     roles: string[]
+    permissions?: string[]
   }
 }
 
@@ -32,6 +34,10 @@ interface AuthContextValue {
   isLoading: boolean
   login: (request: LoginRequest) => Promise<void>
   logout: () => void
+  /** Returns true if the user has the given permission key (e.g. "Devices.Manage"). Admin always returns true. */
+  hasPermission: (permission: string) => boolean
+  /** Returns true if the user has at least one of the given permission keys. */
+  hasAnyPermission: (permissions: string[]) => boolean
 }
 
 const STORAGE_TOKEN_KEY = 'projectx.auth.token'
@@ -68,8 +74,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       try {
-        const me = await apiRequest<{ id: string; email: string; roles: string[] }>('/api/auth/me', { token: storedToken })
-        const nextUser = { id: me.id, email: me.email ?? '', roles: me.roles ?? [] }
+        const me = await apiRequest<{ id: string; email: string; roles: string[]; permissions: string[] }>('/api/auth/me', { token: storedToken })
+        const nextUser: AuthUser = {
+          id: me.id,
+          email: me.email ?? '',
+          roles: me.roles ?? [],
+          permissions: me.permissions ?? [],
+        }
         setUser(nextUser)
         localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(nextUser))
       } catch {
@@ -101,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: response.user.id,
       email: response.user.email,
       roles: response.user.roles,
+      permissions: response.user.permissions ?? [],
     }
 
     localStorage.setItem(STORAGE_TOKEN_KEY, response.accessToken)
@@ -108,6 +120,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(response.accessToken)
     setUser(nextUser)
   }, [])
+
+  const hasPermission = useCallback((permission: string): boolean => {
+    if (!user) return false
+    // Admin role always implies all permissions (mirrors backend short-circuit).
+    if (user.roles.includes('Admin')) return true
+    return user.permissions.includes(permission)
+  }, [user])
+
+  const hasAnyPermission = useCallback((permissions: string[]): boolean => {
+    if (!user) return false
+    if (user.roles.includes('Admin')) return true
+    return permissions.some(p => user.permissions.includes(p))
+  }, [user])
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -117,8 +142,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       logout,
+      hasPermission,
+      hasAnyPermission,
     }),
-    [isLoading, login, logout, token, user],
+    [isLoading, login, logout, token, user, hasPermission, hasAnyPermission],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

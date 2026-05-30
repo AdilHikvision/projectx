@@ -12,11 +12,11 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5055',
+        target: 'http://127.0.0.1:5154',
         changeOrigin: true,
       },
       '/hubs': {
-        target: 'http://127.0.0.1:5055',
+        target: 'http://127.0.0.1:5154',
         changeOrigin: true,
         ws: true,
       },
@@ -26,11 +26,11 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5055',
+        target: 'http://127.0.0.1:5154',
         changeOrigin: true,
       },
       '/hubs': {
-        target: 'http://127.0.0.1:5055',
+        target: 'http://127.0.0.1:5154',
         changeOrigin: true,
         ws: true,
       },

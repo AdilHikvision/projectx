@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
@@ -6,8 +7,10 @@ import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import { useExportReport } from '../hooks/useExportReport'
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December']
+const MONTH_KEYS = ['monthJanuary', 'monthFebruary', 'monthMarch', 'monthApril', 'monthMay', 'monthJune',
+    'monthJuly', 'monthAugust', 'monthSeptember', 'monthOctober', 'monthNovember', 'monthDecember']
+const MONTH_SHORT_KEYS = ['monthShortJan', 'monthShortFeb', 'monthShortMar', 'monthShortApr', 'monthShortMay', 'monthShortJun',
+    'monthShortJul', 'monthShortAug', 'monthShortSep', 'monthShortOct', 'monthShortNov', 'monthShortDec']
 
 function fmt(n: number) { return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
 function fmtH(n: number) { return n.toFixed(1) }
@@ -19,7 +22,10 @@ type ComponentType = 'Allowance' | 'Bonus' | 'Deduction'
 type SalaryType = 'Monthly' | 'Hourly' | 'Daily'
 
 interface Period {
-    id: string; year: number; month: number; status: PeriodStatus
+    id: string; year: number; month: number
+    startDate: string; endDate: string
+    status: PeriodStatus
+    hoursConfirmedAt: string | null
     calculatedAt: string | null; approvedAt: string | null; notes: string | null
     employeeCount: number; totalGross: number; totalNet: number; totalTax: number
 }
@@ -30,8 +36,12 @@ interface PayrollEntry {
     id: string; employeeId: string; employeeName: string
     employeeNo: string | null; department: string | null
     workedDays: number; workedHours: number; overtimeHours: number; absentDays: number
+    latenessMinutes?: number; latenessDaysCount?: number
+    earlyLeaveMinutes?: number; earlyLeaveDaysCount?: number
     basePay: number; overtimePay: number; allowancesTotal: number; bonusesTotal: number
-    grossPay: number; deductionsTotal: number; taxRate: number; taxAmount: number; netPay: number
+    grossPay: number; deductionsTotal: number
+    latenessDeduction?: number; earlyLeaveDeduction?: number
+    taxRate: number; taxAmount: number; netPay: number
     status: EntryStatus; notes: string | null; componentsJson: string | null
 }
 
@@ -48,8 +58,15 @@ interface LatenessTier { afterMinutes: number; deductionMultiplier: number }
 
 interface EmpSalaryConfig {
     id: string; salaryType: SalaryType; baseAmount: number; currency: string
-    overtimeMultiplier: number; overtimeEnabled: boolean; payByWorkedHours: boolean
-    overtimeTiersJson: string | null; latenessDeductionEnabled: boolean; latenessTiersJson: string | null
+    overtimeMultiplier: number; overtimeEnabled: boolean
+    payByWorkedHours: boolean
+    overtimeTiersJson: string | null
+    latenessDeductionEnabled: boolean
+    latenessDeductionMode?: 'Coefficient' | 'Fixed'
+    latenessTiersJson: string | null
+    earlyLeaveDeductionEnabled?: boolean
+    earlyLeaveDeductionMode?: 'Coefficient' | 'Fixed'
+    earlyLeaveTiersJson?: string | null
     effectiveFrom: string
     components: { componentId: string; name: string; componentType: string; isFixed: boolean; amount: number; percentage: number }[]
 }
@@ -84,13 +101,14 @@ function compTypeVariant(type: ComponentType): 'success' | 'primary' | 'error' {
     }
 }
 
-const PAYROLL_TABS: { value: Tab; label: string }[] = [
-    { value: 'periods', label: 'Periods' },
-    { value: 'setup', label: 'Salary Setup' },
-    { value: 'components', label: 'Components' },
+const PAYROLL_TABS: { value: Tab; labelKey: string }[] = [
+    { value: 'periods', labelKey: 'payroll.tabPeriods' },
+    { value: 'setup', labelKey: 'payroll.tabSalarySetup' },
+    { value: 'components', labelKey: 'payroll.tabComponents' },
 ]
 
 export function PayrollCalculationPage() {
+    const { t } = useTranslation()
     const { token } = useAuth()
     const { exporting, downloadReport } = useExportReport(token)
     const [tab, setTab] = useState<Tab>('periods')
@@ -99,12 +117,46 @@ export function PayrollCalculationPage() {
     // ── Periods ──────────────────────────────────────────────────────────────
     const [periods, setPeriods] = useState<Period[]>([])
     const [periodLoading, setPeriodLoading] = useState(false)
+    const [periodTab, setPeriodTab] = useState<'all' | 'calculated' | 'paid'>('all')
+    const [filterYear, setFilterYear] = useState<string>('')
+    const [filterMonth, setFilterMonth] = useState<string>('')
+
+    const ENTRY_COLS = useMemo(() => [
+        { key: 'employee', label: t('payroll.colEmployee'), required: true },
+        { key: 'dept', label: t('payroll.colDept') },
+        { key: 'days', label: t('payroll.colDays') },
+        { key: 'hours', label: t('payroll.colHours') },
+        { key: 'ot', label: t('payroll.colOtH') },
+        { key: 'late', label: t('payroll.colLateH') },
+        { key: 'early', label: t('payroll.colEarlyH') },
+        { key: 'allowBonus', label: t('payroll.colAllowBonus') },
+        { key: 'gross', label: t('payroll.colGross') },
+        { key: 'lateFine', label: t('payroll.colLateFine') },
+        { key: 'earlyFine', label: t('payroll.colEarlyFine') },
+        { key: 'tax', label: t('payroll.colTax') },
+        { key: 'net', label: t('payroll.colNet') },
+        { key: 'status', label: t('common.status') },
+    ], [t])
+    const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
+        try { return new Set(JSON.parse(localStorage.getItem('payrollHiddenCols') || '[]')) } catch { return new Set() }
+    })
+    const [colsMenuOpen, setColsMenuOpen] = useState(false)
+    useEffect(() => { localStorage.setItem('payrollHiddenCols', JSON.stringify([...hiddenCols])) }, [hiddenCols])
+    const toggleCol = (k: string) => setHiddenCols(prev => {
+        const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n
+    })
+    const isVisible = (k: string) => !hiddenCols.has(k)
     const [detail, setDetail] = useState<PeriodDetail | null>(null)
     const [detailLoading, setDetailLoading] = useState<string | null>(null) // holds period id being loaded
     const [newPeriodOpen, setNewPeriodOpen] = useState(false)
-    const [newYear, setNewYear] = useState(new Date().getFullYear())
-    const [newMonth, setNewMonth] = useState(new Date().getMonth() + 1)
+    const [newStartDate, setNewStartDate] = useState(() => {
+        const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10)
+    })
+    const [newEndDate, setNewEndDate] = useState(() => {
+        const d = new Date(); d.setMonth(d.getMonth() + 1); d.setDate(0); return d.toISOString().slice(0, 10)
+    })
     const [calcTaxRate, setCalcTaxRate] = useState('14')
+    const [calcMode, setCalcMode] = useState<'Full' | 'OvertimeOnly' | 'NoOvertime'>('Full')
     const [calcOpen, setCalcOpen] = useState(false)
     const [calcPeriodId, setCalcPeriodId] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
@@ -131,10 +183,10 @@ export function PayrollCalculationPage() {
                 token, method: 'POST',
                 body: JSON.stringify({ to: emailTo.trim() }),
             })
-            alert(`Report sent to ${emailTo.trim()}`)
+            alert(t('payroll.alertReportSentTo', { email: emailTo.trim() }))
             setEmailModal(null)
             setEmailTo('')
-        } catch (e: any) { alert(e?.message ?? 'Failed to send') }
+        } catch (e: any) { alert(e?.message ?? t('payroll.alertFailedToSend')) }
         setEmailSending(false)
     }
 
@@ -144,13 +196,23 @@ export function PayrollCalculationPage() {
     const [salaryForm, setSalaryForm] = useState<{
         open: boolean; emp: EmpRow | null
         salaryType: SalaryType; baseAmount: string; currency: string
-        overtimeMultiplier: string; overtimeEnabled: boolean; payByWorkedHours: boolean
-        overtimeTiers: OvertimeTier[]; latenessDeductionEnabled: boolean; latenessTiers: LatenessTier[]
+        overtimeMultiplier: string; overtimeEnabled: boolean
+        payByWorkedHours: boolean
+        overtimeTiers: OvertimeTier[]
+        latenessDeductionEnabled: boolean
+        latenessDeductionMode: 'Coefficient' | 'Fixed'
+        latenessTiers: LatenessTier[]
+        earlyLeaveDeductionEnabled: boolean
+        earlyLeaveDeductionMode: 'Coefficient' | 'Fixed'
+        earlyLeaveTiers: LatenessTier[]
         effectiveFrom: string; componentIds: Set<string>
     }>({
         open: false, emp: null, salaryType: 'Monthly', baseAmount: '',
-        currency: 'AZN', overtimeMultiplier: '1.5', overtimeEnabled: true, payByWorkedHours: false,
-        overtimeTiers: [], latenessDeductionEnabled: false, latenessTiers: [],
+        currency: 'AZN', overtimeMultiplier: '1.5', overtimeEnabled: true,
+        payByWorkedHours: false,
+        overtimeTiers: [],
+        latenessDeductionEnabled: false, latenessDeductionMode: 'Coefficient', latenessTiers: [],
+        earlyLeaveDeductionEnabled: false, earlyLeaveDeductionMode: 'Coefficient', earlyLeaveTiers: [],
         effectiveFrom: new Date().toISOString().slice(0, 10), componentIds: new Set()
     })
 
@@ -210,11 +272,11 @@ export function PayrollCalculationPage() {
         try {
             await apiRequest('/api/payroll/periods', {
                 token: token!, method: 'POST',
-                body: JSON.stringify({ year: newYear, month: newMonth })
+                body: JSON.stringify({ startDate: newStartDate, endDate: newEndDate })
             })
             setNewPeriodOpen(false)
             loadPeriods()
-        } catch (e: any) { setError(e?.message ?? 'Failed to create period') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorCreatePeriod')) }
         setSaving(false)
     }
 
@@ -224,31 +286,48 @@ export function PayrollCalculationPage() {
         try {
             await apiRequest(`/api/payroll/periods/${calcPeriodId}/calculate`, {
                 token: token!, method: 'POST',
-                body: JSON.stringify({ taxRate: parseFloat(calcTaxRate) || 14 })
+                body: JSON.stringify({ taxRate: (() => { const r = parseFloat(calcTaxRate); return Number.isFinite(r) ? r : 14 })(), mode: calcMode })
             })
             setCalcOpen(false)
             loadPeriods()
             if (detail?.period.id === calcPeriodId) await refreshDetail(calcPeriodId)
-        } catch (e: any) { setError(e?.message ?? 'Calculation failed') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorCalculation')) }
         setSaving(false)
     }
 
+    async function confirmHours(id: string) {
+        try {
+            await apiRequest(`/api/payroll/periods/${id}/confirm-hours`, { token: token!, method: 'POST' })
+            loadPeriods()
+            if (detail?.period.id === id) await refreshDetail(id)
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorConfirmHours')) }
+    }
+
     async function approvePeriod(id: string) {
-        if (!confirm('Approve all entries in this period?')) return
+        if (!confirm(t('payroll.confirmApproveAllEntries'))) return
         try {
             await apiRequest(`/api/payroll/periods/${id}/approve`, { token: token!, method: 'POST' })
             loadPeriods()
             if (detail?.period.id === id) await refreshDetail(id)
-        } catch (e: any) { setError(e?.message ?? 'Approval failed') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorApproval')) }
     }
 
     async function markAsPaid(id: string) {
-        if (!confirm('Mark this period as paid? This cannot be undone.')) return
+        if (!confirm(t('payroll.confirmMarkAsPaid'))) return
         try {
             await apiRequest(`/api/payroll/periods/${id}/mark-paid`, { token: token!, method: 'POST' })
             loadPeriods()
             if (detail?.period.id === id) await refreshDetail(id)
-        } catch (e: any) { setError(e?.message ?? 'Failed') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorMarkPaid')) }
+    }
+
+    async function deletePeriod(id: string) {
+        if (!confirm(t('payroll.confirmDeletePeriod'))) return
+        try {
+            await apiRequest(`/api/payroll/periods/${id}`, { token: token!, method: 'DELETE' })
+            if (detail?.period.id === id) setDetail(null)
+            loadPeriods()
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorDeletePeriod')) }
     }
 
     async function approveEntry(periodId: string, entryId: string) {
@@ -278,7 +357,11 @@ export function PayrollCalculationPage() {
         setSaving(true)
         try {
             const body = JSON.stringify({
-                name: compForm.name, componentType: compForm.componentType, isFixed: compForm.isFixed,
+                name: compForm.name,
+                componentType: typeof compForm.componentType === 'number'
+                    ? (['Allowance', 'Bonus', 'Deduction'][compForm.componentType as number] ?? 'Allowance')
+                    : compForm.componentType,
+                isFixed: compForm.isFixed,
                 amount: compForm.amount, percentage: compForm.percentage, isDefault: compForm.isDefault,
                 isActive: compForm.isActive, description: compForm.description
             })
@@ -286,11 +369,11 @@ export function PayrollCalculationPage() {
             await apiRequest(url, { token: token!, method: compForm.editId ? 'PUT' : 'POST', body })
             setCompForm(f => ({ ...f, open: false }))
             loadComponents()
-        } catch (e: any) { setError(e?.message ?? 'Save failed') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorSave')) }
         setSaving(false)
     }
     async function deleteComp(id: string) {
-        if (!confirm('Delete this component?')) return
+        if (!confirm(t('payroll.confirmDeleteComponent'))) return
         try {
             await apiRequest(`/api/payroll/components/${id}`, { token: token!, method: 'DELETE' })
             loadComponents()
@@ -300,7 +383,15 @@ export function PayrollCalculationPage() {
     // ── Salary Setup ──────────────────────────────────────────────────────────
     function parseTiers<T>(json: string | null | undefined): T[] {
         if (!json) return []
-        try { return JSON.parse(json) } catch { return [] }
+        try {
+            const raw = JSON.parse(json) as Record<string, unknown>[]
+            // Бэкенд раньше писал PascalCase. Нормализуем оба варианта в camelCase.
+            return raw.map(o => {
+                const out: Record<string, unknown> = {}
+                for (const k of Object.keys(o)) out[k.charAt(0).toLowerCase() + k.slice(1)] = o[k]
+                return out as T
+            })
+        } catch { return [] }
     }
 
     function openSalaryEdit(emp: EmpRow) {
@@ -315,7 +406,11 @@ export function PayrollCalculationPage() {
             payByWorkedHours: cfg?.payByWorkedHours ?? false,
             overtimeTiers: parseTiers<OvertimeTier>(cfg?.overtimeTiersJson),
             latenessDeductionEnabled: cfg?.latenessDeductionEnabled ?? false,
+            latenessDeductionMode: cfg?.latenessDeductionMode ?? 'Coefficient',
             latenessTiers: parseTiers<LatenessTier>(cfg?.latenessTiersJson),
+            earlyLeaveDeductionEnabled: cfg?.earlyLeaveDeductionEnabled ?? false,
+            earlyLeaveDeductionMode: cfg?.earlyLeaveDeductionMode ?? 'Coefficient',
+            earlyLeaveTiers: parseTiers<LatenessTier>(cfg?.earlyLeaveTiersJson),
             effectiveFrom: cfg?.effectiveFrom ?? new Date().toISOString().slice(0, 10),
             componentIds: new Set(cfg?.components.map(c => c.componentId) ?? [])
         })
@@ -335,14 +430,18 @@ export function PayrollCalculationPage() {
                     payByWorkedHours: salaryForm.payByWorkedHours,
                     overtimeTiers: salaryForm.overtimeTiers.length > 0 ? salaryForm.overtimeTiers : null,
                     latenessDeductionEnabled: salaryForm.latenessDeductionEnabled,
+                    latenessDeductionMode: salaryForm.latenessDeductionMode,
                     latenessTiers: salaryForm.latenessTiers.length > 0 ? salaryForm.latenessTiers : null,
+                    earlyLeaveDeductionEnabled: salaryForm.earlyLeaveDeductionEnabled,
+                    earlyLeaveDeductionMode: salaryForm.earlyLeaveDeductionMode,
+                    earlyLeaveTiers: salaryForm.earlyLeaveTiers.length > 0 ? salaryForm.earlyLeaveTiers : null,
                     effectiveFrom: salaryForm.effectiveFrom,
                     componentIds: [...salaryForm.componentIds]
                 })
             })
             setSalaryForm(f => ({ ...f, open: false }))
             loadEmployees()
-        } catch (e: any) { setError(e?.message ?? 'Save failed') }
+        } catch (e: any) { setError(e?.message ?? t('payroll.errorSave')) }
         setSaving(false)
     }
 
@@ -363,16 +462,16 @@ export function PayrollCalculationPage() {
                     {/* Header */}
                     <PageHeader
                         className="hidden md:flex"
-                        title="Payroll"
-                        description="Salary calculation, pay components and period management."
+                        title={t('payroll.pageTitle')}
+                        description={t('payroll.pageDescription')}
                         actions={
                             tab === 'periods' ? (
                                 <Button icon="add" size="md" onClick={() => setNewPeriodOpen(true)}>
-                                    New Period
+                                    {t('payroll.newPeriod')}
                                 </Button>
                             ) : tab === 'components' ? (
                                 <Button icon="add" size="md" onClick={openCompCreate}>
-                                    Add Component
+                                    {t('payroll.addComponent')}
                                 </Button>
                             ) : undefined
                         }
@@ -392,19 +491,19 @@ export function PayrollCalculationPage() {
                     {tab === 'periods' && (
                         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 mb-2">
                             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Periods</p>
+                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('payroll.totalPeriods')}</p>
                                 <p className="text-2xl font-black text-primary leading-none">{periods.length}</p>
                             </div>
                             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Gross</p>
+                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('payroll.totalGross')}</p>
                                 <p className="text-2xl font-black text-primary leading-none">{fmt(totalGross)}</p>
                             </div>
                             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Total Net</p>
+                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('payroll.totalNet')}</p>
                                 <p className="text-2xl font-black text-primary leading-none">{fmt(totalNet)}</p>
                             </div>
                             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Approved</p>
+                                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('payroll.approved')}</p>
                                 <p className="text-2xl font-black text-primary leading-none">
                                     {periods.filter(p => p.status === 'Approved' || p.status === 'Paid').length}
                                 </p>
@@ -414,81 +513,138 @@ export function PayrollCalculationPage() {
 
                     {/* Tab bar */}
                     <div className="flex overflow-x-auto no-scrollbar gap-8 mt-6">
-                        {PAYROLL_TABS.map(t => (
+                        {PAYROLL_TABS.map(tabItem => (
                             <button
-                                key={t.value}
+                                key={tabItem.value}
                                 type="button"
-                                onClick={() => setTab(t.value)}
-                                className={`pb-2.5 text-xs font-black whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${tab === t.value
+                                onClick={() => setTab(tabItem.value)}
+                                className={`pb-2.5 text-xs font-black whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${tab === tabItem.value
                                     ? 'border-primary text-primary'
                                     : 'border-transparent text-text-light hover:text-text-muted'
                                     }`}
                             >
-                                {t.label}
+                                {t(tabItem.labelKey)}
                             </button>
                         ))}
                     </div>
 
                     {/* ── Periods Tab ───────────────────────────────────────────────────── */}
-                    {tab === 'periods' && (
+                    {tab === 'periods' && (() => {
+                        const filtered = periods.filter(p => {
+                            if (periodTab === 'calculated' && p.status !== 'Calculated') return false
+                            if (periodTab === 'paid' && p.status !== 'Paid') return false
+                            if (filterYear && String(p.year) !== filterYear) return false
+                            if (filterMonth && String(p.month) !== filterMonth) return false
+                            return true
+                        })
+                        const years = [...new Set(periods.map(p => p.year))].sort((a, b) => b - a)
+                        return (
                         <div className="space-y-3">
+                            {/* Tabs + filters */}
+                            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between bg-surface rounded-2xl shadow-sm p-3">
+                                <div className="flex gap-1 bg-background-light rounded-xl p-1">
+                                    {(['all', 'calculated', 'paid'] as const).map(pt => (
+                                        <button key={pt} type="button" onClick={() => setPeriodTab(pt)}
+                                            className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition ${periodTab === pt ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}>
+                                            {pt === 'all' ? t('common.all') : pt === 'calculated' ? t('payroll.statusCalculated') : t('payroll.statusPaid')} <span className="opacity-60">({pt === 'all' ? periods.length : periods.filter(p => p.status === (pt === 'calculated' ? 'Calculated' : 'Paid')).length})</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                    <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
+                                        className="rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none">
+                                        <option value="">{t('payroll.allMonths')}</option>
+                                        {MONTH_KEYS.map((mk, i) => <option key={i} value={i + 1}>{t(`payroll.${mk}`)}</option>)}
+                                    </select>
+                                    <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
+                                        className="rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none">
+                                        <option value="">{t('payroll.allYears')}</option>
+                                        {years.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    {(filterMonth || filterYear) && (
+                                        <button type="button" onClick={() => { setFilterMonth(''); setFilterYear('') }}
+                                            className="text-[10px] font-black text-text-light hover:text-text-dark uppercase tracking-wider">
+                                            {t('common.clear')}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
                             {periodLoading && (
                                 <div className="flex items-center justify-center py-16">
                                     <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
                                 </div>
                             )}
-                            {periods.length === 0 && !periodLoading && (
+                            {filtered.length === 0 && !periodLoading && (
                                 <div className="p-12 text-center bg-surface rounded-2xl shadow-md border-none">
                                     <span className="material-symbols-outlined text-4xl text-text-muted mb-3 block">payments</span>
-                                    <p className="text-sm font-bold text-text-muted">No payroll periods yet.</p>
-                                    <p className="text-xs text-text-light mt-1">Create a new period to start calculating salaries.</p>
+                                    <p className="text-sm font-bold text-text-muted">{periods.length === 0 ? t('payroll.noPayrollPeriodsYet') : t('payroll.noPeriodsMatchFilter')}</p>
+                                    <p className="text-xs text-text-light mt-1">{periods.length === 0 ? t('payroll.createNewPeriodHint') : t('payroll.tryClearingFilters')}</p>
                                 </div>
                             )}
-                            {periods.map(p => (
-                                <div key={p.id} className="bg-surface rounded-2xl shadow-md overflow-hidden border-none">
+                            {filtered.map(p => (
+                                <div key={p.id} className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                                     <div className="p-5 flex flex-col lg:flex-row lg:items-center gap-4">
                                         {/* Period badge */}
                                         <div className="flex items-center gap-4 min-w-[200px]">
                                             <div className="w-12 h-12 rounded-2xl bg-primary/10 flex flex-col items-center justify-center shrink-0">
-                                                <span className="text-[10px] font-black text-primary">{MONTHS[p.month - 1].slice(0, 3).toUpperCase()}</span>
+                                                <span className="text-[10px] font-black text-primary">{t(`payroll.${MONTH_SHORT_KEYS[p.month - 1]}`).toUpperCase()}</span>
                                                 <span className="text-sm font-black text-primary">{p.year}</span>
                                             </div>
                                             <div>
-                                                <p className="font-black text-text-dark text-sm">{MONTHS[p.month - 1]} {p.year}</p>
-                                                <Badge variant={periodStatusVariant(p.status)} className="mt-1">{p.status}</Badge>
+                                                <p className="font-black text-text-dark text-sm">{p.startDate} — {p.endDate}</p>
+                                                <Badge variant={periodStatusVariant(p.status)} className="mt-1">{t(`payroll.status${p.status}`)}</Badge>
                                             </div>
                                         </div>
 
                                         {/* Stats */}
                                         <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-4">
                                             <div>
-                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">Employees</p>
+                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('payroll.employees')}</p>
                                                 <p className="text-sm font-bold text-text-dark">{p.employeeCount}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">Gross</p>
+                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('payroll.gross')}</p>
                                                 <p className="text-sm font-bold text-text-dark">{fmt(p.totalGross)}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">Tax</p>
+                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('payroll.tax')}</p>
                                                 <p className="text-sm font-bold text-error-text">{fmt(p.totalTax)}</p>
                                             </div>
                                             <div>
-                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">Net</p>
+                                                <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">{t('payroll.net')}</p>
                                                 <p className="text-sm font-black text-success-text">{fmt(p.totalNet)}</p>
                                             </div>
                                         </div>
 
                                         {/* Actions */}
                                         <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                                            {p.status === 'Draft' && (
+                                            {p.status === 'Draft' && !p.hoursConfirmedAt && (
                                                 <Button
                                                     size="md"
-                                                    onClick={() => { setCalcPeriodId(p.id); setCalcOpen(true) }}
-                                                    className="bg-warning-bg text-warning-text hover:bg-warning-text hover:text-white shadow-none"
+                                                    onClick={() => confirmHours(p.id)}
+                                                    className="bg-info-bg text-info-text hover:bg-info-text hover:text-white shadow-none"
                                                 >
-                                                    Calculate
+                                                    {t('payroll.confirmHours')}
                                                 </Button>
+                                            )}
+                                            {p.status === 'Draft' && p.hoursConfirmedAt && (
+                                                <>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="md"
+                                                        onClick={() => confirmHours(p.id)}
+                                                    >
+                                                        {t('payroll.reSnapshot')}
+                                                    </Button>
+                                                    <Button
+                                                        size="md"
+                                                        onClick={() => { setCalcPeriodId(p.id); setCalcOpen(true) }}
+                                                        className="bg-warning-bg text-warning-text hover:bg-warning-text hover:text-white shadow-none"
+                                                    >
+                                                        {t('payroll.calculatePay')}
+                                                    </Button>
+                                                </>
                                             )}
                                             {p.status === 'Calculated' && (
                                                 <>
@@ -497,14 +653,14 @@ export function PayrollCalculationPage() {
                                                         size="md"
                                                         onClick={() => { setCalcPeriodId(p.id); setCalcOpen(true) }}
                                                     >
-                                                        Recalc
+                                                        {t('payroll.recalc')}
                                                     </Button>
                                                     <Button
                                                         size="md"
                                                         onClick={() => approvePeriod(p.id)}
                                                         className="bg-success-bg text-success-text hover:bg-success-text hover:text-white shadow-none"
                                                     >
-                                                        Approve
+                                                        {t('payroll.approve')}
                                                     </Button>
                                                 </>
                                             )}
@@ -514,16 +670,16 @@ export function PayrollCalculationPage() {
                                                     onClick={() => markAsPaid(p.id)}
                                                     className="bg-primary/10 text-primary hover:bg-primary hover:text-white shadow-none"
                                                 >
-                                                    Mark Paid
+                                                    {t('payroll.markPaid')}
                                                 </Button>
                                             )}
                                             <Button
                                                 variant="outline"
                                                 size="md"
                                                 icon="send"
-                                                onClick={() => setEmailModal({ periodId: p.id, periodLabel: `${MONTHS[p.month - 1]} ${p.year}` })}
+                                                onClick={() => setEmailModal({ periodId: p.id, periodLabel: `${t(`payroll.${MONTH_KEYS[p.month - 1]}`)} ${p.year}` })}
                                             >
-                                                Send
+                                                {t('common.send')}
                                             </Button>
                                             <Button
                                                 variant="outline"
@@ -549,8 +705,19 @@ export function PayrollCalculationPage() {
                                                 icon={detail?.period.id === p.id ? 'expand_less' : 'expand_more'}
                                                 onClick={() => toggleDetail(p)}
                                             >
-                                                {detailLoading === p.id ? '...' : detail?.period.id === p.id ? 'Close' : 'View'}
+                                                {detailLoading === p.id ? '...' : detail?.period.id === p.id ? t('common.close') : t('common.view')}
                                             </Button>
+                                            {p.status !== 'Paid' && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="md"
+                                                    icon="delete"
+                                                    onClick={() => deletePeriod(p.id)}
+                                                    className="text-error-text hover:bg-error-bg"
+                                                >
+                                                    {t('common.delete')}
+                                                </Button>
+                                            )}
                                         </div>
                                     </div>
 
@@ -561,10 +728,10 @@ export function PayrollCalculationPage() {
                                             {detail.entries.length > 0 && (
                                                 <div className="px-5 py-3 bg-slate-50/70 border-b border-divider-light grid grid-cols-2 sm:grid-cols-4 gap-4">
                                                     {[
-                                                        { label: 'Total Gross', value: fmt(detail.entries.reduce((s, e) => s + e.grossPay, 0)), color: 'text-text-dark' },
-                                                        { label: 'Allowances', value: fmt(detail.entries.reduce((s, e) => s + e.allowancesTotal + e.bonusesTotal, 0)), color: 'text-success-text' },
-                                                        { label: 'Tax + Deductions', value: fmt(detail.entries.reduce((s, e) => s + e.taxAmount + e.deductionsTotal, 0)), color: 'text-error-text' },
-                                                        { label: 'Total Net', value: fmt(detail.entries.reduce((s, e) => s + e.netPay, 0)), color: 'text-success-text font-black' },
+                                                        { label: t('payroll.totalGross'), value: fmt(detail.entries.reduce((s, e) => s + e.grossPay, 0)), color: 'text-text-dark' },
+                                                        { label: t('payroll.allowances'), value: fmt(detail.entries.reduce((s, e) => s + e.allowancesTotal + e.bonusesTotal, 0)), color: 'text-success-text' },
+                                                        { label: t('payroll.taxPlusDeductions'), value: fmt(detail.entries.reduce((s, e) => s + e.taxAmount + e.deductionsTotal, 0)), color: 'text-error-text' },
+                                                        { label: t('payroll.totalNet'), value: fmt(detail.entries.reduce((s, e) => s + e.netPay, 0)), color: 'text-success-text font-black' },
                                                     ].map(s => (
                                                         <div key={s.label}>
                                                             <p className="text-[8px] font-black text-text-muted uppercase tracking-widest">{s.label}</p>
@@ -573,35 +740,58 @@ export function PayrollCalculationPage() {
                                                     ))}
                                                 </div>
                                             )}
+                                            <div className="px-5 py-2.5 border-b border-border flex items-center justify-end">
+                                                <button type="button" onClick={() => setColsMenuOpen(o => !o)}
+                                                    className="text-[10px] font-black text-text-light hover:text-text-dark uppercase tracking-widest flex items-center gap-1.5 transition">
+                                                    <span className="material-symbols-outlined text-base">view_column</span>
+                                                    {t('payroll.columns')} ({ENTRY_COLS.filter(c => isVisible(c.key)).length}/{ENTRY_COLS.length})
+                                                    <span className="material-symbols-outlined text-sm">{colsMenuOpen ? 'expand_less' : 'expand_more'}</span>
+                                                </button>
+                                            </div>
+                                            {colsMenuOpen && (
+                                                <div className="px-5 py-3 border-b border-border bg-background-light flex flex-wrap gap-x-5 gap-y-2">
+                                                    {ENTRY_COLS.map(c => (
+                                                        <label key={c.key} className={`flex items-center gap-2 cursor-pointer ${c.required ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                                            <input type="checkbox" checked={isVisible(c.key)} disabled={c.required}
+                                                                onChange={() => !c.required && toggleCol(c.key)}
+                                                                className="rounded w-3.5 h-3.5 accent-primary" />
+                                                            <span className="text-xs font-bold text-text-dark">{c.label}</span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            )}
                                             <div className="overflow-x-auto">
-                                                <table className="w-full text-xs">
+                                                <table className="w-full text-sm">
                                                     <thead>
-                                                        <tr className="bg-slate-50/70">
-                                                            {['Employee', 'Dept', 'Days', 'Hours', 'OT h', 'Base', 'Allow+Bonus', 'Gross', 'Deduct', 'Tax', 'Net', 'Status', ''].map(h => (
-                                                                <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-text-muted uppercase tracking-widest whitespace-nowrap">{h}</th>
+                                                        <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
+                                                            {ENTRY_COLS.filter(c => isVisible(c.key)).map(c => (
+                                                                <th key={c.key} className="px-4 py-3 text-left whitespace-nowrap">{c.label}</th>
                                                             ))}
+                                                            <th className="px-4 py-3"></th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
                                                         {detail.entries.map(e => (
                                                             <tr key={e.id}
                                                                 onClick={() => setPayslip(e)}
-                                                                className="border-t border-divider-light hover:bg-primary/5 cursor-pointer transition-colors group">
-                                                                <td className="px-3 py-2.5 font-bold text-text-dark whitespace-nowrap group-hover:text-primary transition-colors">{e.employeeName}</td>
-                                                                <td className="px-3 py-2.5 text-text-muted whitespace-nowrap">{e.department ?? '—'}</td>
-                                                                <td className="px-3 py-2.5 text-text-dark">{e.workedDays}<span className="text-text-muted text-[9px]">/{e.workedDays + e.absentDays}</span></td>
-                                                                <td className="px-3 py-2.5 text-text-dark">{fmtH(e.workedHours)}h</td>
-                                                                <td className="px-3 py-2.5 text-warning-text font-bold">{fmtH(e.overtimeHours)}h</td>
-                                                                <td className="px-3 py-2.5 text-text-dark">{fmt(e.basePay)}</td>
-                                                                <td className="px-3 py-2.5 text-success-text font-bold">{fmt(e.allowancesTotal + e.bonusesTotal)}</td>
-                                                                <td className="px-3 py-2.5 font-bold text-text-dark">{fmt(e.grossPay)}</td>
-                                                                <td className="px-3 py-2.5 text-error-text">{fmt(e.deductionsTotal)}</td>
-                                                                <td className="px-3 py-2.5 text-error-text">{fmt(e.taxAmount)}<span className="text-[9px] text-text-muted ml-0.5">{e.taxRate}%</span></td>
-                                                                <td className="px-3 py-2.5 font-black text-success-text whitespace-nowrap">{fmt(e.netPay)}</td>
-                                                                <td className="px-3 py-2.5">
-                                                                    <Badge variant={entryStatusVariant(e.status)}>{e.status}</Badge>
-                                                                </td>
-                                                                <td className="px-3 py-2.5" onClick={ev => ev.stopPropagation()}>
+                                                                className="border-b border-border hover:bg-background-light cursor-pointer transition-colors group">
+                                                                {isVisible('employee') && <td className="px-4 py-3 font-bold text-text-dark whitespace-nowrap group-hover:text-primary transition-colors">{e.employeeName}</td>}
+                                                                {isVisible('dept') && <td className="px-4 py-3 text-text-light whitespace-nowrap">{e.department ?? '—'}</td>}
+                                                                {isVisible('days') && <td className="px-4 py-3 text-text-dark">{e.workedDays}<span className="text-text-light text-xs">/{e.workedDays + e.absentDays}</span></td>}
+                                                                {isVisible('hours') && <td className="px-4 py-3 text-text-dark">{fmtH(e.workedHours)}h</td>}
+                                                                {isVisible('ot') && <td className="px-4 py-3 text-warning-text font-bold">{fmtH(e.overtimeHours)}h</td>}
+                                                                {isVisible('late') && <td className="px-4 py-3 text-error-text">{fmtH((e.latenessMinutes ?? 0) / 60)}h</td>}
+                                                                {isVisible('early') && <td className="px-4 py-3 text-error-text">{fmtH((e.earlyLeaveMinutes ?? 0) / 60)}h</td>}
+                                                                {isVisible('allowBonus') && <td className="px-4 py-3 text-success-text font-bold">{fmt(e.allowancesTotal + e.bonusesTotal)}</td>}
+                                                                {isVisible('gross') && <td className="px-4 py-3 font-bold text-text-dark">{fmt(e.grossPay)}</td>}
+                                                                {isVisible('lateFine') && <td className="px-4 py-3 text-error-text">{fmt(e.latenessDeduction ?? 0)}</td>}
+                                                                {isVisible('earlyFine') && <td className="px-4 py-3 text-error-text">{fmt(e.earlyLeaveDeduction ?? 0)}</td>}
+                                                                {isVisible('tax') && <td className="px-4 py-3 text-error-text">{fmt(e.taxAmount)}<span className="text-xs text-text-light ml-1">{e.taxRate}%</span></td>}
+                                                                {isVisible('net') && <td className="px-4 py-3 font-black text-success-text whitespace-nowrap">{fmt(e.netPay)}</td>}
+                                                                {isVisible('status') && <td className="px-4 py-3">
+                                                                    <Badge variant={entryStatusVariant(e.status)}>{t(`payroll.entryStatus${e.status}`)}</Badge>
+                                                                </td>}
+                                                                <td className="px-4 py-3" onClick={ev => ev.stopPropagation()}>
                                                                     {e.status === 'Pending' && (
                                                                         <div className="flex gap-1.5">
                                                                             <Button
@@ -626,7 +816,7 @@ export function PayrollCalculationPage() {
                                                     </tbody>
                                                 </table>
                                                 {detail.entries.length === 0 && (
-                                                    <p className="p-6 text-text-muted text-sm text-center italic">No entries. Run calculation first.</p>
+                                                    <p className="p-6 text-text-muted text-sm text-center italic">{t('payroll.noEntriesRunFirst')}</p>
                                                 )}
                                             </div>
                                         </div>
@@ -634,14 +824,15 @@ export function PayrollCalculationPage() {
                                 </div>
                             ))}
                         </div>
-                    )}
+                        )
+                    })()}
 
                     {/* ── Setup Tab ─────────────────────────────────────────────────────── */}
                     {tab === 'setup' && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2 text-[11px] text-text-muted font-bold">
                                 <span className="material-symbols-outlined text-base text-primary">info</span>
-                                {configuredCount} of {employees.length} employees have salary configured.
+                                {t('payroll.configuredEmployeesNote', { configured: configuredCount, total: employees.length })}
                             </div>
                             {empLoading && (
                                 <div className="flex items-center justify-center py-16">
@@ -652,8 +843,8 @@ export function PayrollCalculationPage() {
                                 <table className="w-full text-xs">
                                     <thead>
                                         <tr className="bg-slate-50/70">
-                                            {['Employee', 'Department', 'Salary Type', 'Base Amount', 'Currency', 'OT ×', 'Components', 'Effective From', ''].map(h => (
-                                                <th key={h} className="px-4 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">{h}</th>
+                                            {[t('payroll.empColEmployee'), t('payroll.empColDepartment'), t('payroll.empColSalaryType'), t('payroll.empColBaseAmount'), t('payroll.empColCurrency'), t('payroll.empColOt'), t('payroll.empColComponents'), t('payroll.empColEffectiveFrom'), ''].map((h, hi) => (
+                                                <th key={hi} className="px-4 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
@@ -666,8 +857,8 @@ export function PayrollCalculationPage() {
                                                     <td className="px-4 py-3 text-text-muted">{emp.department ?? '—'}</td>
                                                     <td className="px-4 py-3">
                                                         {cfg
-                                                            ? <Badge variant="primary">{cfg.salaryType}</Badge>
-                                                            : <Badge variant="error">Not set</Badge>}
+                                                            ? <Badge variant="primary">{t(`payroll.salaryType${cfg.salaryType}`)}</Badge>
+                                                            : <Badge variant="error">{t('payroll.notSet')}</Badge>}
                                                     </td>
                                                     <td className="px-4 py-3 font-bold text-text-dark">{cfg ? fmt(cfg.baseAmount) : '—'}</td>
                                                     <td className="px-4 py-3 text-text-muted">{cfg?.currency ?? '—'}</td>
@@ -684,7 +875,7 @@ export function PayrollCalculationPage() {
                                                                     <span className="text-[8px] text-text-muted font-bold">+{cfg.components.length - 3}</span>
                                                                 )}
                                                                 {cfg.components.length === 0 && (
-                                                                    <span className="text-[9px] text-text-muted">none</span>
+                                                                    <span className="text-[9px] text-text-muted">{t('common.none').toLowerCase()}</span>
                                                                 )}
                                                             </div>
                                                         ) : '—'}
@@ -696,7 +887,7 @@ export function PayrollCalculationPage() {
                                                             size="sm"
                                                             onClick={() => openSalaryEdit(emp)}
                                                         >
-                                                            {cfg ? 'Edit' : 'Set Up'}
+                                                            {cfg ? t('common.edit') : t('payroll.setUp')}
                                                         </Button>
                                                     </td>
                                                 </tr>
@@ -705,7 +896,7 @@ export function PayrollCalculationPage() {
                                     </tbody>
                                 </table>
                                 {employees.length === 0 && !empLoading && (
-                                    <p className="p-8 text-center text-text-muted text-sm italic">No active employees found.</p>
+                                    <p className="p-8 text-center text-text-muted text-sm italic">{t('payroll.noActiveEmployees')}</p>
                                 )}
                             </div>
                         </div>
@@ -723,8 +914,8 @@ export function PayrollCalculationPage() {
                                 <table className="w-full text-xs">
                                     <thead>
                                         <tr className="bg-slate-50/70">
-                                            {['Name', 'Type', 'Calculation', 'Value', 'Applies To', 'Active', 'Description', ''].map(h => (
-                                                <th key={h} className="px-4 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">{h}</th>
+                                            {[t('common.name'), t('common.type'), t('payroll.compColCalculation'), t('payroll.compColValue'), t('payroll.compColAppliesTo'), t('common.active'), t('payroll.compColDescription'), ''].map((h, hi) => (
+                                                <th key={hi} className="px-4 py-3 text-left text-[9px] font-black text-text-muted uppercase tracking-widest">{h}</th>
                                             ))}
                                         </tr>
                                     </thead>
@@ -733,25 +924,25 @@ export function PayrollCalculationPage() {
                                             <tr key={c.id} className="border-t border-divider-light hover:bg-primary/5 transition-colors">
                                                 <td className="px-4 py-3 font-bold text-text-dark">{c.name}</td>
                                                 <td className="px-4 py-3">
-                                                    <Badge variant={compTypeVariant(c.componentType)}>{c.componentType}</Badge>
+                                                    <Badge variant={compTypeVariant(c.componentType)}>{t(`payroll.componentType${c.componentType}`)}</Badge>
                                                 </td>
-                                                <td className="px-4 py-3 text-text-muted">{c.isFixed ? 'Fixed' : '% of base'}</td>
+                                                <td className="px-4 py-3 text-text-muted">{c.isFixed ? t('payroll.fixed') : t('payroll.percentOfBase')}</td>
                                                 <td className="px-4 py-3 font-bold text-text-dark">{c.isFixed ? fmt(c.amount) : `${c.percentage}%`}</td>
                                                 <td className="px-4 py-3">
                                                     {c.isDefault
-                                                        ? <span className="text-[9px] font-black text-success-text">All employees</span>
-                                                        : <span className="text-[9px] text-text-muted">Individual</span>}
+                                                        ? <span className="text-[9px] font-black text-success-text">{t('payroll.allEmployees')}</span>
+                                                        : <span className="text-[9px] text-text-muted">{t('payroll.individual')}</span>}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <Badge variant={c.isActive ? 'success' : 'neutral'}>
-                                                        {c.isActive ? 'Active' : 'Inactive'}
+                                                        {c.isActive ? t('common.active') : t('common.inactive')}
                                                     </Badge>
                                                 </td>
                                                 <td className="px-4 py-3 text-text-muted max-w-[180px] truncate">{c.description || '—'}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="flex gap-2">
-                                                        <Button variant="ghost" size="sm" onClick={() => openCompEdit(c)}>Edit</Button>
-                                                        <Button variant="ghost" size="sm" className="text-error-text hover:bg-error-bg" onClick={() => deleteComp(c.id)}>Delete</Button>
+                                                        <Button variant="ghost" size="sm" onClick={() => openCompEdit(c)}>{t('common.edit')}</Button>
+                                                        <Button variant="ghost" size="sm" className="text-error-text hover:bg-error-bg" onClick={() => deleteComp(c.id)}>{t('common.delete')}</Button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -759,7 +950,7 @@ export function PayrollCalculationPage() {
                                     </tbody>
                                 </table>
                                 {components.length === 0 && !compLoading && (
-                                    <p className="p-8 text-center text-text-muted text-sm italic">No components yet. Add allowances, bonuses and deductions.</p>
+                                    <p className="p-8 text-center text-text-muted text-sm italic">{t('payroll.noComponentsYet')}</p>
                                 )}
                             </div>
                         </div>
@@ -771,36 +962,33 @@ export function PayrollCalculationPage() {
             <Modal
                 isOpen={newPeriodOpen}
                 onClose={() => setNewPeriodOpen(false)}
-                title="New Payroll Period"
+                title={t('payroll.newPayrollPeriod')}
             >
                 <div className="space-y-5">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Year</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.from')}</label>
                             <input
-                                type="number"
-                                value={newYear}
-                                onChange={e => setNewYear(+e.target.value)}
-                                min={2020}
-                                max={2100}
+                                type="date"
+                                value={newStartDate}
+                                onChange={e => setNewStartDate(e.target.value)}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Month</label>
-                            <select
-                                value={newMonth}
-                                onChange={e => setNewMonth(+e.target.value)}
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.to')}</label>
+                            <input
+                                type="date"
+                                value={newEndDate}
+                                onChange={e => setNewEndDate(e.target.value)}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                            >
-                                {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                            </select>
+                            />
                         </div>
                     </div>
                     <div className="flex gap-3 pt-2">
-                        <Button variant="outline" fullWidth onClick={() => setNewPeriodOpen(false)}>Cancel</Button>
+                        <Button variant="outline" fullWidth onClick={() => setNewPeriodOpen(false)}>{t('common.cancel')}</Button>
                         <Button fullWidth isLoading={saving} onClick={createPeriod}>
-                            Create
+                            {t('common.create')}
                         </Button>
                     </div>
                 </div>
@@ -810,15 +998,26 @@ export function PayrollCalculationPage() {
             <Modal
                 isOpen={calcOpen}
                 onClose={() => setCalcOpen(false)}
-                title="Run Payroll Calculation"
+                title={t('payroll.runPayrollCalculation')}
             >
                 <div className="space-y-5">
                     <p className="text-xs text-text-muted leading-relaxed">
-                        Calculates salaries for all configured employees based on attendance logs.
-                        Previously calculated entries will be recalculated.
+                        {t('payroll.calcDescription')}
                     </p>
                     <div>
-                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Income Tax Rate (%)</label>
+                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.calculationMode')}</label>
+                        <select
+                            value={calcMode}
+                            onChange={e => setCalcMode(e.target.value as 'Full' | 'OvertimeOnly' | 'NoOvertime')}
+                            className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                        >
+                            <option value="Full">{t('payroll.calcModeFull')}</option>
+                            <option value="NoOvertime">{t('payroll.calcModeNoOvertime')}</option>
+                            <option value="OvertimeOnly">{t('payroll.calcModeOvertimeOnly')}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.incomeTaxRate')}</label>
                         <Input
                             type="number"
                             value={calcTaxRate}
@@ -829,14 +1028,14 @@ export function PayrollCalculationPage() {
                         />
                     </div>
                     <div className="flex gap-3 pt-2">
-                        <Button variant="outline" fullWidth onClick={() => setCalcOpen(false)}>Cancel</Button>
+                        <Button variant="outline" fullWidth onClick={() => setCalcOpen(false)}>{t('common.cancel')}</Button>
                         <Button
                             fullWidth
                             isLoading={saving}
                             onClick={calculate}
                             className="bg-warning-bg text-warning-text hover:bg-warning-text hover:text-white shadow-none"
                         >
-                            Calculate
+                            {t('payroll.calculate')}
                         </Button>
                     </div>
                 </div>
@@ -846,45 +1045,45 @@ export function PayrollCalculationPage() {
             <Modal
                 isOpen={compForm.open}
                 onClose={() => setCompForm(f => ({ ...f, open: false }))}
-                title={`${compForm.editId ? 'Edit' : 'New'} Pay Component`}
+                title={compForm.editId ? t('payroll.editPayComponent') : t('payroll.newPayComponent')}
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Name</label>
+                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.name')}</label>
                         <Input
                             value={compForm.name ?? ''}
                             onChange={e => setCompForm(f => ({ ...f, name: e.target.value }))}
-                            placeholder="e.g. Transport Allowance"
+                            placeholder={t('payroll.namePlaceholder')}
                         />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Type</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.type')}</label>
                             <select
                                 value={compForm.componentType}
                                 onChange={e => setCompForm(f => ({ ...f, componentType: e.target.value as ComponentType }))}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                             >
-                                <option>Allowance</option>
-                                <option>Bonus</option>
-                                <option>Deduction</option>
+                                <option value="Allowance">{t('payroll.componentTypeAllowance')}</option>
+                                <option value="Bonus">{t('payroll.componentTypeBonus')}</option>
+                                <option value="Deduction">{t('payroll.componentTypeDeduction')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Calculation</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.compColCalculation')}</label>
                             <select
                                 value={compForm.isFixed ? 'fixed' : 'percent'}
                                 onChange={e => setCompForm(f => ({ ...f, isFixed: e.target.value === 'fixed' }))}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                             >
-                                <option value="fixed">Fixed Amount</option>
-                                <option value="percent">% of Base Salary</option>
+                                <option value="fixed">{t('payroll.fixedAmount')}</option>
+                                <option value="percent">{t('payroll.percentOfBaseSalary')}</option>
                             </select>
                         </div>
                     </div>
                     {compForm.isFixed ? (
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Fixed Amount</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.fixedAmount')}</label>
                             <Input
                                 type="number"
                                 value={compForm.amount ?? 0}
@@ -894,7 +1093,7 @@ export function PayrollCalculationPage() {
                         </div>
                     ) : (
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Percentage of Base (%)</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.percentageOfBase')}</label>
                             <Input
                                 type="number"
                                 value={compForm.percentage ?? 0}
@@ -906,11 +1105,11 @@ export function PayrollCalculationPage() {
                         </div>
                     )}
                     <div>
-                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Description (optional)</label>
+                        <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.descriptionOptional')}</label>
                         <Input
                             value={compForm.description ?? ''}
                             onChange={e => setCompForm(f => ({ ...f, description: e.target.value }))}
-                            placeholder="Brief description"
+                            placeholder={t('payroll.briefDescription')}
                         />
                     </div>
                     <div className="flex gap-6">
@@ -921,7 +1120,7 @@ export function PayrollCalculationPage() {
                                 onChange={e => setCompForm(f => ({ ...f, isDefault: e.target.checked }))}
                                 className="rounded w-4 h-4 accent-primary"
                             />
-                            <span className="text-xs font-bold text-text-dark">Apply to all employees</span>
+                            <span className="text-xs font-bold text-text-dark">{t('payroll.applyToAllEmployees')}</span>
                         </label>
                         <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
@@ -930,13 +1129,13 @@ export function PayrollCalculationPage() {
                                 onChange={e => setCompForm(f => ({ ...f, isActive: e.target.checked }))}
                                 className="rounded w-4 h-4 accent-primary"
                             />
-                            <span className="text-xs font-bold text-text-dark">Active</span>
+                            <span className="text-xs font-bold text-text-dark">{t('common.active')}</span>
                         </label>
                     </div>
                     <div className="flex gap-3 pt-2">
-                        <Button variant="outline" fullWidth onClick={() => setCompForm(f => ({ ...f, open: false }))}>Cancel</Button>
+                        <Button variant="outline" fullWidth onClick={() => setCompForm(f => ({ ...f, open: false }))}>{t('common.cancel')}</Button>
                         <Button fullWidth isLoading={saving} onClick={saveComp}>
-                            {saving ? 'Saving...' : 'Save'}
+                            {saving ? t('common.saving') : t('common.save')}
                         </Button>
                     </div>
                 </div>
@@ -946,26 +1145,26 @@ export function PayrollCalculationPage() {
             <Modal
                 isOpen={salaryForm.open && !!salaryForm.emp}
                 onClose={() => setSalaryForm(f => ({ ...f, open: false }))}
-                title={salaryForm.emp ? `Salary — ${salaryForm.emp.firstName} ${salaryForm.emp.lastName}` : 'Salary Setup'}
+                title={salaryForm.emp ? t('payroll.salaryForEmployee', { name: `${salaryForm.emp.firstName} ${salaryForm.emp.lastName}` }) : t('payroll.salarySetup')}
             >
                 <div className="space-y-4">
                     {/* Base salary */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Salary Type</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.salaryTypeLabel')}</label>
                             <select
                                 value={salaryForm.salaryType}
                                 onChange={e => setSalaryForm(f => ({ ...f, salaryType: e.target.value as SalaryType }))}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                             >
-                                <option>Monthly</option>
-                                <option>Hourly</option>
-                                <option>Daily</option>
+                                <option value="Monthly">{t('payroll.salaryTypeMonthly')}</option>
+                                <option value="Hourly">{t('payroll.salaryTypeHourly')}</option>
+                                <option value="Daily">{t('payroll.salaryTypeDaily')}</option>
                             </select>
                         </div>
                         <div>
                             <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">
-                                {salaryForm.salaryType === 'Monthly' ? 'Monthly Salary' : salaryForm.salaryType === 'Hourly' ? 'Hourly Rate' : 'Daily Rate'}
+                                {salaryForm.salaryType === 'Monthly' ? t('payroll.monthlySalary') : salaryForm.salaryType === 'Hourly' ? t('payroll.hourlyRate') : t('payroll.dailyRate')}
                             </label>
                             <Input
                                 type="number"
@@ -975,7 +1174,7 @@ export function PayrollCalculationPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Currency</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.currency')}</label>
                             <Input
                                 value={salaryForm.currency}
                                 onChange={e => setSalaryForm(f => ({ ...f, currency: e.target.value }))}
@@ -990,13 +1189,13 @@ export function PayrollCalculationPage() {
                                     className="rounded w-4 h-4 accent-primary"
                                 />
                                 <div>
-                                    <span className="text-xs font-bold text-text-dark block">Pay by worked hours</span>
-                                    <span className="text-[9px] text-text-muted">Monthly base ÷ worked hours</span>
+                                    <span className="text-xs font-bold text-text-dark block">{t('payroll.payByWorkedHours')}</span>
+                                    <span className="text-[9px] text-text-muted">{t('payroll.payByWorkedHoursHint')}</span>
                                 </div>
                             </label>
                         </div>
                         <div className="col-span-2">
-                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Effective From</label>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.effectiveFrom')}</label>
                             <input
                                 type="date"
                                 value={salaryForm.effectiveFrom}
@@ -1009,7 +1208,7 @@ export function PayrollCalculationPage() {
                     {/* Overtime section */}
                     <div className="border border-divider-light rounded-2xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
-                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider">Overtime</p>
+                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider">{t('payroll.overtime')}</p>
                             <label className="flex items-center gap-2 cursor-pointer select-none">
                                 <input
                                     type="checkbox"
@@ -1017,13 +1216,13 @@ export function PayrollCalculationPage() {
                                     onChange={e => setSalaryForm(f => ({ ...f, overtimeEnabled: e.target.checked }))}
                                     className="rounded w-4 h-4 accent-primary"
                                 />
-                                <span className="text-xs font-bold text-text-dark">{salaryForm.overtimeEnabled ? 'Enabled' : 'Disabled'}</span>
+                                <span className="text-xs font-bold text-text-dark">{salaryForm.overtimeEnabled ? t('common.enabled') : t('common.disabled')}</span>
                             </label>
                         </div>
                         {salaryForm.overtimeEnabled && (<>
                             {salaryForm.overtimeTiers.length === 0 && (
                                 <div>
-                                    <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">Single Multiplier</label>
+                                    <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.singleMultiplier')}</label>
                                     <Input
                                         type="number"
                                         value={salaryForm.overtimeMultiplier}
@@ -1034,11 +1233,11 @@ export function PayrollCalculationPage() {
                                 </div>
                             )}
                             <div className="space-y-2">
-                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Overtime Tiers</p>
+                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">{t('payroll.overtimeTiers')}</p>
                                 {salaryForm.overtimeTiers.map((tier, i) => (
                                     <div key={i} className="flex items-center gap-2">
                                         <div className="flex-1">
-                                            <label className="block text-[8px] text-text-muted font-bold mb-1">After OT hours</label>
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{t('payroll.afterOtHours')}</label>
                                             <input
                                                 type="number"
                                                 value={tier.afterHours}
@@ -1051,7 +1250,7 @@ export function PayrollCalculationPage() {
                                             />
                                         </div>
                                         <div className="flex-1">
-                                            <label className="block text-[8px] text-text-muted font-bold mb-1">Multiplier ×</label>
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{t('payroll.multiplierX')}</label>
                                             <input
                                                 type="number"
                                                 value={tier.multiplier}
@@ -1077,7 +1276,7 @@ export function PayrollCalculationPage() {
                                     onClick={() => setSalaryForm(f => ({ ...f, overtimeTiers: [...f.overtimeTiers, { afterHours: f.overtimeTiers.length === 0 ? 0 : (f.overtimeTiers[f.overtimeTiers.length - 1].afterHours + 10), multiplier: 1.5 }] }))}
                                     className="text-[9px] font-black text-primary hover:underline uppercase tracking-wider"
                                 >
-                                    + Add Tier
+                                    {t('payroll.addTier')}
                                 </button>
                             </div>
                         </>)}
@@ -1086,7 +1285,7 @@ export function PayrollCalculationPage() {
                     {/* Lateness deduction section */}
                     <div className="border border-divider-light rounded-2xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
-                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider">Lateness Deduction</p>
+                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider">{t('payroll.latenessDeduction')}</p>
                             <label className="flex items-center gap-2 cursor-pointer select-none">
                                 <input
                                     type="checkbox"
@@ -1094,16 +1293,32 @@ export function PayrollCalculationPage() {
                                     onChange={e => setSalaryForm(f => ({ ...f, latenessDeductionEnabled: e.target.checked }))}
                                     className="rounded w-4 h-4 accent-primary"
                                 />
-                                <span className="text-xs font-bold text-text-dark">{salaryForm.latenessDeductionEnabled ? 'Enabled' : 'Disabled'}</span>
+                                <span className="text-xs font-bold text-text-dark">{salaryForm.latenessDeductionEnabled ? t('common.enabled') : t('common.disabled')}</span>
                             </label>
                         </div>
                         {salaryForm.latenessDeductionEnabled && (
-                            <div className="space-y-2">
-                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Lateness Tiers (avg min late per day)</p>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.deductionMode')}</label>
+                                    <select
+                                        value={salaryForm.latenessDeductionMode}
+                                        onChange={e => setSalaryForm(f => ({ ...f, latenessDeductionMode: e.target.value as 'Coefficient' | 'Fixed' }))}
+                                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                                    >
+                                        <option value="Coefficient">{t('payroll.latenessModeCoefficient')}</option>
+                                        <option value="Fixed">{t('payroll.latenessModeFixed')}</option>
+                                    </select>
+                                    <p className="text-[10px] text-text-muted mt-1">
+                                        {salaryForm.latenessDeductionMode === 'Fixed'
+                                            ? t('payroll.latenessTierHintFixed')
+                                            : t('payroll.latenessTierHintCoefficient')}
+                                    </p>
+                                </div>
+                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">{t('payroll.latenessTiersTitle')}</p>
                                 {salaryForm.latenessTiers.map((tier, i) => (
                                     <div key={i} className="flex items-center gap-2">
                                         <div className="flex-1">
-                                            <label className="block text-[8px] text-text-muted font-bold mb-1">After min late</label>
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{t('payroll.afterMinLate')}</label>
                                             <input
                                                 type="number"
                                                 value={tier.afterMinutes}
@@ -1115,7 +1330,7 @@ export function PayrollCalculationPage() {
                                             />
                                         </div>
                                         <div className="flex-1">
-                                            <label className="block text-[8px] text-text-muted font-bold mb-1">Deduction ×</label>
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{salaryForm.latenessDeductionMode === 'Fixed' ? t('payroll.fineFixedPerLateDay') : t('payroll.deductionMultiplier')}</label>
                                             <input
                                                 type="number"
                                                 value={tier.deductionMultiplier}
@@ -1141,7 +1356,87 @@ export function PayrollCalculationPage() {
                                     onClick={() => setSalaryForm(f => ({ ...f, latenessTiers: [...f.latenessTiers, { afterMinutes: f.latenessTiers.length === 0 ? 5 : (f.latenessTiers[f.latenessTiers.length - 1].afterMinutes + 15), deductionMultiplier: 1 }] }))}
                                     className="text-[9px] font-black text-primary hover:underline uppercase tracking-wider"
                                 >
-                                    + Add Tier
+                                    {t('payroll.addTier')}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Early-leave deduction section */}
+                    <div className="border border-divider-light rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider">{t('payroll.earlyLeaveDeduction')}</p>
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={salaryForm.earlyLeaveDeductionEnabled}
+                                    onChange={e => setSalaryForm(f => ({ ...f, earlyLeaveDeductionEnabled: e.target.checked }))}
+                                    className="rounded w-4 h-4 accent-primary"
+                                />
+                                <span className="text-xs font-bold text-text-dark">{salaryForm.earlyLeaveDeductionEnabled ? t('common.enabled') : t('common.disabled')}</span>
+                            </label>
+                        </div>
+                        {salaryForm.earlyLeaveDeductionEnabled && (
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.deductionMode')}</label>
+                                    <select
+                                        value={salaryForm.earlyLeaveDeductionMode}
+                                        onChange={e => setSalaryForm(f => ({ ...f, earlyLeaveDeductionMode: e.target.value as 'Coefficient' | 'Fixed' }))}
+                                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                                    >
+                                        <option value="Coefficient">{t('payroll.earlyLeaveModeCoefficient')}</option>
+                                        <option value="Fixed">{t('payroll.earlyLeaveModeFixed')}</option>
+                                    </select>
+                                    <p className="text-[10px] text-text-muted mt-1">
+                                        {salaryForm.earlyLeaveDeductionMode === 'Fixed'
+                                            ? t('payroll.earlyLeaveTierHintFixed')
+                                            : t('payroll.earlyLeaveTierHintCoefficient')}
+                                    </p>
+                                </div>
+                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">{t('payroll.earlyLeaveTiersTitle')}</p>
+                                {salaryForm.earlyLeaveTiers.map((tier, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <div className="flex-1">
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{t('payroll.afterMinEarly')}</label>
+                                            <input
+                                                type="number"
+                                                value={tier.afterMinutes}
+                                                min={0}
+                                                onChange={e => setSalaryForm(f => {
+                                                    const t = [...f.earlyLeaveTiers]; t[i] = { ...t[i], afterMinutes: parseInt(e.target.value) || 0 }; return { ...f, earlyLeaveTiers: t }
+                                                })}
+                                                className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                                            />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-[8px] text-text-muted font-bold mb-1">{salaryForm.earlyLeaveDeductionMode === 'Fixed' ? t('payroll.fineFixedPerEarlyDay') : t('payroll.deductionMultiplier')}</label>
+                                            <input
+                                                type="number"
+                                                value={tier.deductionMultiplier}
+                                                min={0}
+                                                step={0.25}
+                                                onChange={e => setSalaryForm(f => {
+                                                    const t = [...f.earlyLeaveTiers]; t[i] = { ...t[i], deductionMultiplier: parseFloat(e.target.value) || 1 }; return { ...f, earlyLeaveTiers: t }
+                                                })}
+                                                className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSalaryForm(f => ({ ...f, earlyLeaveTiers: f.earlyLeaveTiers.filter((_, j) => j !== i) }))}
+                                            className="mt-4 text-error-text hover:text-error-text/80 text-lg font-black leading-none"
+                                        >
+                                            <span className="material-symbols-outlined text-base">close</span>
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => setSalaryForm(f => ({ ...f, earlyLeaveTiers: [...f.earlyLeaveTiers, { afterMinutes: f.earlyLeaveTiers.length === 0 ? 5 : (f.earlyLeaveTiers[f.earlyLeaveTiers.length - 1].afterMinutes + 15), deductionMultiplier: 1 }] }))}
+                                    className="text-[9px] font-black text-primary hover:underline uppercase tracking-wider"
+                                >
+                                    {t('payroll.addTier')}
                                 </button>
                             </div>
                         )}
@@ -1149,7 +1444,7 @@ export function PayrollCalculationPage() {
 
                     {components.filter(c => c.isActive).length > 0 && (
                         <div>
-                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider mb-2">Pay Components</p>
+                            <p className="text-[10px] font-black text-text-muted uppercase tracking-wider mb-2">{t('payroll.payComponents')}</p>
                             <div className="space-y-1 max-h-52 overflow-y-auto border border-divider-light rounded-2xl p-3">
                                 {components.filter(c => c.isActive).map(c => (
                                     <label
@@ -1168,7 +1463,7 @@ export function PayrollCalculationPage() {
                                         />
                                         <Badge variant={compTypeVariant(c.componentType)}>{c.componentType[0]}</Badge>
                                         <span className="text-xs font-bold text-text-dark flex-1">{c.name}</span>
-                                        {c.isDefault && <span className="text-[8px] font-black text-text-muted">DEFAULT</span>}
+                                        {c.isDefault && <span className="text-[8px] font-black text-text-muted">{t('payroll.defaultBadge')}</span>}
                                         <span className="text-xs text-text-muted">{c.isFixed ? fmt(c.amount) : `${c.percentage}%`}</span>
                                     </label>
                                 ))}
@@ -1177,9 +1472,9 @@ export function PayrollCalculationPage() {
                     )}
 
                     <div className="flex gap-3 pt-2">
-                        <Button variant="outline" fullWidth onClick={() => setSalaryForm(f => ({ ...f, open: false }))}>Cancel</Button>
+                        <Button variant="outline" fullWidth onClick={() => setSalaryForm(f => ({ ...f, open: false }))}>{t('common.cancel')}</Button>
                         <Button fullWidth isLoading={saving} onClick={saveSalary}>
-                            {saving ? 'Saving...' : 'Save'}
+                            {saving ? t('common.saving') : t('common.save')}
                         </Button>
                     </div>
                 </div>
@@ -1189,8 +1484,8 @@ export function PayrollCalculationPage() {
             <Modal
                 isOpen={!!payslip}
                 onClose={() => setPayslip(null)}
-                title={payslip?.employeeName ?? 'Payslip'}
-                actions={payslip ? <Badge variant={entryStatusVariant(payslip.status)}>{payslip.status}</Badge> : undefined}
+                title={payslip?.employeeName ?? t('payroll.payslip')}
+                actions={payslip ? <Badge variant={entryStatusVariant(payslip.status)}>{t(`payroll.entryStatus${payslip.status}`)}</Badge> : undefined}
             >
                 {payslip && (
                     <div className="space-y-5">
@@ -1201,9 +1496,9 @@ export function PayrollCalculationPage() {
                         {/* Attendance */}
                         <div className="bg-slate-50/70 rounded-2xl p-4 grid grid-cols-3 gap-3 text-center">
                             {[
-                                { label: 'Worked Days', value: payslip.workedDays },
-                                { label: 'Worked Hours', value: `${fmtH(payslip.workedHours)}h` },
-                                { label: 'Overtime', value: `${fmtH(payslip.overtimeHours)}h` },
+                                { label: t('payroll.workedDays'), value: payslip.workedDays },
+                                { label: t('payroll.workedHours'), value: `${fmtH(payslip.workedHours)}h` },
+                                { label: t('payroll.overtime'), value: `${fmtH(payslip.overtimeHours)}h` },
                             ].map(s => (
                                 <div key={s.label}>
                                     <p className="text-[8px] font-black text-text-muted uppercase tracking-widest mb-1">{s.label}</p>
@@ -1214,12 +1509,12 @@ export function PayrollCalculationPage() {
 
                         {/* Earnings breakdown */}
                         <div className="space-y-2">
-                            <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Earnings</p>
+                            <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">{t('payroll.earnings')}</p>
                             {[
-                                { label: 'Base Pay', value: payslip.basePay, color: 'text-text-dark' },
-                                { label: 'Overtime Pay', value: payslip.overtimePay, color: 'text-warning-text' },
-                                { label: 'Allowances', value: payslip.allowancesTotal, color: 'text-success-text' },
-                                { label: 'Bonuses', value: payslip.bonusesTotal, color: 'text-primary' },
+                                { label: t('payroll.basePay'), value: payslip.basePay, color: 'text-text-dark' },
+                                { label: t('payroll.overtimePay'), value: payslip.overtimePay, color: 'text-warning-text' },
+                                { label: t('payroll.allowances'), value: payslip.allowancesTotal, color: 'text-success-text' },
+                                { label: t('payroll.bonuses'), value: payslip.bonusesTotal, color: 'text-primary' },
                             ].map(r => r.value !== 0 && (
                                 <div key={r.label} className="flex justify-between text-xs">
                                     <span className="text-text-muted font-bold">{r.label}</span>
@@ -1227,22 +1522,22 @@ export function PayrollCalculationPage() {
                                 </div>
                             ))}
                             <div className="flex justify-between text-sm font-black border-t border-divider-light pt-2">
-                                <span className="text-text-dark">Gross Pay</span>
+                                <span className="text-text-dark">{t('payroll.grossPay')}</span>
                                 <span className="text-text-dark">{fmt(payslip.grossPay)}</span>
                             </div>
                         </div>
 
                         {/* Deductions */}
                         <div className="space-y-2">
-                            <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Deductions</p>
+                            <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">{t('payroll.deductions')}</p>
                             {payslip.deductionsTotal > 0 && (
                                 <div className="flex justify-between text-xs">
-                                    <span className="text-text-muted font-bold">Other Deductions</span>
+                                    <span className="text-text-muted font-bold">{t('payroll.otherDeductions')}</span>
                                     <span className="font-bold text-error-text">−{fmt(payslip.deductionsTotal)}</span>
                                 </div>
                             )}
                             <div className="flex justify-between text-xs">
-                                <span className="text-text-muted font-bold">Income Tax ({payslip.taxRate}%)</span>
+                                <span className="text-text-muted font-bold">{t('payroll.incomeTaxPercent', { rate: payslip.taxRate })}</span>
                                 <span className="font-bold text-error-text">−{fmt(payslip.taxAmount)}</span>
                             </div>
                         </div>
@@ -1250,7 +1545,7 @@ export function PayrollCalculationPage() {
                         {/* Applied components */}
                         {parseComponents(payslip.componentsJson).length > 0 && (
                             <div className="space-y-1.5">
-                                <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">Applied Components</p>
+                                <p className="text-[9px] font-black text-text-muted uppercase tracking-widest">{t('payroll.appliedComponents')}</p>
                                 {parseComponents(payslip.componentsJson).map((c, i) => (
                                     <div key={i} className="flex justify-between text-xs items-center">
                                         <div className="flex items-center gap-1.5">
@@ -1267,21 +1562,21 @@ export function PayrollCalculationPage() {
 
                         {/* Net */}
                         <div className="bg-success-bg rounded-2xl p-4 flex justify-between items-center">
-                            <span className="text-sm font-black text-success-text">Net Pay</span>
+                            <span className="text-sm font-black text-success-text">{t('payroll.netPay')}</span>
                             <span className="text-2xl font-black text-success-text">{fmt(payslip.netPay)}</span>
                         </div>
 
-                        <Button variant="outline" fullWidth onClick={() => setPayslip(null)}>Close</Button>
+                        <Button variant="outline" fullWidth onClick={() => setPayslip(null)}>{t('common.close')}</Button>
                     </div>
                 )}
             </Modal>
 
             {emailModal && (
-                <Modal isOpen title={`Send Payroll Report — ${emailModal.periodLabel}`} onClose={() => { setEmailModal(null); setEmailTo('') }}>
+                <Modal isOpen title={t('payroll.sendPayrollReportTitle', { period: emailModal.periodLabel })} onClose={() => { setEmailModal(null); setEmailTo('') }}>
                     <div className="space-y-4">
-                        <p className="text-xs text-text-light">The payroll summary for {emailModal.periodLabel} will be sent as an HTML email.</p>
+                        <p className="text-xs text-text-light">{t('payroll.payrollSummaryEmailNote', { period: emailModal.periodLabel })}</p>
                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Recipient email</label>
+                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('payroll.recipientEmail')}</label>
                             <Input
                                 type="email"
                                 placeholder="accountant@company.com"
@@ -1292,10 +1587,10 @@ export function PayrollCalculationPage() {
                         </div>
                         <div className="flex gap-2">
                             <Button fullWidth onClick={sendPayrollReport} isLoading={emailSending} disabled={!emailTo.trim()}>
-                                Send
+                                {t('common.send')}
                             </Button>
                             <Button fullWidth variant="outline" onClick={() => { setEmailModal(null); setEmailTo('') }} disabled={emailSending}>
-                                Cancel
+                                {t('common.cancel')}
                             </Button>
                         </div>
                     </div>

@@ -232,6 +232,85 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
         return 0;
     }
 
+    public async Task<(bool Success, string? Response, uint ErrorCode)> TrySendIsapiViaSdkAsync(
+        string deviceIdentifier, string requestLine, string? body, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try { EnsureSdkReady(); }
+        catch (DllNotFoundException) { return (false, null, 0); }
+
+        if (!_sessions.TryGetValue(deviceIdentifier, out var session))
+            return (false, null, 0);
+
+        return await Task.Run(() => SendIsapiViaSdk(session.UserId, requestLine, body), cancellationToken);
+    }
+
+    private (bool Success, string? Response, uint ErrorCode) SendIsapiViaSdk(int userId, string requestLine, string? body)
+    {
+        var urlBytes = Encoding.ASCII.GetBytes(requestLine);
+        var bodyBytes = body is null ? null : Encoding.UTF8.GetBytes(body);
+        const int outBufSize = 65536;
+        const int statusBufSize = 4096;
+
+        var urlPtr = Marshal.AllocHGlobal(urlBytes.Length);
+        var bodyPtr = bodyBytes is null ? IntPtr.Zero : Marshal.AllocHGlobal(bodyBytes.Length);
+        var outPtr = Marshal.AllocHGlobal(outBufSize);
+        var statusPtr = Marshal.AllocHGlobal(statusBufSize);
+        try
+        {
+            Marshal.Copy(urlBytes, 0, urlPtr, urlBytes.Length);
+            if (bodyBytes is not null) Marshal.Copy(bodyBytes, 0, bodyPtr, bodyBytes.Length);
+
+            var input = new Native.NET_DVR_XML_CONFIG_INPUT
+            {
+                dwSize = (uint)Marshal.SizeOf<Native.NET_DVR_XML_CONFIG_INPUT>(),
+                lpRequestUrl = urlPtr,
+                dwRequestUrlLen = (uint)urlBytes.Length,
+                lpInBuffer = bodyPtr,
+                dwInBufferSize = (uint)(bodyBytes?.Length ?? 0),
+                dwRecvTimeOut = 10000,
+                byForceEncrpt = 0,
+                byRes = new byte[31],
+            };
+            var output = new Native.NET_DVR_XML_CONFIG_OUTPUT
+            {
+                dwSize = (uint)Marshal.SizeOf<Native.NET_DVR_XML_CONFIG_OUTPUT>(),
+                lpOutBuffer = outPtr,
+                dwOutBufferSize = outBufSize,
+                dwReturnedXMLSize = 0,
+                lpStatusBuffer = statusPtr,
+                dwStatusSize = statusBufSize,
+                byRes = new byte[32],
+            };
+
+            var ok = Native.NET_DVR_STDXMLConfig(userId, ref input, ref output);
+            var err = ok ? 0u : Native.NET_DVR_GetLastError();
+
+            string? response = null;
+            if (output.dwReturnedXMLSize > 0 && output.dwReturnedXMLSize <= outBufSize)
+            {
+                var bytes = new byte[output.dwReturnedXMLSize];
+                Marshal.Copy(outPtr, bytes, 0, bytes.Length);
+                response = Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+            }
+            else if (output.dwStatusSize > 0 && output.dwStatusSize <= statusBufSize)
+            {
+                var bytes = new byte[output.dwStatusSize];
+                Marshal.Copy(statusPtr, bytes, 0, bytes.Length);
+                response = Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+            }
+
+            return (ok, response, err);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(urlPtr);
+            if (bodyPtr != IntPtr.Zero) Marshal.FreeHGlobal(bodyPtr);
+            Marshal.FreeHGlobal(outPtr);
+            Marshal.FreeHGlobal(statusPtr);
+        }
+    }
+
     public Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1305,6 +1384,36 @@ public sealed class HikvisionSdkClient : IHikvisionSdkClient, IDisposable
 
         [DllImport(SdkLib, CharSet = CharSet.Ansi)]
         public static extern bool NET_DVR_GetDeviceAbility(int lUserID, uint dwAbilityType, byte[]? pInBuf, uint dwInLength, byte[] pOutBuf, uint dwOutLength);
+
+        [DllImport(SdkLib)]
+        public static extern bool NET_DVR_STDXMLConfig(int lUserID, ref NET_DVR_XML_CONFIG_INPUT lpInputParam, ref NET_DVR_XML_CONFIG_OUTPUT lpOutputParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct NET_DVR_XML_CONFIG_INPUT
+        {
+            public uint dwSize;
+            public IntPtr lpRequestUrl;
+            public uint dwRequestUrlLen;
+            public IntPtr lpInBuffer;
+            public uint dwInBufferSize;
+            public uint dwRecvTimeOut;
+            public byte byForceEncrpt;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 31)]
+            public byte[] byRes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct NET_DVR_XML_CONFIG_OUTPUT
+        {
+            public uint dwSize;
+            public IntPtr lpOutBuffer;
+            public uint dwOutBufferSize;
+            public uint dwReturnedXMLSize;
+            public IntPtr lpStatusBuffer;
+            public uint dwStatusSize;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+            public byte[] byRes;
+        }
 
         public static string? TryGetAcsAbilityXml(int userId, ILogger logger)
         {

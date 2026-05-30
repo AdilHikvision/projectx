@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, Input, Avatar } from './ui'
+import { Input, Avatar } from './ui'
 import { useAuth } from '../auth/AuthContext'
 
 interface TopBarProps {

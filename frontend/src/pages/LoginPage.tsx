@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { useLoading } from '../context/LoadingContext'
 import { Button, Input } from '../components/atoms'
@@ -16,6 +17,7 @@ const SELF_SERVICE_TOKEN_KEY = 'projectx.ss.token'
 const SELF_SERVICE_USER_KEY = 'projectx.ss.user'
 
 export function LoginPage() {
+  const { t } = useTranslation()
   const [tab, setTab] = useState<LoginTab>('staff')
 
   // Staff login state
@@ -72,7 +74,7 @@ export function LoginPage() {
       await login({ email, password })
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
-      setError(msg && (msg.includes('500') || msg.includes('Authentication service') || msg.includes('error')) ? msg : 'Invalid email or password. Please try again.')
+      setError(msg && (msg.includes('500') || msg.includes('Authentication service') || msg.includes('error')) ? msg : t('auth.invalidCredentials'))
     } finally {
       stopLoading()
     }
@@ -91,7 +93,7 @@ export function LoginPage() {
       localStorage.setItem(SELF_SERVICE_USER_KEY, JSON.stringify({ employeeId: res.employeeId, requiresPasswordSetup: res.requiresPasswordSetup, currentPassword: ssPassword }))
       navigate('/self-service')
     } catch {
-      setSsError('Invalid email or password.')
+      setSsError(t('auth.selfServiceInvalidCredentials'))
     } finally {
       setSsLoading(false)
     }
@@ -102,15 +104,15 @@ export function LoginPage() {
       <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-5%] w-[40%] h-[40%] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
 
-      <Modal isOpen={showSessionExpiredDialog} onClose={() => setShowSessionExpiredDialog(false)} title="Security Update">
+      <Modal isOpen={showSessionExpiredDialog} onClose={() => setShowSessionExpiredDialog(false)} title={t('auth.sessionExpiredTitle')}>
         <div className="space-y-6 py-2 text-center">
           <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2">
             <span className="material-symbols-outlined text-3xl">timer_off</span>
           </div>
           <p className="text-sm font-medium text-text-dark leading-relaxed">
-            Your session has expired. Please log in again.
+            {t('auth.sessionExpiredMessage')}
           </p>
-          <Button fullWidth onClick={() => setShowSessionExpiredDialog(false)}>OK</Button>
+          <Button fullWidth onClick={() => setShowSessionExpiredDialog(false)}>{t('common.ok')}</Button>
         </div>
       </Modal>
 
@@ -123,8 +125,8 @@ export function LoginPage() {
               <span className="material-symbols-outlined text-3xl">shield_lock</span>
             </div>
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">Sign In</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">Access your UniFi dashboard</p>
+              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.signInUpper')}</h1>
+              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.signInToDashboard')}</p>
             </div>
           </div>
 
@@ -138,7 +140,7 @@ export function LoginPage() {
               }`}
             >
               <span className="material-symbols-outlined text-base">admin_panel_settings</span>
-              Staff
+              {t('auth.staff')}
             </button>
             <button
               type="button"
@@ -148,7 +150,7 @@ export function LoginPage() {
               }`}
             >
               <span className="material-symbols-outlined text-base">badge</span>
-              Self-service
+              {t('auth.selfService')}
             </button>
           </div>
 
@@ -165,11 +167,11 @@ export function LoginPage() {
               )}
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Email Address</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.emailAddress')}</label>
                   <div className="relative">
                     <Input
                       type="email"
-                      placeholder="name@company.com"
+                      placeholder={t('auth.emailPlaceholder')}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -180,8 +182,8 @@ export function LoginPage() {
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center px-1">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Password</label>
-                    <Link to="/forgot-password" className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest transition-colors">Forgot?</Link>
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('auth.password')}</label>
+                    <Link to="/forgot-password" className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest transition-colors">{t('auth.forgot')}</Link>
                   </div>
                   <div className="relative">
                     <Input
@@ -210,7 +212,7 @@ export function LoginPage() {
                 size="lg"
                 className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
               >
-                Sign In
+                {t('auth.signIn')}
               </Button>
             </form>
           )}
@@ -228,11 +230,11 @@ export function LoginPage() {
               )}
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Email</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.email')}</label>
                   <div className="relative">
                     <Input
                       type="email"
-                      placeholder="your@email.com"
+                      placeholder={t('auth.selfServiceEmailPlaceholder')}
                       value={ssEmail}
                       onChange={(e) => setSsEmail(e.target.value)}
                       className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
@@ -242,7 +244,7 @@ export function LoginPage() {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">Password</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.password')}</label>
                   <div className="relative">
                     <Input
                       type={ssShowPassword ? 'text' : 'password'}
@@ -270,7 +272,7 @@ export function LoginPage() {
                 size="lg"
                 className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
               >
-                Sign in
+                {t('auth.signIn')}
               </Button>
             </form>
           )}

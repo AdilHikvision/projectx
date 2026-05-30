@@ -1,11 +1,8 @@
 ﻿import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
-
-const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December']
 
 function toDateStr(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -101,10 +98,38 @@ interface CalCol {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SchedulePlannerPage() {
+    const { t } = useTranslation()
+    const DOW_SHORT = [
+        t('schedulePlanner.days.mon'),
+        t('schedulePlanner.days.tue'),
+        t('schedulePlanner.days.wed'),
+        t('schedulePlanner.days.thu'),
+        t('schedulePlanner.days.fri'),
+        t('schedulePlanner.days.sat'),
+        t('schedulePlanner.days.sun'),
+    ]
+    const MONTHS = [
+        t('schedulePlanner.months.january'),
+        t('schedulePlanner.months.february'),
+        t('schedulePlanner.months.march'),
+        t('schedulePlanner.months.april'),
+        t('schedulePlanner.months.may'),
+        t('schedulePlanner.months.june'),
+        t('schedulePlanner.months.july'),
+        t('schedulePlanner.months.august'),
+        t('schedulePlanner.months.september'),
+        t('schedulePlanner.months.october'),
+        t('schedulePlanner.months.november'),
+        t('schedulePlanner.months.december'),
+    ]
     const { token } = useAuth()
     const [data, setData] = useState<PlannerData | null>(null)
     const [loading, setLoading] = useState(true)
     const [viewMode, setViewMode] = useState<'week' | 'month'>('month')
+    const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null)
+    const [emailModalOpen, setEmailModalOpen] = useState(false)
+    const [emailTo, setEmailTo] = useState('')
+    const [emailSending, setEmailSending] = useState(false)
 
     // In month mode: first day of month. In week mode: Monday of the week.
     const [viewDate, setViewDate] = useState(() => {
@@ -176,10 +201,10 @@ export function SchedulePlannerPage() {
             )
             setData(d)
         } catch (e) {
-            setFetchError(e instanceof Error ? e.message : 'Failed to load planner data')
+            setFetchError(e instanceof Error ? e.message : t('schedulePlanner.errors.loadPlannerData'))
         }
         finally { setLoading(false) }
-    }, [token, rangeFrom, rangeTo])
+    }, [token, rangeFrom, rangeTo, t])
 
     useEffect(() => { fetchData() }, [fetchData])
 
@@ -342,6 +367,44 @@ export function SchedulePlannerPage() {
 
     const schedules = data?.schedules ?? []
 
+    async function downloadReport(kind: 'excel' | 'pdf') {
+        if (!token) return
+        setExporting(kind)
+        try {
+            const res = await fetch(`/api/reports/schedule-planner/${kind}?from=${rangeFrom}&to=${rangeTo}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error(await res.text())
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `schedule-${rangeFrom}-${rangeTo}.${kind === 'excel' ? 'xlsx' : 'pdf'}`
+            document.body.appendChild(a); a.click(); a.remove()
+            URL.revokeObjectURL(url)
+        } catch (e) {
+            alert((e as Error).message || t('schedulePlanner.errors.exportFailed'))
+        } finally {
+            setExporting(null)
+        }
+    }
+
+    async function sendEmail() {
+        if (!token || !emailTo.trim()) return
+        setEmailSending(true)
+        try {
+            await apiRequest('/api/reports/schedule-planner/send-email', {
+                token, method: 'POST',
+                body: JSON.stringify({ from: rangeFrom, toDate: rangeTo, to: emailTo.trim() }),
+            })
+            setEmailModalOpen(false); setEmailTo('')
+        } catch (e) {
+            alert((e as Error).message || t('schedulePlanner.errors.sendEmailFailed'))
+        } finally {
+            setEmailSending(false)
+        }
+    }
+
     const headerLabel = viewMode === 'month'
         ? `${MONTHS[viewDate.getMonth()]} ${viewDate.getFullYear()}`
         : (() => {
@@ -363,9 +426,7 @@ export function SchedulePlannerPage() {
                 {/* ── Top bar ── */}
                 <div className="shrink-0 flex items-center justify-between gap-4 px-5 py-3 bg-surface border-b border-black/[0.07]">
                     <div className="flex items-center gap-3">
-                        <h1 className="text-base font-black text-text-dark">Schedule Planner</h1>
-
-                        <div className="flex items-center gap-0.5 ml-2">
+                        <div className="flex items-center gap-0.5">
                             <button onClick={() => navigate(-1)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-black/[0.06] text-text-muted transition-colors">
                                 <span className="material-symbols-outlined text-[18px]">chevron_left</span>
@@ -379,14 +440,14 @@ export function SchedulePlannerPage() {
 
                         <button onClick={goToday}
                             className="text-xs font-bold text-primary border border-primary/40 px-3 py-1 rounded-lg hover:bg-primary/5 transition-colors">
-                            Today
+                            {t('common.today')}
                         </button>
                     </div>
 
                     <div className="flex items-center gap-3">
                         <div className="relative">
                             <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[15px]">search</span>
-                            <input type="text" placeholder="Search employees…" value={search}
+                            <input type="text" placeholder={t('schedulePlanner.searchEmployees')} value={search}
                                 onChange={e => setSearch(e.target.value)}
                                 className="pl-8 pr-3 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20 w-44" />
                         </div>
@@ -395,28 +456,67 @@ export function SchedulePlannerPage() {
                                 <button key={m} onClick={() => switchMode(m)}
                                     className={`px-4 py-1.5 text-[11px] font-bold rounded-[10px] capitalize transition-all
                                         ${viewMode === m ? 'bg-surface shadow text-text-dark' : 'text-text-muted hover:text-text-dark'}`}>
-                                    {m === 'week' ? 'Week' : 'Month'}
+                                    {m === 'week' ? t('schedulePlanner.week') : t('schedulePlanner.month')}
                                 </button>
                             ))}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <button type="button" disabled={!!exporting} onClick={() => downloadReport('excel')}
+                                className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-bold rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-text-dark transition disabled:opacity-50">
+                                <span className="material-symbols-outlined text-[15px]">table_view</span>
+                                {exporting === 'excel' ? '...' : t('schedulePlanner.excel')}
+                            </button>
+                            <button type="button" disabled={!!exporting} onClick={() => downloadReport('pdf')}
+                                className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-bold rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-text-dark transition disabled:opacity-50">
+                                <span className="material-symbols-outlined text-[15px]">picture_as_pdf</span>
+                                {exporting === 'pdf' ? '...' : t('schedulePlanner.pdf')}
+                            </button>
+                            <button type="button" onClick={() => setEmailModalOpen(true)}
+                                className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-bold rounded-xl bg-black/[0.04] hover:bg-black/[0.08] text-text-dark transition">
+                                <span className="material-symbols-outlined text-[15px]">send</span>
+                                {t('schedulePlanner.email')}
+                            </button>
                         </div>
                     </div>
                 </div>
 
+                {emailModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]"
+                        onClick={() => setEmailModalOpen(false)}>
+                        <div className="bg-surface rounded-2xl shadow-2xl w-[420px] p-6" onClick={e => e.stopPropagation()}>
+                            <h3 className="text-base font-black text-text-dark mb-1">{t('schedulePlanner.sendScheduleReport')}</h3>
+                            <p className="text-xs text-text-muted mb-4">{t('schedulePlanner.period', { from: rangeFrom, to: rangeTo })}</p>
+                            <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('schedulePlanner.recipientEmail')}</label>
+                            <input type="email" value={emailTo} onChange={e => setEmailTo(e.target.value)}
+                                placeholder="hr@example.com"
+                                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none mb-4" />
+                            <div className="flex gap-2 justify-end">
+                                <button onClick={() => setEmailModalOpen(false)}
+                                    className="px-4 py-2 text-xs font-bold rounded-xl text-text-muted hover:bg-black/[0.04]">{t('common.cancel')}</button>
+                                <button onClick={sendEmail} disabled={!emailTo.trim() || emailSending}
+                                    className="px-4 py-2 text-xs font-bold rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-50">
+                                    {emailSending ? t('schedulePlanner.sending') : t('common.send')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* ── Schedule legend ── */}
                 {!loading && schedules.length > 0 && (
                     <div className="shrink-0 flex items-center gap-2 px-5 py-2 bg-background-light border-b border-black/[0.06] overflow-x-auto">
-                        <span className="text-[9px] font-black text-text-muted uppercase tracking-widest shrink-0">Schedules:</span>
+                        <span className="text-[9px] font-black text-text-muted uppercase tracking-widest shrink-0">{t('schedulePlanner.schedulesLabel')}</span>
                         {schedules.map(s => (
                             <div key={s.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border shrink-0"
                                 style={{ backgroundColor: s.color + '18', borderColor: s.color + '55', color: s.color }}>
                                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
                                 <span className="text-[10px] font-black whitespace-nowrap">{s.name}</span>
                                 {s.type === 'Multi' ? (
-                                    <span className="text-[9px] opacity-70">multi</span>
+                                    <span className="text-[9px] opacity-70">{t('schedulePlanner.multi')}</span>
                                 ) : s.shiftStart && s.shiftEnd ? (
                                     <span className="text-[9px] opacity-70">{s.shiftStart}–{s.shiftEnd}</span>
                                 ) : (
-                                    <span className="text-[9px] opacity-70">{s.requiredHoursPerDay}h</span>
+                                    <span className="text-[9px] opacity-70">{t('schedulePlanner.hoursShort', { count: s.requiredHoursPerDay })}</span>
                                 )}
                             </div>
                         ))}
@@ -426,13 +526,13 @@ export function SchedulePlannerPage() {
                 {/* ── Grid ── */}
                 {loading ? (
                     <div className="flex-1 flex items-center justify-center text-text-muted text-sm gap-2">
-                        <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>Loading…
+                        <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>{t('common.loading')}
                     </div>
                 ) : fetchError ? (
                     <div className="flex-1 flex items-center justify-center">
                         <div className="text-center space-y-2 text-red-600 p-8 bg-red-50 rounded-2xl max-w-lg">
                             <span className="material-symbols-outlined text-3xl">error</span>
-                            <p className="text-sm font-bold">Failed to load planner</p>
+                            <p className="text-sm font-bold">{t('schedulePlanner.errors.loadPlanner')}</p>
                             <p className="text-xs font-mono bg-white rounded-lg p-3 text-left">{fetchError}</p>
                         </div>
                     </div>
@@ -452,7 +552,7 @@ export function SchedulePlannerPage() {
                                     <th className="text-left px-4 py-3 border-r border-black/[0.07]"
                                         style={{ position: 'sticky', left: 0, background: '#fff', zIndex: 20 }}>
                                         <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">
-                                            Employees
+                                            {t('schedulePlanner.employees')}
                                             {filtered.length > 0 && (
                                                 <span className="ml-2 text-primary bg-primary/10 px-1.5 py-0.5 rounded-md font-black">
                                                     {filtered.length}
@@ -462,7 +562,7 @@ export function SchedulePlannerPage() {
                                     </th>
                                     <th className="text-center py-3 border-r border-black/[0.07]"
                                         style={{ position: 'sticky', left: EMP_W, background: '#fff', zIndex: 20 }}>
-                                        <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Total</span>
+                                        <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">{t('schedulePlanner.total')}</span>
                                     </th>
                                     {columns.map(col => (
                                         <th key={col.key}
@@ -491,8 +591,8 @@ export function SchedulePlannerPage() {
                                     <tr>
                                         <td colSpan={2 + columns.length} className="text-center py-16 text-text-muted text-sm">
                                             {(data?.employees.length ?? 0) === 0
-                                                ? 'No active employees found.'
-                                                : 'No employees match your search.'}
+                                                ? t('schedulePlanner.noActiveEmployees')
+                                                : t('schedulePlanner.noEmployeesMatch')}
                                         </td>
                                     </tr>
                                 ) : filtered.map((emp, idx) => {
@@ -526,7 +626,7 @@ export function SchedulePlannerPage() {
                                                                 disabled={isSaving}
                                                                 className="text-[10px] font-black text-white bg-primary px-2 py-0.5 rounded-md hover:bg-primary/80 disabled:opacity-50 transition-colors flex items-center gap-1">
                                                                 {isSaving && <span className="material-symbols-outlined text-[10px] animate-spin">progress_activity</span>}
-                                                                Save
+                                                                {t('common.save')}
                                                             </button>
                                                         </div>
                                                     )}
@@ -537,7 +637,7 @@ export function SchedulePlannerPage() {
                                             <td className="px-2 py-2 text-center border-r border-black/[0.07]"
                                                 style={{ position: 'sticky', left: EMP_W, backgroundColor: rowBg, zIndex: 10 }}>
                                                 <p className="text-sm font-black text-text-dark">{wDays}</p>
-                                                <p className="text-[10px] text-text-muted">{wHours} h</p>
+                                                <p className="text-[10px] text-text-muted">{t('schedulePlanner.hoursWithCount', { count: wHours })}</p>
                                             </td>
 
                                             {/* Day cells */}
@@ -569,12 +669,12 @@ export function SchedulePlannerPage() {
                                                                     <p className={`text-[10px] font-black leading-none ${
                                                                         p.leaveType === 'Vacation' ? (p.leaveIsPaid ? 'text-emerald-700' : 'text-yellow-700') : (p.leaveIsPaid ? 'text-blue-700' : 'text-slate-600')
                                                                     }`}>
-                                                                        {p.leaveType === 'Vacation' ? 'VAC' : 'OFF'}
+                                                                        {p.leaveType === 'Vacation' ? t('schedulePlanner.vac') : t('schedulePlanner.off')}
                                                                     </p>
                                                                     <p className={`text-[9px] leading-none mt-0.5 ${p.leaveIsPaid ? 'text-emerald-500' : 'text-yellow-500'}`}>
-                                                                        {p.leaveIsPaid ? 'PAID' : 'UNPAID'}
+                                                                        {p.leaveIsPaid ? t('schedulePlanner.paid') : t('schedulePlanner.unpaid')}
                                                                     </p>
-                                                                    {p.leaveStatus === 'Pending' && <p className="text-[8px] text-amber-500 font-bold">pending</p>}
+                                                                    {p.leaveStatus === 'Pending' && <p className="text-[8px] text-amber-500 font-bold">{t('schedulePlanner.pending')}</p>}
                                                                 </div>
                                                             ) : p.requestType ? (
                                                                 <div className={`w-full rounded-lg px-1.5 py-1.5 text-center ${
@@ -587,12 +687,12 @@ export function SchedulePlannerPage() {
                                                                         p.requestType === 'Overtime' ? 'text-amber-600' :
                                                                         'text-blue-600'
                                                                     }`}>
-                                                                        {p.requestType === 'Vacation' ? 'VAC' : p.requestType === 'Overtime' ? 'OT' : 'ABS'}
+                                                                        {p.requestType === 'Vacation' ? t('schedulePlanner.vac') : p.requestType === 'Overtime' ? t('schedulePlanner.ot') : t('schedulePlanner.abs')}
                                                                     </p>
                                                                     <p className={`text-[8px] font-bold leading-none mt-0.5 ${p.requestStatus === 'Approved' ? 'text-green-500' : 'text-amber-500'}`}>
-                                                                        {p.requestStatus === 'Approved' ? 'approved' : 'pending'}
+                                                                        {p.requestStatus === 'Approved' ? t('schedulePlanner.approved') : t('schedulePlanner.pending')}
                                                                     </p>
-                                                                    <p className="text-[7px] text-text-muted leading-none">self-svc</p>
+                                                                    <p className="text-[7px] text-text-muted leading-none">{t('schedulePlanner.selfSvc')}</p>
                                                                 </div>
                                                             ) : hasShift ? (
                                                                 <div className="w-full rounded-lg px-1.5 py-1.5 text-center" style={chipStyle}>
@@ -602,14 +702,14 @@ export function SchedulePlannerPage() {
                                                                         if (p.shiftStart && p.shiftEnd)
                                                                             return <p className="text-[9px] opacity-70 leading-none mt-1">{p.shiftStart}–{p.shiftEnd}</p>
                                                                         if (sched?.type === 'Multi')
-                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">multi-shift</p>
+                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">{t('schedulePlanner.multiShift')}</p>
                                                                         if (sched?.requiredHoursPerDay)
-                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">{sched.requiredHoursPerDay}h/day</p>
+                                                                            return <p className="text-[9px] opacity-70 leading-none mt-1">{t('schedulePlanner.hoursPerDay', { count: sched.requiredHoursPerDay })}</p>
                                                                         return null
                                                                     })()}
                                                                 </div>
                                                             ) : p.isDayOff ? (
-                                                                <span className="text-[11px] text-rose-300 font-bold select-none">OFF</span>
+                                                                <span className="text-[11px] text-rose-300 font-bold select-none">{t('schedulePlanner.off')}</span>
                                                             ) : (
                                                                 <span className="text-[20px] text-text-muted/15 group-hover/row:text-text-muted/35 transition-colors select-none">+</span>
                                                             )}
@@ -642,7 +742,7 @@ export function SchedulePlannerPage() {
                                         {modal.dayLabel} {modal.dayNum} · {modal.dateStr}
                                     </span>
                                     <h3 className="text-base font-black text-text-dark mt-1">{emp?.employeeName}</h3>
-                                    <p className="text-[11px] text-text-muted">Only this specific date</p>
+                                    <p className="text-[11px] text-text-muted">{t('schedulePlanner.onlyThisDate')}</p>
                                 </div>
                                 <button onClick={() => setModal(null)}
                                     className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-black/[0.06] text-text-muted transition-colors">
@@ -657,8 +757,8 @@ export function SchedulePlannerPage() {
                                     onChange={e => { setMDayOff(e.target.checked); if (e.target.checked) { setMScheduleId(null); setMReset(false) } }}
                                     className="w-4 h-4 rounded accent-rose-500" />
                                 <div>
-                                    <p className="text-sm font-bold text-text-dark">Mark as day off</p>
-                                    <p className="text-[10px] text-text-muted">No schedule for this date</p>
+                                    <p className="text-sm font-bold text-text-dark">{t('schedulePlanner.markAsDayOff')}</p>
+                                    <p className="text-[10px] text-text-muted">{t('schedulePlanner.noScheduleForDate')}</p>
                                 </div>
                             </label>
 
@@ -666,7 +766,7 @@ export function SchedulePlannerPage() {
                             {!mDayOff && (
                                 <div className="space-y-2">
                                     <p className="text-[10px] font-black text-text-muted uppercase tracking-widest px-1">
-                                        Select schedule
+                                        {t('schedulePlanner.selectSchedule')}
                                     </p>
                                     <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                                         {schedules.map(s => {
@@ -691,11 +791,11 @@ export function SchedulePlannerPage() {
                                                             <p className="text-[10px] text-text-muted">
                                                                 {s.shiftStart} – {s.shiftEnd}
                                                                 {' · '}
-                                                                {Math.round((timeToMins(s.shiftEnd) - timeToMins(s.shiftStart)) / 60 * 10) / 10} h
+                                                                {t('schedulePlanner.hoursWithCount', { count: Math.round((timeToMins(s.shiftEnd) - timeToMins(s.shiftStart)) / 60 * 10) / 10 })}
                                                             </p>
                                                         ) : (
                                                             <p className="text-[10px] text-text-muted">
-                                                                Flexible · {s.requiredHoursPerDay} h/day
+                                                                {t('schedulePlanner.flexibleHoursPerDay', { hours: s.requiredHoursPerDay })}
                                                             </p>
                                                         )}
                                                     </div>
@@ -717,8 +817,8 @@ export function SchedulePlannerPage() {
                                         onChange={e => { setMReset(e.target.checked); if (e.target.checked) { setMDayOff(false); setMScheduleId(null) } }}
                                         className="w-4 h-4 rounded accent-primary" />
                                     <div>
-                                        <p className="text-sm font-bold text-text-dark">Clear assignment</p>
-                                        <p className="text-[10px] text-text-muted">Remove schedule for this date</p>
+                                        <p className="text-sm font-bold text-text-dark">{t('schedulePlanner.clearAssignment')}</p>
+                                        <p className="text-[10px] text-text-muted">{t('schedulePlanner.removeScheduleForDate')}</p>
                                     </div>
                                 </label>
                             )}
@@ -727,12 +827,12 @@ export function SchedulePlannerPage() {
                             <div className="flex gap-2 pt-1">
                                 <button onClick={() => setModal(null)}
                                     className="flex-1 py-2.5 text-sm font-bold text-text-muted bg-black/[0.05] rounded-2xl hover:bg-black/[0.08] transition-colors">
-                                    Cancel
+                                    {t('common.cancel')}
                                 </button>
                                 <button onClick={applyModal}
                                     disabled={!mDayOff && !mScheduleId && !mReset}
                                     className="flex-1 py-2.5 text-sm font-bold text-white bg-primary rounded-2xl hover:bg-primary/85 disabled:opacity-40 transition-colors">
-                                    Apply
+                                    {t('common.apply')}
                                 </button>
                             </div>
                         </div>

@@ -7,6 +7,7 @@ using Backend.Infrastructure.Initialization;
 using Backend.Infrastructure.Persistence;
 using Backend.Infrastructure.Security;
 using Backend.Infrastructure.System;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -81,7 +82,12 @@ public static class DependencyInjection
         services.AddHostedService<LogSyncSchedulerService>();
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IAuditLogService, AuditLogService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
+        services.AddMemoryCache();
+        services.AddScoped<IPermissionService, PermissionService>();
+        services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
         services.AddScoped<ISystemStatusService, SystemStatusService>();
         services.AddScoped<IDeviceDoorService, DeviceDoorService>();
         services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();

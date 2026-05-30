@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
@@ -13,19 +14,7 @@ interface Employee {
   employeeNo: string | null
 }
 
-interface AttendanceRecord {
-  id: string
-  employeeId: string
-  employeeName: string
-  eventTimeUtc: string
-  eventType: string
-  source: string
-}
 
-
-function formatDT(iso: string) {
-  return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-}
 
 type PageTab = 'daily' | 'weekly' | 'monthly' | 'schedules' | 'leaves'
 
@@ -115,6 +104,17 @@ function formatTimeOnly(iso: string) {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+/** Десятичные часы → "Hh Mm" (9.5 → "9h 30m", 0.5 → "30m", 9 → "9h"). */
+function formatHM(hours: number): string {
+  const totalMin = Math.round(hours * 60)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  if (h === 0 && m === 0) return '0m'
+  if (h === 0) return `${m}m`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
 interface WorkScheduleShiftRow {
   id?: string
   name: string
@@ -136,6 +136,8 @@ interface WorkScheduleRow {
   color: string
   createdUtc: string
   shifts?: WorkScheduleShiftRow[]
+  countEarlyArrival?: boolean
+  overtimeDailyThresholdMinutes?: number
 }
 
 
@@ -214,6 +216,7 @@ function computeShiftHours(start: string, end: string): number | null {
 }
 
 export function WorkHoursTrackingPage() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { exporting, downloadReport } = useExportReport(token)
   const [tab, setTab] = useState<PageTab>('daily')
@@ -222,10 +225,10 @@ export function WorkHoursTrackingPage() {
   // Filters
   const [employees, setEmployees] = useState<Employee[]>([])
   const [filterEmployee, setFilterEmployee] = useState('')
-  const [filterFrom, setFilterFrom] = useState(() => {
+  const [filterFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10)
   })
-  const [filterTo, setFilterTo] = useState(() => new Date().toISOString().slice(0, 10))
+  const [filterTo] = useState(() => new Date().toISOString().slice(0, 10))
   // Daily-вкладка работает с одной датой (день, за который смотрим отчёт).
   const [filterDailyDate, setFilterDailyDate] = useState(() => new Date().toISOString().slice(0, 10))
   // Weekly/Monthly — anchor-даты, диапазон вычисляется автоматически.
@@ -238,7 +241,6 @@ export function WorkHoursTrackingPage() {
   const [correctionSaving, setCorrectionSaving] = useState(false)
 
   // Data
-  const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [daily, setDaily] = useState<DailySummary[]>([])
   const [period, setPeriod] = useState<PeriodRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -248,11 +250,13 @@ export function WorkHoursTrackingPage() {
   const [editingSchedule, setEditingSchedule] = useState<WorkScheduleRow | null>(null)
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
-    type: 'Standard' as 'Standard' | 'Flexible' | 'Multi',
+    type: 'Standard' as 'Standard' | 'Flexible' | 'Multi' | 'Off',
     shiftStart: '09:00',
     shiftEnd: '18:00',
     requiredHoursPerDay: '8',
     color: '#6366f1',
+    countEarlyArrival: true,
+    overtimeDailyThresholdMinutes: '0',
   })
   const [scheduleShifts, setScheduleShifts] = useState<WorkScheduleShiftRow[]>([])
   const [scheduleSaving, setScheduleSaving] = useState(false)
@@ -290,11 +294,11 @@ export function WorkHoursTrackingPage() {
         method: 'POST', token,
         body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to }),
       })
-      alert(`Report sent to ${emailReportTo.trim()}`)
+      alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
       setEmailReportModal(false)
       setEmailReportTo('')
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Failed to send')
+      alert(e instanceof Error ? e.message : t('workHours.failedToSend'))
     } finally { setEmailReportSending(false) }
   }
 
@@ -370,20 +374,6 @@ useEffect(() => {
   const loadMeta = async () => {
     const emps = await apiRequest<Employee[]>('/api/employees', authOpts).catch(() => [] as Employee[])
     setEmployees(emps)
-  }
-
-  const loadRecords = async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (filterEmployee) params.set('employeeId', filterEmployee)
-      if (filterFrom) params.set('from', new Date(filterFrom).toISOString())
-      if (filterTo) { const d = new Date(filterTo); d.setDate(d.getDate() + 1); params.set('to', d.toISOString()) }
-      const data = await apiRequest<AttendanceRecord[]>(`/api/attendance?${params}`, authOpts)
-      setRecords(data)
-    } finally {
-      setLoading(false)
-    }
   }
 
   function openCorrection(d: DailySummary) {
@@ -481,6 +471,8 @@ useEffect(() => {
       shiftEnd: '18:00',
       requiredHoursPerDay: '8',
       color: '#6366f1',
+      countEarlyArrival: true,
+      overtimeDailyThresholdMinutes: '0',
     })
     setScheduleShifts([])
     setEditingSchedule(null)
@@ -491,11 +483,13 @@ useEffect(() => {
     setEditingSchedule(s)
     setScheduleForm({
       name: s.name,
-      type: (['Standard', 'Flexible', 'Multi'].includes(s.type) ? s.type : 'Standard') as 'Standard' | 'Flexible' | 'Multi',
+      type: (['Standard', 'Flexible', 'Multi', 'Off'].includes(s.type) ? s.type : 'Standard') as 'Standard' | 'Flexible' | 'Multi' | 'Off',
       shiftStart: timeToInput(s.shiftStart) || '09:00',
       shiftEnd: timeToInput(s.shiftEnd) || '18:00',
       requiredHoursPerDay: String(s.requiredHoursPerDay ?? 8),
       color: s.color || '#6366f1',
+      countEarlyArrival: s.countEarlyArrival ?? true,
+      overtimeDailyThresholdMinutes: String(s.overtimeDailyThresholdMinutes ?? 0),
     })
     // Load sub-shifts for Multi schedules
     setScheduleShifts(s.shifts?.map(sh => ({
@@ -519,19 +513,22 @@ useEffect(() => {
     try {
       const isFlex = scheduleForm.type === 'Flexible'
       const isMulti = scheduleForm.type === 'Multi'
+      const isOff = scheduleForm.type === 'Off'
       // Для Standard/Shift Norm = (end − start), считается автоматически.
-      const computed = (isFlex || isMulti) ? null : computeShiftHours(scheduleForm.shiftStart, scheduleForm.shiftEnd)
+      const computed = (isFlex || isMulti || isOff) ? null : computeShiftHours(scheduleForm.shiftStart, scheduleForm.shiftEnd)
       const body: Record<string, unknown> = {
         name,
         type: scheduleForm.type,
-        shiftStart: (isFlex || isMulti) ? null : inputTimeToApi(scheduleForm.shiftStart),
-        shiftEnd: (isFlex || isMulti) ? null : inputTimeToApi(scheduleForm.shiftEnd),
+        shiftStart: (isFlex || isMulti || isOff) ? null : inputTimeToApi(scheduleForm.shiftStart),
+        shiftEnd: (isFlex || isMulti || isOff) ? null : inputTimeToApi(scheduleForm.shiftEnd),
         requiredHoursPerDay: isFlex
           ? (parseFloat(scheduleForm.requiredHoursPerDay) || 8)
-          : isMulti
-            ? 8
+          : (isMulti || isOff)
+            ? 0
             : (computed ?? 8),
         color: scheduleForm.color,
+        countEarlyArrival: scheduleForm.countEarlyArrival,
+        overtimeDailyThresholdMinutes: Math.max(0, parseInt(scheduleForm.overtimeDailyThresholdMinutes, 10) || 0),
       }
       if (isMulti) {
         body.shifts = scheduleShifts.map((sh, idx) => ({
@@ -644,7 +641,7 @@ useEffect(() => {
             days.push({ date: ds, scheduleId: assignSchedule.id, isDayOff: false, reset: false })
           }
         }
-        if (days.length === 0) { setAssignError('No dates match the selected days of week in this range'); return }
+        if (days.length === 0) { setAssignError(t('workHours.noDatesMatch')); return }
 
         // Set WorkScheduleId for all employees
         await apiRequest('/api/employees/bulk-schedule', {
@@ -664,7 +661,7 @@ useEffect(() => {
       setAssignSchedule(null)
       setAssignRemoveMode(false)
     } catch (err) {
-      setAssignError(err instanceof Error ? err.message : 'Assignment failed. Please try again.')
+      setAssignError(err instanceof Error ? err.message : t('workHours.assignmentFailed'))
     } finally {
       setAssignSaving(false)
     }
@@ -732,14 +729,14 @@ useEffect(() => {
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 animate-in slide-in-from-top-4 duration-500">
             <PageHeader
               className="p-0 border-none shadow-none bg-transparent"
-              title="Time & attendance"
-              description="Daily, weekly and monthly attendance reports based on device authentication logs."
+              title={t('workHours.pageTitle')}
+              description={t('workHours.pageDescription')}
             />
           </div>
 
           {/* Combined tab + sub-tab bar */}
           {(() => {
-            const showSub = (tab === 'daily' || tab === 'weekly' || tab === 'monthly') && tab !== 'leaves' && tab !== 'schedules'
+            const showSub = tab === 'daily' || tab === 'weekly' || tab === 'monthly'
             const subTabCounts: Record<SubTab, number> = (() => {
               if (!showSub) return { all: 0, absent: 0, late: 0, early: 0, overtime: 0, incomplete: 0 }
               if (tab === 'daily') {
@@ -775,7 +772,21 @@ useEffect(() => {
                 incomplete: emps.filter(rows => rows.some(r => !!r.checkInUtc)).length,
               }
             })()
-            const subLabels: Record<SubTab, string> = { all: 'All', absent: 'Absent', late: 'Late', early: 'Early', overtime: 'Overtime', incomplete: 'Check-in / out' }
+            const subLabels: Record<SubTab, string> = {
+              all: t('common.all'),
+              absent: t('workHours.subTabAbsent'),
+              late: t('workHours.subTabLate'),
+              early: t('workHours.subTabEarly'),
+              overtime: t('workHours.subTabOvertime'),
+              incomplete: t('workHours.subTabIncomplete'),
+            }
+            const tabLabels: Record<PageTab, string> = {
+              daily: t('workHours.tabDaily'),
+              weekly: t('workHours.tabWeekly'),
+              monthly: t('workHours.tabMonthly'),
+              schedules: t('workHours.tabSchedules'),
+              leaves: t('workHours.tabLeaves'),
+            }
             const btnBase = 'flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap'
             const btnActive = 'bg-primary text-white shadow-sm'
             const btnIdle = 'text-text-light hover:text-text-dark'
@@ -783,14 +794,14 @@ useEffect(() => {
               <div className="bg-surface rounded-2xl shadow-sm p-1 w-fit max-w-full">
                 {/* Main tabs row */}
                 <div className="flex gap-1">
-                  {(['daily', 'weekly', 'monthly', 'schedules', 'leaves'] as PageTab[]).map(t => (
+                  {(['daily', 'weekly', 'monthly', 'schedules', 'leaves'] as PageTab[]).map(tt => (
                     <button
-                      key={t}
+                      key={tt}
                       type="button"
-                      onClick={() => { setTab(t); setSubTab('all') }}
-                      className={`${btnBase} px-5 ${tab === t ? btnActive : btnIdle}`}
+                      onClick={() => { setTab(tt); setSubTab('all') }}
+                      className={`${btnBase} px-5 ${tab === tt ? btnActive : btnIdle}`}
                     >
-                      {t}
+                      {tabLabels[tt]}
                     </button>
                   ))}
                 </div>
@@ -824,45 +835,22 @@ useEffect(() => {
           {tab !== 'schedules' && tab !== 'leaves' && (
           <div className="bg-surface rounded-2xl p-5 shadow-sm flex flex-wrap gap-4 items-end">
             <div className="space-y-1 flex-1 min-w-[160px]">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Employee</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.employee')}</label>
               <select
                 value={filterEmployee}
                 onChange={(e) => setFilterEmployee(e.target.value)}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
               >
-                <option value="">All employees</option>
+                <option value="">{t('workHours.allEmployees')}</option>
                 {employees.map((e) => (
                   <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
                 ))}
               </select>
             </div>
 
-            {tab === 'records' && (
-              <>
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">From</label>
-                  <input
-                    type="date"
-                    value={filterFrom}
-                    onChange={(e) => setFilterFrom(e.target.value)}
-                    className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">To</label>
-                  <input
-                    type="date"
-                    value={filterTo}
-                    onChange={(e) => setFilterTo(e.target.value)}
-                    className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                  />
-                </div>
-              </>
-            )}
-
             {tab === 'daily' && (
               <div className="space-y-1">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Date</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
                 <input
                   type="date"
                   value={filterDailyDate}
@@ -874,7 +862,7 @@ useEffect(() => {
 
             {tab === 'weekly' && (
               <div className="space-y-1">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Week of</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.weekOf')}</label>
                 <input type="date" value={weeklyAnchor} onChange={(e) => setWeeklyAnchor(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
               </div>
@@ -882,7 +870,7 @@ useEffect(() => {
 
             {tab === 'monthly' && (
               <div className="space-y-1">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Month</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.month')}</label>
                 <input type="month" value={monthlyAnchor} onChange={(e) => setMonthlyAnchor(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
               </div>
@@ -891,7 +879,7 @@ useEffect(() => {
             {(tab === 'daily' || tab === 'weekly' || tab === 'monthly') && (
               <div className="flex items-end gap-2 flex-wrap">
                 <Button type="button" icon="send" variant="outline" onClick={() => setEmailReportModal(true)}>
-                  Send Report
+                  {t('workHours.sendReport')}
                 </Button>
                 <Button
                   type="button"
@@ -909,7 +897,7 @@ useEffect(() => {
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
                 >
-                  {exporting === 'excel' ? 'Exporting...' : 'Excel'}
+                  {exporting === 'excel' ? t('workHours.exporting') : t('workHours.excel')}
                 </Button>
                 <Button
                   type="button"
@@ -927,7 +915,7 @@ useEffect(() => {
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
                 >
-                  {exporting === 'pdf' ? 'Exporting...' : 'PDF'}
+                  {exporting === 'pdf' ? t('workHours.exporting') : t('workHours.pdf')}
                 </Button>
               </div>
             )}
@@ -939,16 +927,16 @@ useEffect(() => {
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <p className="text-xs text-text-light max-w-xl">
-                  Create templates (standard hours, shift, or flexible norm). Assign a schedule to an employee under{' '}
-                  <span className="font-bold text-text-dark">People → employee → Schedule &amp; self-service</span>.
+                  {t('workHours.schedulesIntroPrefix')}{' '}
+                  <span className="font-bold text-text-dark">{t('workHours.schedulesIntroPath')}</span>.
                 </p>
                 <Button type="button" icon="add" onClick={openCreateSchedule}>
-                  New schedule
+                  {t('workHours.newSchedule')}
                 </Button>
               </div>
               <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                 <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-                  <p className="text-xs font-black text-text-light uppercase tracking-widest">{schedules.length} schedule{schedules.length === 1 ? '' : 's'}</p>
+                  <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.schedulesCount', { count: schedules.length })}</p>
                 </div>
                 {loading ? (
                   <div className="flex items-center justify-center py-16">
@@ -957,18 +945,18 @@ useEffect(() => {
                 ) : schedules.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                     <span className="material-symbols-outlined text-4xl">calendar_month</span>
-                    <p className="text-sm">No work schedules yet. Create one to assign in employee profiles.</p>
+                    <p className="text-sm">{t('workHours.noSchedulesYet')}</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                          <th className="px-5 py-3 text-left">Name</th>
-                          <th className="px-5 py-3 text-left">Type</th>
-                          <th className="px-5 py-3 text-left">Hours</th>
-                          <th className="px-5 py-3 text-left">Norm / day</th>
-                          <th className="px-5 py-3 text-right">Actions</th>
+                          <th className="px-5 py-3 text-left">{t('common.name')}</th>
+                          <th className="px-5 py-3 text-left">{t('common.type')}</th>
+                          <th className="px-5 py-3 text-left">{t('workHours.hours')}</th>
+                          <th className="px-5 py-3 text-left">{t('workHours.normPerDay')}</th>
+                          <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -980,7 +968,7 @@ useEffect(() => {
                                 {s.name}
                               </div>
                             </td>
-                            <td className="px-5 py-3 text-text-dark">{s.type}</td>
+                            <td className="px-5 py-3 text-text-dark">{t(`workHours.scheduleType.${s.type}`, { defaultValue: s.type })}</td>
                             <td className="px-5 py-3 text-text-light text-xs">
                               {s.type === 'Flexible'
                                 ? '—'
@@ -1002,21 +990,21 @@ useEffect(() => {
                                 className="text-[10px] font-black uppercase tracking-wider hover:underline mr-3"
                                 style={{ color: s.color || '#6366f1' }}
                               >
-                                Assign
+                                {t('workHours.assign')}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openEditSchedule(s)}
                                 className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline mr-3"
                               >
-                                Edit
+                                {t('common.edit')}
                               </button>
                               <button
                                 type="button"
                                 onClick={() => { setEditingSchedule(s); setScheduleModal('delete') }}
                                 className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline"
                               >
-                                Delete
+                                {t('common.delete')}
                               </button>
                             </td>
                           </tr>
@@ -1046,7 +1034,7 @@ useEffect(() => {
             <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border flex items-center justify-between">
                 <p className="text-xs font-black text-text-light uppercase tracking-widest">
-                  {filteredDaily.length} employee{filteredDaily.length === 1 ? '' : 's'} on {formatDateOnly(filterDailyDate)}
+                  {t('workHours.employeesOnDate', { count: filteredDaily.length, date: formatDateOnly(filterDailyDate) })}
                 </p>
               </div>
               {loading ? (
@@ -1056,29 +1044,29 @@ useEffect(() => {
               ) : daily.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                   <span className="material-symbols-outlined text-4xl">event_busy</span>
-                  <p className="text-sm">No employees with assigned schedule. Assign a schedule under People → employee → Schedule & self-service.</p>
+                  <p className="text-sm">{t('workHours.noEmployeesWithSchedule')}</p>
                 </div>
               ) : filteredDaily.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
                   <span className="material-symbols-outlined text-4xl">check_circle</span>
-                  <p className="text-sm">No employees match this filter.</p>
+                  <p className="text-sm">{t('workHours.noEmployeesMatchFilter')}</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                        <th className="px-5 py-3 text-left">Employee</th>
-                        <th className="px-5 py-3 text-left">Schedule</th>
-                        <th className="px-5 py-3 text-left">Shift</th>
-                        <th className="px-5 py-3 text-left">Check-in</th>
-                        <th className="px-5 py-3 text-left">Check-out</th>
-                        <th className="px-5 py-3 text-right">Actual</th>
-                        <th className="px-5 py-3 text-right">Norm</th>
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">Late</th>}
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">Early</th>}
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">OT</th>}
-                        <th className="px-5 py-3 text-right">Edit</th>
+                        <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>
+                        <th className="px-5 py-3 text-left">{t('workHours.schedule')}</th>
+                        <th className="px-5 py-3 text-left">{t('workHours.shift')}</th>
+                        <th className="px-5 py-3 text-left">{t('workHours.checkIn')}</th>
+                        <th className="px-5 py-3 text-left">{t('workHours.checkOut')}</th>
+                        <th className="px-5 py-3 text-right">{t('workHours.actual')}</th>
+                        <th className="px-5 py-3 text-right">{t('workHours.norm')}</th>
+                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.late')}</th>}
+                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.early')}</th>}
+                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>}
+                        <th className="px-5 py-3 text-right">{t('common.edit')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1086,25 +1074,25 @@ useEffect(() => {
                         <tr key={`${d.employeeId}-${d.date}`} className={`border-b border-border last:border-none hover:bg-background-light transition-colors ${d.isAbsent ? 'opacity-60' : ''}`}>
                           <td className="px-5 py-3 font-bold text-text-dark">
                             {d.employeeName ?? '—'}
-                            {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? 'Corrected'}>✎</span>}
+                            {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? t('workHours.corrected')}>✎</span>}
                           </td>
                           <td className="px-5 py-3 text-text-light text-xs">
-                            {d.isDayOff ? <span className="text-slate-400 italic">Day off</span> : (d.scheduleName ?? '—')}
+                            {d.isDayOff ? <span className="text-slate-400 italic">{t('workHours.dayOff')}</span> : (d.scheduleName ?? '—')}
                           </td>
                           <td className="px-5 py-3 text-text-light font-mono text-xs">{d.shiftStart && d.shiftEnd ? `${d.shiftStart}–${d.shiftEnd}` : '—'}</td>
                           <td className="px-5 py-3 font-mono">
                             {d.isDayOff ? <span className="text-slate-400">—</span>
                               : d.checkInUtc ? <span className="text-green-700">{formatTimeOnly(d.checkInUtc)}</span>
-                              : <span className="text-error-text font-bold">absent</span>}
+                              : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                           </td>
                           <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right font-mono text-text-dark">{d.totalHours > 0 ? d.totalHours.toFixed(2) : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? d.normHours.toFixed(2) : '—'}</td>
+                          <td className="px-5 py-3 text-right font-mono text-text-dark">{d.totalHours > 0 ? formatHM(d.totalHours) : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>
                           {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
                           {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{d.overtimeHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
+                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
                           <td className="px-5 py-3 text-right">
-                            <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">Edit</button>
+                            <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                           </td>
                         </tr>
                       ))}
@@ -1136,7 +1124,7 @@ useEffect(() => {
             return (
               <div className="space-y-4">
                 <div className="bg-surface rounded-2xl shadow-sm px-5 py-3 text-xs font-black text-text-light uppercase tracking-widest">
-                  {formatDateOnly(range.from + 'T00:00:00')} — {formatDateOnly(range.to + 'T00:00:00')} · {filteredEmps.length} employee(s)
+                  {formatDateOnly(range.from + 'T00:00:00')} — {formatDateOnly(range.to + 'T00:00:00')} · {t('workHours.employeesCount', { count: filteredEmps.length })}
                 </div>
                 {loading ? (
                   <div className="flex items-center justify-center py-16">
@@ -1145,12 +1133,12 @@ useEffect(() => {
                 ) : byEmp.size === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light bg-surface rounded-2xl">
                     <span className="material-symbols-outlined text-4xl">event_busy</span>
-                    <p className="text-sm">No employees with assigned schedule.</p>
+                    <p className="text-sm">{t('workHours.noEmployeesAssignedShort')}</p>
                   </div>
                 ) : filteredEmps.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light bg-surface rounded-2xl">
                     <span className="material-symbols-outlined text-4xl">check_circle</span>
-                    <p className="text-sm">No employees match this filter.</p>
+                    <p className="text-sm">{t('workHours.noEmployeesMatchFilter')}</p>
                   </div>
                 ) : (
                   filteredEmps.map((emp) => {
@@ -1168,28 +1156,28 @@ useEffect(() => {
                         <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
                           <p className="text-sm font-black text-text-dark">{emp.name}</p>
                           <div className="flex flex-wrap gap-4 text-[10px] font-black text-text-light uppercase tracking-widest">
-                            <span>Present: <strong className="text-text-dark">{present}/{workRows.length}</strong></span>
-                            {absent > 0 && <span>Absent: <strong className="text-error-text">{absent}d</strong></span>}
-                            <span>Actual: <strong className="text-text-dark">{totalActual.toFixed(2)}h</strong></span>
-                            <span>Norm: <strong className="text-text-dark">{totalNorm.toFixed(2)}h</strong></span>
-                            {totalOT > 0 && <span>OT: <strong className="text-purple-700">+{totalOT.toFixed(2)}h</strong></span>}
-                            {deficit > 0.05 && <span>Deficit: <strong className="text-red-600">-{deficit.toFixed(2)}h</strong></span>}
-                            {totalLate > 0 && <span>Late: <strong className="text-amber-700">{totalLate}m</strong></span>}
-                            {totalEarlyDays > 0 && <span>Early: <strong className="text-orange-600">{totalEarlyDays}d</strong></span>}
+                            <span>{t('workHours.present')}: <strong className="text-text-dark">{present}/{workRows.length}</strong></span>
+                            {absent > 0 && <span>{t('workHours.absentLabel')}: <strong className="text-error-text">{absent}d</strong></span>}
+                            <span>{t('workHours.actual')}: <strong className="text-text-dark">{formatHM(totalActual)}</strong></span>
+                            <span>{t('workHours.norm')}: <strong className="text-text-dark">{formatHM(totalNorm)}</strong></span>
+                            {totalOT > 0 && <span>{t('workHours.ot')}: <strong className="text-purple-700">+{formatHM(totalOT)}</strong></span>}
+                            {deficit > 0.05 && <span>{t('workHours.deficit')}: <strong className="text-red-600">-{formatHM(deficit)}</strong></span>}
+                            {totalLate > 0 && <span>{t('workHours.late')}: <strong className="text-amber-700">{totalLate}m</strong></span>}
+                            {totalEarlyDays > 0 && <span>{t('workHours.early')}: <strong className="text-orange-600">{totalEarlyDays}d</strong></span>}
                           </div>
                         </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                                <th className="px-5 py-2 text-left">Date</th>
-                                <th className="px-5 py-2 text-left">Check-in</th>
-                                <th className="px-5 py-2 text-left">Check-out</th>
-                                <th className="px-5 py-2 text-right">Actual</th>
-                                <th className="px-5 py-2 text-right">Norm</th>
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">Late</th>}
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">Early</th>}
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">OT</th>}
+                                <th className="px-5 py-2 text-left">{t('common.date')}</th>
+                                <th className="px-5 py-2 text-left">{t('workHours.checkIn')}</th>
+                                <th className="px-5 py-2 text-left">{t('workHours.checkOut')}</th>
+                                <th className="px-5 py-2 text-right">{t('workHours.actual')}</th>
+                                <th className="px-5 py-2 text-right">{t('workHours.norm')}</th>
+                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.late')}</th>}
+                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.early')}</th>}
+                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.ot')}</th>}
                               </tr>
                             </thead>
                             <tbody>
@@ -1197,24 +1185,24 @@ useEffect(() => {
                                 <tr key={r.date} className={`border-b border-border last:border-none ${r.isAbsent ? 'opacity-60' : ''} ${r.isDayOff ? 'bg-slate-50' : ''}`}>
                                   <td className="px-5 py-2 text-text-dark">
                                     {formatDateOnly(r.date)}
-                                    {r.corrected && <span className="ml-1 text-[9px] text-amber-700" title="Corrected">✎</span>}
-                                    {r.isDayOff && <span className="ml-1 text-[9px] text-slate-400 italic">day off</span>}
+                                    {r.corrected && <span className="ml-1 text-[9px] text-amber-700" title={t('workHours.corrected')}>✎</span>}
+                                    {r.isDayOff && <span className="ml-1 text-[9px] text-slate-400 italic">{t('workHours.dayOffLower')}</span>}
                                   </td>
                                   <td className="px-5 py-2 font-mono">
                                     {r.isDayOff ? <span className="text-slate-400">—</span>
                                       : r.checkInUtc ? <span className="text-green-700">{formatTimeOnly(r.checkInUtc)}</span>
-                                      : <span className="text-error-text font-bold">absent</span>}
+                                      : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                                   </td>
                                   <td className="px-5 py-2 font-mono">
                                     {r.checkOutUtc
                                       ? <span className={(r.earlyLeaveMinutes ?? 0) > 0 ? 'text-orange-600' : 'text-blue-700'}>{formatTimeOnly(r.checkOutUtc)}</span>
                                       : <span className="text-text-light">—</span>}
                                   </td>
-                                  <td className="px-5 py-2 text-right font-mono text-text-dark">{r.totalHours > 0 ? r.totalHours.toFixed(2) : <span className="text-text-light">—</span>}</td>
-                                  <td className="px-5 py-2 text-right font-mono text-text-light">{r.normHours > 0 ? r.normHours.toFixed(2) : '—'}</td>
+                                  <td className="px-5 py-2 text-right font-mono text-text-dark">{r.totalHours > 0 ? formatHM(r.totalHours) : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right font-mono text-text-light">{r.normHours > 0 ? formatHM(r.normHours) : '—'}</td>
                                   {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{r.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
                                   {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{r.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{r.overtimeHours.toFixed(2)}h</span> : <span className="text-text-light">—</span>}</td>}
+                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
                                 </tr>
                               ))}
                             </tbody>
@@ -1235,16 +1223,16 @@ useEffect(() => {
               <div className="space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-bold text-text-dark">Admin-assigned leaves</p>
-                    <p className="text-xs text-text-light">Vacations and days-off assigned by HR. Approved paid leaves count as worked days in payroll.</p>
+                    <p className="text-sm font-bold text-text-dark">{t('workHours.adminAssignedLeaves')}</p>
+                    <p className="text-xs text-text-light">{t('workHours.adminAssignedLeavesDesc')}</p>
                   </div>
                   <Button type="button" icon="add" onClick={() => setLeaveModal('create')}>
-                    New leave
+                    {t('workHours.newLeave')}
                   </Button>
                 </div>
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{leaves.length} leave{leaves.length === 1 ? '' : 's'}</p>
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.leavesCount', { count: leaves.length })}</p>
                   </div>
                   {leavesLoading ? (
                     <div className="flex items-center justify-center py-16">
@@ -1253,19 +1241,19 @@ useEffect(() => {
                   ) : leaves.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                       <span className="material-symbols-outlined text-4xl">beach_access</span>
-                      <p className="text-sm">No leaves yet. Create one to assign vacation or day-off to an employee.</p>
+                      <p className="text-sm">{t('workHours.noLeavesYet')}</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                            <th className="px-5 py-3 text-left">Employee</th>
-                            <th className="px-5 py-3 text-left">Type</th>
-                            <th className="px-5 py-3 text-left">Dates</th>
-                            <th className="px-5 py-3 text-left">Reason</th>
-                            <th className="px-5 py-3 text-left">Status</th>
-                            <th className="px-5 py-3 text-right">Actions</th>
+                            <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.type')}</th>
+                            <th className="px-5 py-3 text-left">{t('workHours.dates')}</th>
+                            <th className="px-5 py-3 text-left">{t('workHours.reason')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.status')}</th>
+                            <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1277,10 +1265,10 @@ useEffect(() => {
                               </td>
                               <td className="px-5 py-3">
                                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${lv.leaveType === 'Vacation' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>
-                                  {lv.leaveType === 'Vacation' ? 'Vacation' : 'Day-off'}
+                                  {lv.leaveType === 'Vacation' ? t('workHours.vacation') : t('workHours.dayOffNoun')}
                                 </span>
                                 <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${lv.isPaid ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>
-                                  {lv.isPaid ? 'Paid' : 'Unpaid'}
+                                  {lv.isPaid ? t('workHours.paid') : t('workHours.unpaid')}
                                 </span>
                               </td>
                               <td className="px-5 py-3 text-text-light font-mono text-xs">
@@ -1294,23 +1282,23 @@ useEffect(() => {
                                   lv.status === 'Cancelled' ? 'bg-slate-100 text-slate-500' :
                                   'bg-amber-50 text-amber-700'
                                 }`}>
-                                  {lv.status}
+                                  {t(`workHours.status.${lv.status}`, { defaultValue: lv.status })}
                                 </span>
                               </td>
                               <td className="px-5 py-3 text-right space-x-2">
                                 {lv.status === 'Pending' && (
                                   <>
                                     <button type="button" onClick={() => approveLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-green-700 hover:underline">
-                                      Approve
+                                      {t('workHours.approve')}
                                     </button>
                                     <button type="button" onClick={() => rejectLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
-                                      Reject
+                                      {t('workHours.reject')}
                                     </button>
                                   </>
                                 )}
                                 {(lv.status === 'Rejected' || lv.status === 'Cancelled') && (
                                   <button type="button" onClick={() => deleteLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
-                                    Delete
+                                    {t('common.delete')}
                                   </button>
                                 )}
                               </td>
@@ -1326,12 +1314,12 @@ useEffect(() => {
               {/* Self-service requests */}
               <div className="space-y-3">
                 <div>
-                  <p className="text-sm font-bold text-text-dark">Self-service requests</p>
-                  <p className="text-xs text-text-light">Vacation, absence and overtime requests submitted by employees via the self-service portal.</p>
+                  <p className="text-sm font-bold text-text-dark">{t('workHours.selfServiceRequests')}</p>
+                  <p className="text-xs text-text-light">{t('workHours.selfServiceRequestsDesc')}</p>
                 </div>
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-5 py-3 border-b border-border">
-                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{selfServiceReqs.length} request{selfServiceReqs.length === 1 ? '' : 's'}</p>
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.requestsCount', { count: selfServiceReqs.length })}</p>
                   </div>
                   {selfServiceLoading ? (
                     <div className="flex items-center justify-center py-16">
@@ -1340,20 +1328,20 @@ useEffect(() => {
                   ) : selfServiceReqs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                       <span className="material-symbols-outlined text-4xl">inbox</span>
-                      <p className="text-sm">No self-service requests yet.</p>
+                      <p className="text-sm">{t('workHours.noSelfServiceRequests')}</p>
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                            <th className="px-5 py-3 text-left">Employee</th>
-                            <th className="px-5 py-3 text-left">Type</th>
-                            <th className="px-5 py-3 text-left">From</th>
-                            <th className="px-5 py-3 text-left">To</th>
-                            <th className="px-5 py-3 text-left">Comment</th>
-                            <th className="px-5 py-3 text-left">Status</th>
-                            <th className="px-5 py-3 text-right">Actions</th>
+                            <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.type')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.from')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.to')}</th>
+                            <th className="px-5 py-3 text-left">{t('workHours.comment')}</th>
+                            <th className="px-5 py-3 text-left">{t('common.status')}</th>
+                            <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1366,7 +1354,7 @@ useEffect(() => {
                                   req.type === 'Overtime' ? 'bg-amber-50 text-amber-700' :
                                   'bg-blue-50 text-blue-700'
                                 }`}>
-                                  {req.type}
+                                  {t(`workHours.requestType.${req.type}`, { defaultValue: req.type })}
                                 </span>
                               </td>
                               <td className="px-5 py-3 text-text-light font-mono text-xs">
@@ -1382,17 +1370,17 @@ useEffect(() => {
                                   req.status === 'Rejected' ? 'bg-red-50 text-red-700' :
                                   'bg-amber-50 text-amber-700'
                                 }`}>
-                                  {req.status}
+                                  {t(`workHours.status.${req.status}`, { defaultValue: req.status })}
                                 </span>
                               </td>
                               <td className="px-5 py-3 text-right space-x-2">
                                 {req.status === 'Pending' && (
                                   <>
                                     <button type="button" onClick={() => approveSelfServiceReq(req.id)} className="text-[10px] font-black uppercase tracking-wider text-green-700 hover:underline">
-                                      Approve
+                                      {t('workHours.approve')}
                                     </button>
                                     <button type="button" onClick={() => rejectSelfServiceReq(req.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
-                                      Reject
+                                      {t('workHours.reject')}
                                     </button>
                                   </>
                                 )}
@@ -1407,25 +1395,26 @@ useEffect(() => {
               </div>
             </div>
           )}
+
         </div>
       </div>
 
       <Modal
         isOpen={scheduleModal === 'create' || scheduleModal === 'edit'}
         onClose={() => { setScheduleModal(null); setEditingSchedule(null) }}
-        title={scheduleModal === 'create' ? 'New work schedule' : 'Edit work schedule'}
+        title={scheduleModal === 'create' ? t('workHours.newWorkSchedule') : t('workHours.editWorkSchedule')}
       >
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Name</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.name')}</label>
             <Input
               value={scheduleForm.name}
               onChange={(e) => setScheduleForm((p) => ({ ...p, name: e.target.value }))}
-              placeholder="e.g. Office 9–18"
+              placeholder={t('workHours.scheduleNamePlaceholder')}
             />
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Color</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.color')}</label>
             <div className="flex items-center gap-2 flex-wrap">
               {['#6366f1','#8b5cf6','#ec4899','#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#64748b'].map(c => (
                 <button
@@ -1442,7 +1431,7 @@ useEffect(() => {
                 />
               ))}
               <label className="w-7 h-7 rounded-full border-2 border-dashed border-black/20 flex items-center justify-center cursor-pointer hover:border-black/40 transition-colors overflow-hidden relative"
-                title="Custom color">
+                title={t('workHours.customColor')}>
                 <input
                   type="color"
                   value={scheduleForm.color}
@@ -1455,7 +1444,7 @@ useEffect(() => {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Type</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.type')}</label>
             <select
               value={scheduleForm.type}
               onChange={(e) => {
@@ -1467,23 +1456,59 @@ useEffect(() => {
               }}
               className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
             >
-              <option value="Standard">Standard (fixed shift)</option>
-              <option value="Flexible">Flexible (hours per day)</option>
-              <option value="Multi">Multi (multiple sub-shifts)</option>
+              <option value="Standard">{t('workHours.typeStandard')}</option>
+              <option value="Flexible">{t('workHours.typeFlexible')}</option>
+              <option value="Multi">{t('workHours.typeMulti')}</option>
+              <option value="Off">{t('workHours.typeOff')}</option>
             </select>
           </div>
+          {scheduleForm.type !== 'Flexible' && scheduleForm.type !== 'Off' && (
+            <label className="flex items-start gap-2.5 rounded-xl bg-background-light px-4 py-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 rounded accent-primary"
+                checked={scheduleForm.countEarlyArrival}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, countEarlyArrival: e.target.checked }))}
+              />
+              <div className="text-xs leading-relaxed">
+                <div className="font-black text-text-dark">{t('workHours.countEarlyArrival')}</div>
+                <div className="text-text-muted">{t('workHours.countEarlyArrivalDesc')}</div>
+              </div>
+            </label>
+          )}
+          {scheduleForm.type !== 'Flexible' && scheduleForm.type !== 'Off' && (
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.overtimeDailyThreshold')}</label>
+              <Input
+                type="number"
+                value={scheduleForm.overtimeDailyThresholdMinutes}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, overtimeDailyThresholdMinutes: e.target.value }))}
+                min={0}
+                step={1}
+              />
+              <p className="text-[10px] text-text-muted">{t('workHours.overtimeDailyThresholdDesc')}</p>
+            </div>
+          )}
           {scheduleForm.type === 'Flexible' && (
             <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
               <span className="material-symbols-outlined text-amber-600 text-lg mt-0.5 shrink-0">warning</span>
               <p className="text-xs text-amber-800 leading-relaxed">
-                <strong className="font-black">Flexible schedule:</strong> late arrival, early departure and overtime will <strong className="font-black">not</strong> be calculated — only total worked hours per day are tracked.
+                <strong className="font-black">{t('workHours.flexibleScheduleTitle')}:</strong> {t('workHours.flexibleScheduleDesc')}
+              </p>
+            </div>
+          )}
+          {scheduleForm.type === 'Off' && (
+            <div className="flex items-start gap-2.5 rounded-xl bg-info-bg border border-info-text/20 px-4 py-3">
+              <span className="material-symbols-outlined text-info-text text-lg mt-0.5 shrink-0">event_busy</span>
+              <p className="text-xs text-info-text leading-relaxed">
+                <strong className="font-black">{t('workHours.offScheduleTitle')}:</strong> {t('workHours.offScheduleDesc')}
               </p>
             </div>
           )}
           {scheduleForm.type === 'Standard' && (
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Shift start</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.shiftStart')}</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -1496,7 +1521,7 @@ useEffect(() => {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Shift end</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.shiftEnd')}</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -1513,7 +1538,7 @@ useEffect(() => {
           {scheduleForm.type !== 'Flexible' && scheduleForm.type !== 'Multi' && (
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-                Norm (hours / day, computed from shift)
+                {t('workHours.normComputed')}
               </label>
               <Input
                 type="text"
@@ -1528,7 +1553,7 @@ useEffect(() => {
           )}
           {scheduleForm.type === 'Flexible' && (
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Required hours per day</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.requiredHoursPerDay')}</label>
               <Input
                 type="number"
                 min={0.5}
@@ -1542,7 +1567,7 @@ useEffect(() => {
           {scheduleForm.type === 'Multi' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Sub-shifts</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.subShifts')}</label>
                 <button
                   type="button"
                   onClick={() => setScheduleShifts(prev => [...prev, {
@@ -1553,18 +1578,18 @@ useEffect(() => {
                   }])}
                   className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline flex items-center gap-1"
                 >
-                  <span className="material-symbols-outlined text-[14px]">add</span> Add shift
+                  <span className="material-symbols-outlined text-[14px]">add</span> {t('workHours.addShift')}
                 </button>
               </div>
               {scheduleShifts.length === 0 && (
-                <p className="text-xs text-text-light italic">No sub-shifts yet. Click "Add shift" to create one.</p>
+                <p className="text-xs text-text-light italic">{t('workHours.noSubShiftsYet')}</p>
               )}
               {scheduleShifts.map((sh, idx) => (
                 <div key={idx} className="rounded-xl bg-background-light p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <input
                       type="text"
-                      placeholder="Shift name (e.g. Day, Night)"
+                      placeholder={t('workHours.shiftNamePlaceholder')}
                       value={sh.name}
                       onChange={e => setScheduleShifts(prev => prev.map((s, i) => i === idx ? { ...s, name: e.target.value } : s))}
                       className="flex-1 rounded-lg bg-white border border-border px-2 py-1.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none mr-2"
@@ -1573,14 +1598,14 @@ useEffect(() => {
                       type="button"
                       onClick={() => setScheduleShifts(prev => prev.filter((_, i) => i !== idx))}
                       className="text-error-text hover:text-error-text/70"
-                      title="Remove shift"
+                      title={t('workHours.removeShift')}
                     >
                       <span className="material-symbols-outlined text-[18px]">delete</span>
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Shift start</label>
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">{t('workHours.shiftStart')}</label>
                       <input
                         type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                         value={sh.shiftStart}
@@ -1589,7 +1614,7 @@ useEffect(() => {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Shift end</label>
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">{t('workHours.shiftEnd')}</label>
                       <input
                         type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                         value={sh.shiftEnd}
@@ -1598,7 +1623,7 @@ useEffect(() => {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Entry window from</label>
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">{t('workHours.entryWindowFrom')}</label>
                       <input
                         type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                         value={sh.validEntryFrom}
@@ -1607,7 +1632,7 @@ useEffect(() => {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Entry window to</label>
+                      <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">{t('workHours.entryWindowTo')}</label>
                       <input
                         type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                         value={sh.validEntryTo}
@@ -1617,7 +1642,7 @@ useEffect(() => {
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">Required hours / day</label>
+                    <label className="block text-[9px] font-black text-text-light uppercase tracking-widest">{t('workHours.requiredHoursPerDayShort')}</label>
                     <input
                       type="number" min={0.5} max={24} step={0.5}
                       value={sh.requiredHoursPerDay}
@@ -1630,9 +1655,9 @@ useEffect(() => {
             </div>
           )}
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>Cancel</Button>
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>{t('common.cancel')}</Button>
             <Button fullWidth isLoading={scheduleSaving} onClick={saveSchedule} disabled={!scheduleForm.name.trim() || (scheduleForm.type === 'Multi' && scheduleShifts.length === 0)}>
-              {scheduleModal === 'create' ? 'Create' : 'Save'}
+              {scheduleModal === 'create' ? t('common.create') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -1641,16 +1666,16 @@ useEffect(() => {
       <Modal
         isOpen={scheduleModal === 'delete'}
         onClose={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}
-        title="Delete schedule"
+        title={t('workHours.deleteSchedule')}
       >
         <div className="space-y-4 pt-2">
           <p className="text-sm text-text-dark">
-            Delete <strong>{editingSchedule?.name}</strong>? Employees using this schedule will need another one assigned.
+            <span dangerouslySetInnerHTML={{ __html: t('workHours.deleteScheduleConfirm', { name: editingSchedule?.name ?? '' }) }} />
           </p>
           <div className="flex gap-3">
-            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>Cancel</Button>
+            <Button variant="outline" fullWidth onClick={() => { setScheduleModal(null); setEditingSchedule(null); setScheduleShifts([]) }}>{t('common.cancel')}</Button>
             <Button variant="danger" fullWidth isLoading={scheduleSaving} onClick={deleteSchedule}>
-              Delete
+              {t('common.delete')}
             </Button>
           </div>
         </div>
@@ -1659,16 +1684,16 @@ useEffect(() => {
       <Modal
         isOpen={correctionModal !== null}
         onClose={() => setCorrectionModal(null)}
-        title={`Correct attendance — ${correctionModal?.employeeName ?? ''}`}
+        title={t('workHours.correctAttendanceTitle', { name: correctionModal?.employeeName ?? '' })}
       >
         <div className="space-y-4 pt-2">
           <p className="text-[11px] text-text-light">
-            Date: <strong className="text-text-dark">{correctionModal ? formatDateOnly(correctionModal.date) : ''}</strong>.
-            Override raw device authentications. Leave empty to keep auto value.
+            {t('common.date')}: <strong className="text-text-dark">{correctionModal ? formatDateOnly(correctionModal.date) : ''}</strong>.
+            {' '}{t('workHours.correctionOverrideHint')}
           </p>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Check-in (HH:MM)</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.checkInHHMM')}</label>
               <input
                 type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                 value={correctionForm.checkIn}
@@ -1677,7 +1702,7 @@ useEffect(() => {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Check-out (HH:MM)</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.checkOutHHMM')}</label>
               <input
                 type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
                 value={correctionForm.checkOut}
@@ -1687,20 +1712,20 @@ useEffect(() => {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Comment</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.comment')}</label>
             <input
-              type="text" placeholder="Reason for the correction"
+              type="text" placeholder={t('workHours.correctionReasonPlaceholder')}
               value={correctionForm.comment}
               onChange={(e) => setCorrectionForm((p) => ({ ...p, comment: e.target.value }))}
               className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
             />
           </div>
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => setCorrectionModal(null)}>Cancel</Button>
+            <Button variant="outline" fullWidth onClick={() => setCorrectionModal(null)}>{t('common.cancel')}</Button>
             {correctionModal?.corrected && (
-              <Button variant="danger" fullWidth isLoading={correctionSaving} onClick={clearCorrection}>Reset</Button>
+              <Button variant="danger" fullWidth isLoading={correctionSaving} onClick={clearCorrection}>{t('common.reset')}</Button>
             )}
-            <Button fullWidth isLoading={correctionSaving} onClick={saveCorrection}>Save</Button>
+            <Button fullWidth isLoading={correctionSaving} onClick={saveCorrection}>{t('common.save')}</Button>
           </div>
         </div>
       </Modal>
@@ -1708,17 +1733,17 @@ useEffect(() => {
       <Modal
         isOpen={leaveModal === 'create'}
         onClose={() => setLeaveModal(null)}
-        title="New leave"
+        title={t('workHours.newLeave')}
       >
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Employee</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.employee')}</label>
             <select
               value={leaveForm.employeeId}
               onChange={(e) => setLeaveForm(p => ({ ...p, employeeId: e.target.value }))}
               className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
             >
-              <option value="">Select employee…</option>
+              <option value="">{t('workHours.selectEmployee')}</option>
               {employees.map(e => (
                 <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
               ))}
@@ -1726,18 +1751,18 @@ useEffect(() => {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Leave type</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.leaveType')}</label>
               <select
                 value={leaveForm.leaveType}
                 onChange={(e) => setLeaveForm(p => ({ ...p, leaveType: e.target.value as 'Vacation' | 'DayOff' }))}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
               >
-                <option value="Vacation">Vacation</option>
-                <option value="DayOff">Day-off (отгул)</option>
+                <option value="Vacation">{t('workHours.vacation')}</option>
+                <option value="DayOff">{t('workHours.dayOffOption')}</option>
               </select>
             </div>
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Payment</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.payment')}</label>
               <label className="flex items-center gap-2 h-10 px-3 rounded-xl bg-background-light cursor-pointer">
                 <input
                   type="checkbox"
@@ -1745,13 +1770,13 @@ useEffect(() => {
                   onChange={(e) => setLeaveForm(p => ({ ...p, isPaid: e.target.checked }))}
                   className="w-4 h-4 rounded accent-primary"
                 />
-                <span className="text-sm font-bold text-text-dark">Paid</span>
+                <span className="text-sm font-bold text-text-dark">{t('workHours.paid')}</span>
               </label>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Start date</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.startDate')}</label>
               <input
                 type="date"
                 value={leaveForm.startDate}
@@ -1760,7 +1785,7 @@ useEffect(() => {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">End date</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.endDate')}</label>
               <input
                 type="date"
                 value={leaveForm.endDate}
@@ -1770,19 +1795,19 @@ useEffect(() => {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">Reason (optional)</label>
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.reasonOptional')}</label>
             <input
               type="text"
-              placeholder="e.g. Annual vacation, personal"
+              placeholder={t('workHours.reasonPlaceholder')}
               value={leaveForm.reason}
               onChange={(e) => setLeaveForm(p => ({ ...p, reason: e.target.value }))}
               className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
             />
           </div>
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => setLeaveModal(null)}>Cancel</Button>
+            <Button variant="outline" fullWidth onClick={() => setLeaveModal(null)}>{t('common.cancel')}</Button>
             <Button fullWidth isLoading={leaveSaving} onClick={createLeave} disabled={!leaveForm.employeeId}>
-              Create
+              {t('common.create')}
             </Button>
           </div>
         </div>
@@ -1790,7 +1815,15 @@ useEffect(() => {
 
       {/* ── Quick Assign Modal ── */}
       {assignSchedule && (() => {
-        const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        const DOW_LABELS = [
+          t('workHours.dow.mon'),
+          t('workHours.dow.tue'),
+          t('workHours.dow.wed'),
+          t('workHours.dow.thu'),
+          t('workHours.dow.fri'),
+          t('workHours.dow.sat'),
+          t('workHours.dow.sun'),
+        ]
         const filtered = assignEmps.filter(e =>
           e.name.toLowerCase().includes(assignSearch.toLowerCase()) ||
           e.dept.toLowerCase().includes(assignSearch.toLowerCase())
@@ -1832,11 +1865,11 @@ useEffect(() => {
                 <div className="flex items-center gap-3">
                   <span className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: assignSchedule.color }} />
                   <div>
-                    <h2 className="text-base font-black text-text-dark">Assign "{assignSchedule.name}"</h2>
+                    <h2 className="text-base font-black text-text-dark">{t('workHours.assignTitle', { name: assignSchedule.name })}</h2>
                     <p className="text-[11px] text-text-muted">
                       {assignSchedule.shiftStart && assignSchedule.shiftEnd
                         ? `${assignSchedule.shiftStart} – ${assignSchedule.shiftEnd}`
-                        : `Flexible · ${assignSchedule.requiredHoursPerDay} h/day`}
+                        : t('workHours.flexibleHoursPerDay', { hours: assignSchedule.requiredHoursPerDay })}
                     </p>
                   </div>
                 </div>
@@ -1854,28 +1887,28 @@ useEffect(() => {
                   <div className="px-4 py-3 border-b border-black/[0.06] shrink-0 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">
-                        Employees
+                        {t('workHours.employees')}
                         {assignSelEmps.size > 0 && (
                           <span className="ml-2 text-primary bg-primary/10 px-1.5 py-0.5 rounded font-black">{assignSelEmps.size}</span>
                         )}
                       </span>
                       <button onClick={toggleAll}
                         className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">
-                        {allSelected ? 'Deselect all' : 'Select all'}
+                        {allSelected ? t('workHours.deselectAll') : t('common.selectAll')}
                       </button>
                     </div>
                     <div className="relative">
                       <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[14px]">search</span>
-                      <input type="text" placeholder="Search…" value={assignSearch}
+                      <input type="text" placeholder={t('common.search')} value={assignSearch}
                         onChange={e => setAssignSearch(e.target.value)}
                         className="w-full pl-7 pr-3 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20" />
                     </div>
                   </div>
                   <div className="flex-1 overflow-y-auto">
                     {assignEmps.length === 0 ? (
-                      <div className="flex items-center justify-center h-full text-text-muted text-sm">Loading…</div>
+                      <div className="flex items-center justify-center h-full text-text-muted text-sm">{t('common.loading')}</div>
                     ) : filtered.length === 0 ? (
-                      <div className="flex items-center justify-center h-full text-text-muted text-sm">No employees match</div>
+                      <div className="flex items-center justify-center h-full text-text-muted text-sm">{t('workHours.noEmployeesMatch')}</div>
                     ) : filtered.map(e => {
                       const sel = assignSelEmps.has(e.id)
                       return (
@@ -1901,14 +1934,14 @@ useEffect(() => {
                   {/* Remove mode message */}
                   {assignRemoveMode && (
                     <div className="rounded-2xl p-4 bg-red-50 border border-red-200 text-xs font-bold text-red-600 space-y-1">
-                      <p className="flex items-center gap-2"><span className="material-symbols-outlined text-base">warning</span>Remove schedule</p>
-                      <p className="font-normal text-red-500">Clears the default schedule and all day-pattern assignments for selected employees. The attendance report will no longer show this schedule for them.</p>
+                      <p className="flex items-center gap-2"><span className="material-symbols-outlined text-base">warning</span>{t('workHours.removeSchedule')}</p>
+                      <p className="font-normal text-red-500">{t('workHours.removeScheduleDesc')}</p>
                     </div>
                   )}
 
                   {/* Days of week — hidden in remove mode */}
                   {!assignRemoveMode && <div className="space-y-2.5">
-                    <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">Days of week</p>
+                    <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">{t('workHours.daysOfWeek')}</p>
                     <div className="grid grid-cols-7 gap-1.5">
                       {DOW_LABELS.map((label, i) => {
                         const dow = i + 1
@@ -1932,27 +1965,27 @@ useEffect(() => {
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => setAssignSelDows(new Set([1,2,3,4,5]))}
-                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">Weekdays</button>
+                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">{t('workHours.weekdays')}</button>
                       <span className="text-text-muted/40">·</span>
                       <button onClick={() => setAssignSelDows(new Set([6,7]))}
-                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">Weekends</button>
+                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">{t('workHours.weekends')}</button>
                       <span className="text-text-muted/40">·</span>
                       <button onClick={() => setAssignSelDows(new Set([1,2,3,4,5,6,7]))}
-                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">All</button>
+                        className="text-[10px] font-black text-text-muted hover:text-text-dark transition-colors">{t('common.all')}</button>
                     </div>
                   </div>}
 
                   {/* Date range — hidden in remove mode */}
                   {!assignRemoveMode && <div className="space-y-2.5">
-                    <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">Date range</p>
+                    <p className="text-[10px] font-black text-text-muted uppercase tracking-widest">{t('workHours.dateRange')}</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-[10px] text-text-muted font-bold">From</label>
+                        <label className="text-[10px] text-text-muted font-bold">{t('common.from')}</label>
                         <input type="date" value={assignFrom} onChange={e => setAssignFrom(e.target.value)}
                           className="w-full rounded-xl bg-black/[0.04] border border-black/10 px-3 py-2 text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20" />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] text-text-muted font-bold">To</label>
+                        <label className="text-[10px] text-text-muted font-bold">{t('common.to')}</label>
                         <input type="date" value={assignTo} onChange={e => setAssignTo(e.target.value)}
                           className="w-full rounded-xl bg-black/[0.04] border border-black/10 px-3 py-2 text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20" />
                       </div>
@@ -1963,8 +1996,8 @@ useEffect(() => {
                   {canAssign && !assignRemoveMode && (
                     <div className="rounded-2xl px-4 py-3 text-[11px] font-bold space-y-1"
                       style={{ backgroundColor: assignSchedule.color + '15', color: assignSchedule.color }}>
-                      <p>Will assign <strong>{dateCount}</strong> day{dateCount !== 1 ? 's' : ''} to <strong>{assignSelEmps.size}</strong> employee{assignSelEmps.size !== 1 ? 's' : ''}</p>
-                      <p className="opacity-70">Also sets as default schedule in employee profiles</p>
+                      <p>{t('workHours.willAssignSummary', { days: dateCount, employees: assignSelEmps.size })}</p>
+                      <p className="opacity-70">{t('workHours.willAssignDefaultNote')}</p>
                     </div>
                   )}
                 </div>
@@ -1979,13 +2012,13 @@ useEffect(() => {
                     onClick={() => setAssignRemoveMode(false)}
                     className={`flex-1 py-2 transition-colors ${!assignRemoveMode ? 'text-white' : 'text-text-muted bg-black/[0.04] hover:bg-black/[0.07]'}`}
                     style={!assignRemoveMode ? { backgroundColor: assignSchedule.color } : {}}>
-                    Assign
+                    {t('workHours.assign')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setAssignRemoveMode(true)}
                     className={`flex-1 py-2 transition-colors ${assignRemoveMode ? 'bg-red-500 text-white' : 'text-text-muted bg-black/[0.04] hover:bg-black/[0.07]'}`}>
-                    Remove
+                    {t('common.remove')}
                   </button>
                 </div>
                 {assignError && (
@@ -1997,17 +2030,17 @@ useEffect(() => {
                 <div className="flex gap-3">
                   <button onClick={() => { setAssignSchedule(null); setAssignError(null); setAssignRemoveMode(false) }}
                     className="flex-1 py-2.5 text-sm font-bold text-text-muted bg-black/[0.05] rounded-2xl hover:bg-black/[0.08] transition-colors">
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button onClick={doAssign} disabled={!canAssign || assignSaving}
                     className={`flex-1 py-2.5 text-sm font-bold text-white rounded-2xl transition-all disabled:opacity-40 flex items-center justify-center gap-2 ${assignRemoveMode ? 'bg-red-500' : ''}`}
                     style={!assignRemoveMode ? { backgroundColor: assignSchedule.color } : {}}>
                     {assignSaving && <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>}
                     {assignSaving
-                      ? (assignRemoveMode ? 'Removing…' : 'Assigning…')
+                      ? (assignRemoveMode ? t('workHours.removing') : t('workHours.assigning'))
                       : (assignRemoveMode
-                          ? `Remove from ${assignSelEmps.size || '?'} employee${assignSelEmps.size !== 1 ? 's' : ''}`
-                          : `Assign to ${assignSelEmps.size || '?'} employee${assignSelEmps.size !== 1 ? 's' : ''}`)}
+                          ? t('workHours.removeFromEmployees', { count: assignSelEmps.size || '?' })
+                          : t('workHours.assignToEmployees', { count: assignSelEmps.size || '?' }))}
                   </button>
                 </div>
               </div>
@@ -2017,13 +2050,13 @@ useEffect(() => {
       })()}
 
       {emailReportModal && (
-        <Modal isOpen title="Send Attendance Report" onClose={() => { setEmailReportModal(false); setEmailReportTo('') }}>
+        <Modal isOpen title={t('workHours.sendAttendanceReport')} onClose={() => { setEmailReportModal(false); setEmailReportTo('') }}>
           <div className="space-y-4">
             <p className="text-xs text-text-light">
-              The report for the selected {tab === 'daily' ? 'day' : tab === 'weekly' ? 'week' : 'month'} will be sent as an HTML email.
+              {t('workHours.sendReportHint', { period: tab === 'daily' ? t('workHours.periodDay') : tab === 'weekly' ? t('workHours.periodWeek') : t('workHours.periodMonth') })}
             </p>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-text-light uppercase tracking-widest">Recipient email</label>
+              <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.recipientEmail')}</label>
               <Input
                 type="email"
                 placeholder="manager@company.com"
@@ -2034,10 +2067,10 @@ useEffect(() => {
             </div>
             <div className="flex gap-2">
               <Button fullWidth onClick={sendAttendanceReport} isLoading={emailReportSending} disabled={!emailReportTo.trim()}>
-                Send
+                {t('common.send')}
               </Button>
               <Button fullWidth variant="outline" onClick={() => { setEmailReportModal(false); setEmailReportTo('') }} disabled={emailReportSending}>
-                Cancel
+                {t('common.cancel')}
               </Button>
             </div>
           </div>
@@ -2049,7 +2082,7 @@ useEffect(() => {
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-4 duration-300">
           <div className="flex items-center gap-3 bg-green-600 text-white px-4 py-3 rounded-2xl shadow-xl">
             <span className="material-symbols-outlined text-xl">check_circle</span>
-            <span className="text-sm font-bold">Assigned to {assignSuccessCount} employee{assignSuccessCount !== 1 ? 's' : ''}</span>
+            <span className="text-sm font-bold">{t('workHours.assignedToEmployees', { count: assignSuccessCount })}</span>
             <button
               type="button"
               onClick={() => setAssignSuccessCount(0)}

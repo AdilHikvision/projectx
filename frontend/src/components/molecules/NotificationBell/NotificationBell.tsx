@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { AppNotification } from '../../../hooks/useNotifications';
 
 const TYPE_ICON: Record<string, string> = {
@@ -19,14 +20,17 @@ const TYPE_COLOR: Record<string, string> = {
     DailyReport: 'text-indigo-500',
 };
 
-function timeAgo(dateStr: string): string {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'только что';
-    if (mins < 60) return `${mins} мин. назад`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs} ч. назад`;
-    return `${Math.floor(hrs / 24)} дн. назад`;
+function useTimeAgo() {
+    const { t } = useTranslation();
+    return (dateStr: string): string => {
+        const diff = Date.now() - new Date(dateStr).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return t('notifications.justNow');
+        if (mins < 60) return t('notifications.minutesAgo', { count: mins });
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return t('notifications.hoursAgo', { count: hrs });
+        return t('notifications.daysAgo', { count: Math.floor(hrs / 24) });
+    };
 }
 
 interface NotificationBellProps {
@@ -37,6 +41,8 @@ interface NotificationBellProps {
 }
 
 export function NotificationBell({ notifications, unreadCount, onMarkRead, onMarkAllRead }: NotificationBellProps) {
+    const { t } = useTranslation();
+    const timeAgo = useTimeAgo();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
 
@@ -67,14 +73,14 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
                 <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-border z-50 overflow-hidden flex flex-col max-h-[420px]">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                        <span className="text-sm font-bold text-text-dark">Уведомления</span>
+                        <span className="text-sm font-bold text-text-dark">{t('notifications.title')}</span>
                         {unreadCount > 0 && (
                             <button
                                 type="button"
                                 onClick={onMarkAllRead}
                                 className="text-xs text-primary font-semibold hover:underline"
                             >
-                                Прочитать все
+                                {t('notifications.markAllRead')}
                             </button>
                         )}
                     </div>
@@ -84,7 +90,7 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
                         {notifications.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-10 gap-2 text-text-muted">
                                 <span className="material-symbols-outlined text-3xl">notifications_none</span>
-                                <span className="text-sm">Нет уведомлений</span>
+                                <span className="text-sm">{t('notifications.empty')}</span>
                             </div>
                         ) : (
                             notifications.map(n => (

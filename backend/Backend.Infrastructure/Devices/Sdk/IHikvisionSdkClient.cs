@@ -32,4 +32,12 @@ public interface IHikvisionSdkClient
     Task<(bool Success, string? Message)> TryActivateViaSdkAsync(string ipAddress, int port, string password, CancellationToken cancellationToken = default);
     /// <summary>Получить количество дверей через SDK (NET_DVR_GetDeviceAbility ACS_ABILITY). При ошибке или недоступности SDK — null.</summary>
     Task<int?> TryGetDoorCountViaSdkAsync(string deviceIdentifier, string ipAddress, int port, string username, string password, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Отправить ISAPI-запрос через SDK-канал (NET_DVR_STDXMLConfig). Использует уже залогиненную SDK-сессию,
+    /// поэтому обходит HTTP digest-auth (включая блокировки от неудачных попыток).
+    /// requestLine — "METHOD /path", e.g. "DELETE /ISAPI/AccessControl/CaptureFaceData".
+    /// </summary>
+    Task<(bool Success, string? Response, uint ErrorCode)> TrySendIsapiViaSdkAsync(
+        string deviceIdentifier, string requestLine, string? body, CancellationToken cancellationToken = default);
 }

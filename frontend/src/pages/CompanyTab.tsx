@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { Button, Input } from '../components/atoms'
 import { Modal } from '../components/organisms'
@@ -99,6 +100,7 @@ function DepartmentNode({
   onEdit,
   onDelete,
   onAddChild,
+  noDescriptionLabel,
 }: {
   item: DepartmentTreeItem
   allItems: DepartmentTreeItem[]
@@ -109,6 +111,7 @@ function DepartmentNode({
   onEdit: (d: DepartmentTreeItem) => void
   onDelete: (d: DepartmentTreeItem) => void
   onAddChild: (parent: DepartmentTreeItem) => void
+  noDescriptionLabel: string
 }) {
   const children = buildTree(allItems, item.id)
   const hasChildren = children.length > 0
@@ -175,7 +178,7 @@ function DepartmentNode({
                   {item.name}
                 </h5>
                 <p className="text-[9px] text-text-light font-bold truncate opacity-70 mt-0.5 leading-none">
-                  {item.description || 'No description'}
+                  {item.description || noDescriptionLabel}
                 </p>
               </div>
               
@@ -243,6 +246,7 @@ function DepartmentNode({
             onEdit={onEdit}
             onDelete={onDelete}
             onAddChild={onAddChild}
+            noDescriptionLabel={noDescriptionLabel}
           />
         ))}
     </g>
@@ -270,6 +274,7 @@ function getTreeSize(
 }
 
 export function CompanyTab() {
+  const { t } = useTranslation()
   const { token } = useAuth()
   const { startLoading, stopLoading } = useLoading()
   const [mode, setMode] = useState<AppMode>('None')
@@ -339,12 +344,12 @@ export function CompanyTab() {
         setModal('initial')
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load')
+      setError(e instanceof Error ? e.message : t('companyTab.failedToLoad'))
     } finally {
       setLoading(false)
       stopLoading()
     }
-  }, [token, stopLoading])
+  }, [token, stopLoading, t])
 
   useEffect(() => {
     startLoading()
@@ -370,7 +375,7 @@ export function CompanyTab() {
       setModal(null)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Configuration failed')
+      setError(e instanceof Error ? e.message : t('companyTab.configurationFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -416,7 +421,7 @@ export function CompanyTab() {
       setModal(null)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('companyTab.saveFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -445,7 +450,7 @@ export function CompanyTab() {
       setModal(null)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('companyTab.saveFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -466,13 +471,13 @@ export function CompanyTab() {
       setDeleteConfirm(null)
       await load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      setError(e instanceof Error ? e.message : t('companyTab.deleteFailed'))
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  if (loading) return <div className="py-16 text-center text-text-light text-sm">Loading...</div>
+  if (loading) return <div className="py-16 text-center text-text-light text-sm">{t('common.loading')}</div>
 
   return (
     <div className="space-y-6">
@@ -484,26 +489,26 @@ export function CompanyTab() {
         <div className="py-16 text-center space-y-8">
            <div className="max-w-2xl mx-auto bg-surface rounded-3xl p-12 shadow-md border-none">
              <span className="material-symbols-outlined text-6xl text-sky-500 mb-6 block">domain_add</span>
-             <h2 className="text-2xl font-black text-text-dark mb-4">Initial setup</h2>
-             <p className="text-text-light mb-8">Choose how the system operates. This defines how your organization structure is built.</p>
-             
+             <h2 className="text-2xl font-black text-text-dark mb-4">{t('companyTab.initialSetup')}</h2>
+             <p className="text-text-light mb-8">{t('companyTab.initialSetupDescription')}</p>
+
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div 
+               <div
                  className="p-6 rounded-2xl shadow-md hover:shadow-lg cursor-pointer transition-all group bg-white border-none"
                  onClick={() => setModal('initial')}
                >
                  <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">business</span>
-                 <h3 className="font-bold text-lg mb-2">Single company</h3>
-                 <p className="text-xs text-text-light text-center">Use this mode when deploying for a single office or site.</p>
+                 <h3 className="font-bold text-lg mb-2">{t('companyTab.singleCompany')}</h3>
+                 <p className="text-xs text-text-light text-center">{t('companyTab.singleCompanyDescription')}</p>
                </div>
-               
-               <div 
+
+               <div
                  className="p-6 rounded-2xl shadow-md hover:shadow-lg cursor-pointer transition-all group bg-white border-none"
                  onClick={() => handleSetMode('Multiple')}
                >
                  <span className="material-symbols-outlined text-4xl text-text-light group-hover:text-sky-500 mb-4 block">hub</span>
-                 <h3 className="font-bold text-lg mb-2">Group of companies</h3>
-                 <p className="text-xs text-text-light text-center">Create multiple independent companies and attach departments to each.</p>
+                 <h3 className="font-bold text-lg mb-2">{t('companyTab.groupOfCompanies')}</h3>
+                 <p className="text-xs text-text-light text-center">{t('companyTab.groupOfCompaniesDescription')}</p>
                </div>
              </div>
            </div>
@@ -512,14 +517,14 @@ export function CompanyTab() {
         <div className="py-16 text-center">
           <div className="max-w-xl mx-auto bg-surface rounded-2xl p-10 shadow-md border-none">
             <span className="material-symbols-outlined text-5xl text-sky-500 mb-4 block">domain_add</span>
-            <h2 className="text-lg font-black text-text-dark mb-2">No companies</h2>
+            <h2 className="text-lg font-black text-text-dark mb-2">{t('companyTab.noCompanies')}</h2>
             <p className="text-sm text-text-light mb-6">
               {mode === 'Single'
-                ? 'Create a company to get started.'
-                : 'Add your first company to manage structure.'}
+                ? t('companyTab.createCompanyToStart')
+                : t('companyTab.addFirstCompany')}
             </p>
             <Button icon="add" onClick={handleAddCompany}>
-              {mode === 'Single' ? 'Create company' : 'Add company'}
+              {mode === 'Single' ? t('companyTab.createCompany') : t('companyTab.addCompany')}
             </Button>
           </div>
         </div>
@@ -527,16 +532,16 @@ export function CompanyTab() {
         <>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest">
-              {mode === 'Multiple' ? 'Companies & departments' : 'Company structure'}
+              {mode === 'Multiple' ? t('companyTab.companiesAndDepartments') : t('companyTab.companyStructure')}
             </h3>
             <div className="flex gap-2">
               {mode === 'Multiple' && (
                 <Button variant="outline" icon="add" onClick={handleAddCompany}>
-                  Add company
+                  {t('companyTab.addCompany')}
                 </Button>
               )}
               <Button icon="add" onClick={() => handleAddDept()}>
-                Add department
+                {t('companyTab.addDepartment')}
               </Button>
             </div>
           </div>
@@ -564,7 +569,7 @@ export function CompanyTab() {
                           setModal('edit-company')
                         }}
                       >
-                        {mode === 'Single' ? 'Название' : 'Изменить'}
+                        {mode === 'Single' ? t('companyTab.companyName') : t('common.edit')}
                       </Button>
                       {mode === 'Multiple' && (
                         <Button
@@ -581,9 +586,9 @@ export function CompanyTab() {
 
                   {rootDepts.length === 0 ? (
                     <div className="py-8 text-center bg-slate-50 rounded-2xl shadow-sm border-none">
-                      <p className="text-xs text-text-light mb-4">This company has no departments yet</p>
+                      <p className="text-xs text-text-light mb-4">{t('companyTab.noDepartmentsYet')}</p>
                       <Button size="sm" variant="outline" onClick={() => handleAddDept(undefined, company.id)}>
-                        Create first department
+                        {t('companyTab.createFirstDepartment')}
                       </Button>
                     </div>
                   ) : (
@@ -609,7 +614,7 @@ export function CompanyTab() {
                               setPan(prev => ({ ...prev, [company.id]: { x: 0, y: 0 } }))
                             }}
                             className="text-[9px] font-black text-center py-1 text-text-light hover:text-sky-500 transition-colors pointer-events-auto"
-                            title="Reset Zoom & Pan"
+                            title={t('companyTab.resetZoomPan')}
                           >
                             {Math.round((zoom[company.id] || 1) * 100)}%
                           </button>
@@ -678,6 +683,7 @@ export function CompanyTab() {
                                 onEdit={handleEditDept}
                                 onDelete={(d) => handleDelete('dept', d)}
                                 onAddChild={handleAddDept}
+                                noDescriptionLabel={t('companyTab.noDescription')}
                               />
                             )
                           })}
@@ -695,54 +701,54 @@ export function CompanyTab() {
       {/* MODALS */}
       
       {modal === 'initial' && (
-        <Modal isOpen title="Company name" onClose={() => setModal(null)}>
+        <Modal isOpen title={t('companyTab.companyName')} onClose={() => setModal(null)}>
           <div className="space-y-4">
-            <p className="text-xs text-text-light">Enter your company name to finish setup.</p>
-            <Input 
-              placeholder="Company name" 
-              value={companyForm.name} 
+            <p className="text-xs text-text-light">{t('companyTab.enterCompanyNameToFinish')}</p>
+            <Input
+              placeholder={t('companyTab.companyName')}
+              value={companyForm.name}
               onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
               autoFocus
             />
-            <Button 
-              fullWidth 
-              onClick={() => handleSetMode('Single', companyForm.name)} 
+            <Button
+              fullWidth
+              onClick={() => handleSetMode('Single', companyForm.name)}
               isLoading={isSubmitting}
               disabled={!companyForm.name.trim()}
             >
-              Finish
+              {t('companyTab.finish')}
             </Button>
           </div>
         </Modal>
       )}
 
       {(modal === 'add-dept' || modal === 'edit-dept') && (
-        <Modal 
-          isOpen 
-          title={modal === 'add-dept' ? 'Add department' : 'Edit department'} 
+        <Modal
+          isOpen
+          title={modal === 'add-dept' ? t('companyTab.addDepartment') : t('companyTab.editDepartment')}
           onClose={() => setModal(null)}
         >
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Name</label>
-              <Input 
-                value={deptForm.name} 
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('common.name')}</label>
+              <Input
+                value={deptForm.name}
                 onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
-                placeholder="e.g. Sales"
+                placeholder={t('companyTab.deptNamePlaceholder')}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Description</label>
-              <Input 
-                value={deptForm.description} 
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('companyTab.description')}</label>
+              <Input
+                value={deptForm.description}
                 onChange={e => setDeptForm({ ...deptForm, description: e.target.value })}
-                placeholder="Optional"
+                placeholder={t('common.optional')}
               />
             </div>
             {mode === 'Multiple' && !deptForm.parentId && (
               <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Company</label>
-                <select 
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('companyTab.company')}</label>
+                <select
                   className="w-full bg-surface border-2 border-divider-light rounded-xl h-12 px-4 text-sm focus:border-sky-400 outline-none transition-all"
                   value={deptForm.companyId ?? ''}
                   onChange={e => setDeptForm({ ...deptForm, companyId: e.target.value })}
@@ -752,38 +758,38 @@ export function CompanyTab() {
               </div>
             )}
             <Button fullWidth onClick={handleSubmitDept} isLoading={isSubmitting} disabled={!deptForm.name.trim()}>
-              {modal === 'add-dept' ? 'Add' : 'Save'}
+              {modal === 'add-dept' ? t('common.add') : t('common.save')}
             </Button>
           </div>
         </Modal>
       )}
 
       {(modal === 'add-company' || modal === 'edit-company') && (
-        <Modal 
-          isOpen 
-          title={modal === 'add-company' ? 'Add company' : 'Edit company'} 
+        <Modal
+          isOpen
+          title={modal === 'add-company' ? t('companyTab.addCompany') : t('companyTab.editCompany')}
           onClose={() => setModal(null)}
         >
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Name</label>
-              <Input 
-                value={companyForm.name} 
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('common.name')}</label>
+              <Input
+                value={companyForm.name}
                 onChange={e => setCompanyForm({ ...companyForm, name: e.target.value })}
-                placeholder="Company name"
+                placeholder={t('companyTab.companyName')}
                 autoFocus
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Description</label>
-              <Input 
-                value={companyForm.description} 
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('companyTab.description')}</label>
+              <Input
+                value={companyForm.description}
                 onChange={e => setCompanyForm({ ...companyForm, description: e.target.value })}
-                placeholder="Optional"
+                placeholder={t('common.optional')}
               />
             </div>
             <Button fullWidth onClick={handleSubmitCompany} isLoading={isSubmitting} disabled={!companyForm.name.trim()}>
-              {modal === 'add-company' ? 'Add' : 'Save'}
+              {modal === 'add-company' ? t('common.add') : t('common.save')}
             </Button>
           </div>
         </Modal>
@@ -792,8 +798,8 @@ export function CompanyTab() {
       {deleteConfirm && (
         <ConfirmDialog
           isOpen
-          title={deleteConfirm.type === 'dept' ? 'Delete department?' : 'Delete company?'}
-          message={`This action cannot be undone.`}
+          title={deleteConfirm.type === 'dept' ? t('companyTab.deleteDepartmentQuestion') : t('companyTab.deleteCompanyQuestion')}
+          message={t('companyTab.actionCannotBeUndone')}
           onConfirm={handleConfirmDelete}
           onClose={() => setDeleteConfirm(null)}
           isLoading={isSubmitting}

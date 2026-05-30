@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
@@ -64,6 +65,7 @@ interface Company {
 type TabType = 'employees' | 'visitors'
 
 export function PeopleManagementPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = useAuth()
@@ -127,9 +129,9 @@ export function PeopleManagementPage() {
       const list = await apiRequest<EmployeeResponse[]>(`/api/employees?${params}`, { token })
       setEmployees(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load employees')
+      setError(e instanceof Error ? e.message : t('people.errors.loadEmployees'))
     }
-  }, [token, searchQuery])
+  }, [token, searchQuery, t])
 
   const loadVisitors = useCallback(async () => {
     if (!token) return
@@ -140,9 +142,9 @@ export function PeopleManagementPage() {
       const list = await apiRequest<VisitorResponse[]>(`/api/visitors?${params}`, { token })
       setVisitors(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load visitors')
+      setError(e instanceof Error ? e.message : t('people.errors.loadVisitors'))
     }
-  }, [token, searchQuery])
+  }, [token, searchQuery, t])
 
   const loadAccessLevels = useCallback(async () => {
     if (!token) return
@@ -289,14 +291,14 @@ export function PeopleManagementPage() {
         departmentId: null,
         companyId: defaultCompanyId,
       })
-      setError(e instanceof Error ? e.message : 'Failed to load next ID')
+      setError(e instanceof Error ? e.message : t('people.errors.loadNextId'))
     }
   }
 
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
     if (Array.isArray(w) && w.length > 0) {
-      setError('Device synchronization errors:\n' + w.join('\n'))
+      setError(t('people.errors.deviceSyncErrors') + '\n' + w.join('\n'))
     }
   }
 
@@ -343,7 +345,7 @@ export function PeopleManagementPage() {
       }
       setModalMode(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed')
+      setError(e instanceof Error ? e.message : t('people.errors.saveFailed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -380,7 +382,7 @@ export function PeopleManagementPage() {
         setImportCompanyId(null)
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load devices')
+      setError(e instanceof Error ? e.message : t('people.errors.loadDevices'))
     }
   }
 
@@ -435,7 +437,7 @@ export function PeopleManagementPage() {
       setImportResult(res)
       await Promise.all([loadEmployees(), loadVisitors()])
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed')
+      setError(e instanceof Error ? e.message : t('people.errors.importFailed'))
     } finally {
       setImportLoading(false)
     }
@@ -465,15 +467,15 @@ export function PeopleManagementPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title="People Management"
-            description="Manage your workforce, visitors, and their security credentials."
+            title={t('people.title')}
+            description={t('people.description')}
             actions={
               <div className="flex gap-2">
                 <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
-                  Import
+                  {t('common.import')}
                 </Button>
                 <Button icon="person_add" size="md" onClick={openCreateModal} className="shadow-md">
-                  Add People
+                  {t('people.addPeople')}
                 </Button>
               </div>
             }
@@ -488,15 +490,15 @@ export function PeopleManagementPage() {
           {/* Top Stats Tier */}
           <div className="grid grid-cols-3 gap-3 md:grid-cols-4 lg:grid-cols-6">
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Active</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('common.active')}</p>
               <p className="text-2xl font-black text-primary leading-none">{activeCount}</p>
             </div>
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Employees</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.employees')}</p>
               <p className="text-2xl font-black text-primary leading-none">{employees.length}</p>
             </div>
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Visitors</p>
+              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.visitors')}</p>
               <p className="text-2xl font-black text-primary leading-none">{visitors.length}</p>
             </div>
           </div>
@@ -504,7 +506,7 @@ export function PeopleManagementPage() {
           <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
             <div className="relative flex-1 max-w-md">
               <Input
-                placeholder={`Search ${tab}...`}
+                placeholder={tab === 'employees' ? t('people.searchEmployees') : t('people.searchVisitors')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 icon="search"
@@ -512,13 +514,13 @@ export function PeopleManagementPage() {
               />
             </div>
             <div className="flex md:hidden gap-2">
-              <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">Import</Button>
+              <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">{t('common.import')}</Button>
             </div>
           </div>
 
           {/* Status filter */}
           <div className="flex flex-wrap items-center gap-4">
-            <span className="text-[10px] font-black text-text-light uppercase tracking-widest">Status:</span>
+            <span className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('people.statusLabel')}</span>
             {tab === 'employees' ? (
               <>
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -528,7 +530,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, active: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Active</span>
+                  <span className="text-sm font-bold text-text-dark">{t('common.active')}</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -537,7 +539,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterEmployees((p) => ({ ...p, dismissed: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Terminated</span>
+                  <span className="text-sm font-bold text-text-dark">{t('people.terminated')}</span>
                 </label>
               </>
             ) : (
@@ -549,7 +551,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, active: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Active</span>
+                  <span className="text-sm font-bold text-text-dark">{t('common.active')}</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -558,7 +560,7 @@ export function PeopleManagementPage() {
                     onChange={(e) => setStatusFilterVisitors((p) => ({ ...p, blocked: e.target.checked }))}
                     className="rounded border-border-light text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-bold text-text-dark">Blocked</span>
+                  <span className="text-sm font-bold text-text-dark">{t('people.blocked')}</span>
                 </label>
               </>
             )}
@@ -571,14 +573,14 @@ export function PeopleManagementPage() {
               className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'employees' ? 'border-primary text-primary' : 'border-transparent text-text-light'
                 }`}
             >
-              Employees
+              {t('people.employees')}
             </button>
             <button
               onClick={() => setTab('visitors')}
               className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'visitors' ? 'border-primary text-primary' : 'border-transparent text-text-light'
                 }`}
             >
-              Visitors
+              {t('people.visitors')}
             </button>
           </div>
 
@@ -587,16 +589,25 @@ export function PeopleManagementPage() {
             {list.length === 0 ? (
               <div className="py-20 text-center bg-surface rounded-2xl shadow-md">
                 <span className="material-symbols-outlined text-text-light text-5xl mb-3">person_search</span>
-                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">No people found</p>
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">{t('people.noPeopleFound')}</p>
               </div>
             ) : (
               list.map((item) => {
                 const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '')
-                const credLine = `${item.cardsCount} cards • ${item.facesCount} faces • ${item.fingerprintsCount} fingerprints • ${item.irisesCount ?? 0} irises`
+                const credLine = t('people.credLine', {
+                  cards: item.cardsCount,
+                  faces: item.facesCount,
+                  fingerprints: item.fingerprintsCount,
+                  irises: item.irisesCount ?? 0,
+                })
                 const subtitle =
                   item.type === 'employee'
                     ? credLine
-                    : `Valid: ${item.validFromUtc?.slice(0, 10) || '—'} – ${item.validToUtc?.slice(0, 10) || '—'} • ${credLine}`
+                    : t('people.validSubtitle', {
+                        from: item.validFromUtc?.slice(0, 10) || '—',
+                        to: item.validToUtc?.slice(0, 10) || '—',
+                        creds: credLine,
+                      })
 
                 return (
                   <div
@@ -621,7 +632,7 @@ export function PeopleManagementPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant={item.isActive ? 'success' : 'neutral'}>
-                        {item.type === 'employee' ? (item.isActive ? 'Active' : 'Terminated') : (item.isActive ? 'Active' : 'Blocked')}
+                        {item.type === 'employee' ? (item.isActive ? t('common.active') : t('people.terminated')) : (item.isActive ? t('common.active') : t('people.blocked'))}
                       </Badge>
                       <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
                     </div>
@@ -636,7 +647,7 @@ export function PeopleManagementPage() {
       {/* Modals */}
       <Modal
         isOpen={importModalOpen}
-        title="Import from Devices"
+        title={t('people.importFromDevices')}
         onClose={closeImportModal}
       >
         <div className="space-y-4">
@@ -644,7 +655,7 @@ export function PeopleManagementPage() {
             <>
               {importCompanies.length > 0 && (
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Company</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.company')}</label>
                   {importCompanyMode === 'Single' ? (
                     <div className="px-4 py-3 bg-slate-50 rounded-xl text-sm font-bold text-text-dark border border-divider-light">
                       {importCompanies.find((c) => c.id === importCompanyId)?.name ?? importCompanies[0]?.name}
@@ -662,7 +673,7 @@ export function PeopleManagementPage() {
                   )}
                 </div>
               )}
-              <p className="text-sm text-text-muted">Select devices to import users from.</p>
+              <p className="text-sm text-text-muted">{t('people.selectDevicesToImport')}</p>
               <div className="max-h-64 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
                 {devices.map((d) => (
                   <label key={d.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 cursor-pointer border border-transparent transition-all">
@@ -680,10 +691,10 @@ export function PeopleManagementPage() {
                 ))}
               </div>
               <div className="flex justify-between items-center pt-2">
-                <button type="button" onClick={selectAllImportDevices} className="text-xs font-bold text-primary hover:underline">Select All</button>
+                <button type="button" onClick={selectAllImportDevices} className="text-xs font-bold text-primary hover:underline">{t('common.selectAll')}</button>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={closeImportModal}>Cancel</Button>
-                  <Button onClick={runImport} disabled={importLoading || importSelectedDeviceIds.length === 0} isLoading={importLoading}>Import</Button>
+                  <Button variant="outline" onClick={closeImportModal}>{t('common.cancel')}</Button>
+                  <Button onClick={runImport} disabled={importLoading || importSelectedDeviceIds.length === 0} isLoading={importLoading}>{t('common.import')}</Button>
                 </div>
               </div>
             </>
@@ -691,15 +702,15 @@ export function PeopleManagementPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2">
                 <div className="text-center p-3 bg-slate-50 rounded-xl">
-                  <p className="text-[10px] font-black text-text-light uppercase">Imported</p>
+                  <p className="text-[10px] font-black text-text-light uppercase">{t('people.imported')}</p>
                   <p className="text-xl font-black text-success-text">{importResult.importedCount}</p>
                 </div>
                 <div className="text-center p-3 bg-slate-50 rounded-xl">
-                  <p className="text-[10px] font-black text-text-light uppercase">Skipped</p>
+                  <p className="text-[10px] font-black text-text-light uppercase">{t('people.skipped')}</p>
                   <p className="text-xl font-black text-text-muted">{importResult.skippedCount}</p>
                 </div>
                 <div className="text-center p-3 bg-slate-50 rounded-xl">
-                  <p className="text-[10px] font-black text-text-light uppercase">Errors</p>
+                  <p className="text-[10px] font-black text-text-light uppercase">{t('people.errors_label')}</p>
                   <p className="text-xl font-black text-error-text">{importResult.errorCount}</p>
                 </div>
               </div>
@@ -716,11 +727,11 @@ export function PeopleManagementPage() {
                 if (cred.cards + cred.faces + cred.fps + cred.ir === 0) return null
                 return (
                   <p className="text-xs text-text-muted text-center">
-                    Pulled from devices: cards — {cred.cards}, faces — {cred.faces}, fingerprints — {cred.fps}, irises — {cred.ir}
+                    {t('people.pulledFromDevices', { cards: cred.cards, faces: cred.faces, fingerprints: cred.fps, irises: cred.ir })}
                   </p>
                 )
               })()}
-              <Button fullWidth variant="outline" onClick={closeImportModal}>Close</Button>
+              <Button fullWidth variant="outline" onClick={closeImportModal}>{t('common.close')}</Button>
             </div>
           )}
         </div>
@@ -728,25 +739,25 @@ export function PeopleManagementPage() {
 
       <Modal
         isOpen={!!modalMode}
-        title={tab === 'employees' ? 'Add employee' : 'Add visitor'}
+        title={tab === 'employees' ? t('people.addEmployee') : t('people.addVisitor')}
         onClose={() => setModalMode(null)}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">First Name</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.firstName')}</label>
               <Input
                 value={formData.firstName}
                 onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
-                placeholder="Required"
+                placeholder={t('common.required')}
               />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Last Name</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.lastName')}</label>
               <Input
                 value={formData.lastName}
                 onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
-                placeholder="Required"
+                placeholder={t('common.required')}
               />
             </div>
           </div>
@@ -754,20 +765,20 @@ export function PeopleManagementPage() {
           {tab === 'employees' ? (
             <>
               <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Gender</label>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.gender')}</label>
                 <select
                   value={formData.gender}
                   onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
                   className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
                 >
-                  <option value="">Unknown / Other</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
+                  <option value="">{t('people.genderUnknown')}</option>
+                  <option value="male">{t('people.male')}</option>
+                  <option value="female">{t('people.female')}</option>
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid From</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validFrom')}</label>
                   <Input
                     type="date"
                     value={formData.validFrom}
@@ -775,7 +786,7 @@ export function PeopleManagementPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid To</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validTo')}</label>
                   <Input
                     type="date"
                     value={formData.validTo}
@@ -791,8 +802,8 @@ export function PeopleManagementPage() {
                   className="w-5 h-5 mt-0.5 rounded border-border-light text-primary focus:ring-primary"
                 />
                 <div>
-                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">Time attendance only</span>
-                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">When enabled, attendance is tracked but the door will not unlock.</p>
+                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">{t('people.timeAttendanceOnly')}</span>
+                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">{t('people.timeAttendanceOnlyDescription')}</p>
                 </div>
               </label>
             </>
@@ -800,7 +811,7 @@ export function PeopleManagementPage() {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid From</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validFrom')}</label>
                   <Input
                     type="date"
                     value={formData.validFrom}
@@ -808,7 +819,7 @@ export function PeopleManagementPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">Valid To</label>
+                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validTo')}</label>
                   <Input
                     type="date"
                     value={formData.validTo}
@@ -821,21 +832,21 @@ export function PeopleManagementPage() {
 
           {companyMode !== 'None' && (
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Company</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.company')}</label>
               {companyMode === 'Multiple' ? (
                 <select
                   value={formData.companyId ?? ''}
                   onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
                   className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
                 >
-                  <option value="">— Not selected —</option>
+                  <option value="">{t('people.notSelected')}</option>
                   {companies.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
               ) : (
                 <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
-                  {companies.find(c => c.id === formData.companyId)?.name || 'Primary company'}
+                  {companies.find(c => c.id === formData.companyId)?.name || t('people.primaryCompany')}
                 </div>
               )}
             </div>
@@ -843,13 +854,13 @@ export function PeopleManagementPage() {
 
           {departments.length > 0 && (
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Department</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.department')}</label>
               <select
                 value={formData.departmentId ?? ''}
                 onChange={(e) => setFormData((p) => ({ ...p, departmentId: e.target.value || null }))}
                 className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
               >
-                <option value="">— Not assigned —</option>
+                <option value="">{t('people.notAssigned')}</option>
                 {departments.map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
@@ -859,7 +870,7 @@ export function PeopleManagementPage() {
 
           {accessLevels.length > 0 && (
             <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">Access Levels</label>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.accessLevels')}</label>
               <div className="max-h-32 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
                 {accessLevels.map((level) => (
                   <label key={level.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
@@ -876,8 +887,8 @@ export function PeopleManagementPage() {
             </div>
           )}
           <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleSubmit} isLoading={isSubmitting} disabled={!formData.firstName || isSubmitting}>Save</Button>
-            <Button fullWidth variant="outline" onClick={() => setModalMode(null)}>Cancel</Button>
+            <Button fullWidth onClick={handleSubmit} isLoading={isSubmitting} disabled={!formData.firstName || isSubmitting}>{t('common.save')}</Button>
+            <Button fullWidth variant="outline" onClick={() => setModalMode(null)}>{t('common.cancel')}</Button>
           </div>
         </div>
       </Modal>

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface ModalProps {
     isOpen: boolean;
@@ -11,6 +12,7 @@ interface ModalProps {
 }
 
 export function Modal({ isOpen, onClose, title, children, fullScreen, actions, className = '' }: ModalProps) {
+    const { t } = useTranslation();
     if (!isOpen) return null;
 
     const baseClasses = `relative flex flex-col shadow-xl overflow-hidden rounded-2xl border-none`;
@@ -43,7 +45,7 @@ export function Modal({ isOpen, onClose, title, children, fullScreen, actions, c
                             type="button"
                             onClick={onClose}
                             className="p-1 rounded-lg text-text-muted hover:text-text-dark hover:bg-slate-75 transition-colors"
-                            aria-label="Close"
+                            aria-label={t('common.close')}
                         >
                             <span className="material-symbols-outlined text-xl">close</span>
                         </button>

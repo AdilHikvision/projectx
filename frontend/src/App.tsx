@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { LoadingOverlay } from './components/organisms'
 import { useLoading } from './context/LoadingContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
@@ -27,13 +28,14 @@ import { useAuth } from './auth/AuthContext'
 function App() {
   const { isLoading: globalLoading } = useLoading()
   const { isLoading: authLoading } = useAuth()
+  const { t } = useTranslation()
 
   return (
     <>
       <LoadingOverlay
         isLoading={globalLoading || authLoading}
         variant={authLoading ? 'solid' : 'overlay'}
-        message={authLoading ? 'Checking session...' : 'Loading...'}
+        message={authLoading ? t('common.checkingSession') : t('common.loading')}
       />
       <Routes>
         <Route path="/setup-password" element={<SetupPasswordPage />} />

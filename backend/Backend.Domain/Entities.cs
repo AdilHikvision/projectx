@@ -243,7 +243,7 @@ public sealed class EmployeeAccessLevel
 
 // ─── Time Attendance ───────────────────────────────────────────────────────────
 
-public enum ScheduleType { Standard, Shift, Flexible, Multi }
+public enum ScheduleType { Standard, Shift, Flexible, Multi, Off }
 
 /// <summary>Расписание работы: стандартное (9–18), сменное, гибкое или мульти-смена.</summary>
 public sealed class WorkSchedule : BaseEntity
@@ -258,6 +258,10 @@ public sealed class WorkSchedule : BaseEntity
     public decimal RequiredHoursPerDay { get; set; } = 8;
     /// <summary>Hex-цвет для отображения в планнере, например #6366f1.</summary>
     public string Color { get; set; } = "#6366f1";
+    /// <summary>Если false — время прихода раньше ShiftStart не идёт в total hours / overtime (total отсчитывается от ShiftStart).</summary>
+    public bool CountEarlyArrival { get; set; } = true;
+    /// <summary>Минимальный порог за день (в минутах). Дневной overtime ниже этого порога не учитывается. 0 — без порога.</summary>
+    public int OvertimeDailyThresholdMinutes { get; set; } = 0;
     public ICollection<Employee> Employees { get; set; } = [];
     /// <summary>Под-смены (для Multi-расписания).</summary>
     public ICollection<WorkScheduleShift> Shifts { get; set; } = new List<WorkScheduleShift>();
@@ -450,8 +454,16 @@ public sealed class EmployeeSalaryConfig : BaseEntity
     public bool PayByWorkedHours { get; set; } = false;
     /// <summary>Включить вычет за опоздания.</summary>
     public bool LatenessDeductionEnabled { get; set; } = false;
-    /// <summary>JSON: [{afterMinutes:5,deductionMultiplier:1.0},{afterMinutes:30,deductionMultiplier:2.0}]</summary>
+    /// <summary>"Coefficient" — % от зп (мультипликатор × hourlyRate × часы опозданий). "Fixed" — фикс сумма за каждый late-день × tier value.</summary>
+    public string LatenessDeductionMode { get; set; } = "Coefficient";
+    /// <summary>JSON: [{afterMinutes:5,deductionMultiplier:1.0},...]. В Coefficient режиме — мультипликатор; в Fixed режиме — фикс ₼ за late-день.</summary>
     public string? LatenessTiersJson { get; set; }
+    /// <summary>Включить вычет за преждевременный уход.</summary>
+    public bool EarlyLeaveDeductionEnabled { get; set; } = false;
+    /// <summary>"Coefficient" или "Fixed" — аналогично lateness.</summary>
+    public string EarlyLeaveDeductionMode { get; set; } = "Coefficient";
+    /// <summary>JSON: те же tier-структуры что и lateness.</summary>
+    public string? EarlyLeaveTiersJson { get; set; }
     public DateOnly EffectiveFrom { get; set; }
     public ICollection<EmployeePayrollComponent> Components { get; set; } = [];
 }
@@ -472,10 +484,15 @@ public sealed class PayrollPeriod : BaseEntity
 {
     public int Year { get; set; }
     public int Month { get; set; }
+    /// <summary>Произвольный диапазон расчёта (если null — диапазон выводится из Year/Month как календарный месяц).</summary>
+    public DateOnly? StartDate { get; set; }
+    public DateOnly? EndDate { get; set; }
     public PayrollPeriodStatus Status { get; set; } = PayrollPeriodStatus.Draft;
     public DateTime? CalculatedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public Guid? ApprovedByUserId { get; set; }
+    /// <summary>Когда часы зафиксированы как snapshot. Если null — Calculate пересчитывает из логов; иначе берёт готовые из entries.</summary>
+    public DateTime? HoursConfirmedAt { get; set; }
     public string? Notes { get; set; }
     public ICollection<PayrollEntry> Entries { get; set; } = [];
 }
@@ -490,13 +507,26 @@ public sealed class PayrollEntry : BaseEntity
     public int WorkedDays { get; set; }
     public decimal WorkedHours { get; set; }
     public decimal OvertimeHours { get; set; }
+    public decimal LatenessMinutes { get; set; }
+    /// <summary>Сколько дней были с опозданием (нужно для Fixed-режима lateness deduction).</summary>
+    public int LatenessDaysCount { get; set; }
+    /// <summary>Минуты преждевременного ухода за период.</summary>
+    public decimal EarlyLeaveMinutes { get; set; }
+    /// <summary>Сколько дней были с преждевременным уходом.</summary>
+    public int EarlyLeaveDaysCount { get; set; }
     public int AbsentDays { get; set; }
+    /// <summary>Дни в периоде, в которые сотрудник должен был работать (для пропорции BasePay в Monthly).</summary>
+    public int TotalWorkingDays { get; set; }
     public decimal BasePay { get; set; }
     public decimal OvertimePay { get; set; }
     public decimal AllowancesTotal { get; set; }
     public decimal BonusesTotal { get; set; }
     public decimal GrossPay { get; set; }
     public decimal DeductionsTotal { get; set; }
+    /// <summary>Сумма вычета за опоздания (часть DeductionsTotal).</summary>
+    public decimal LatenessDeduction { get; set; }
+    /// <summary>Сумма вычета за преждевременный уход (часть DeductionsTotal).</summary>
+    public decimal EarlyLeaveDeduction { get; set; }
     public decimal TaxRate { get; set; }
     public decimal TaxAmount { get; set; }
     public decimal NetPay { get; set; }
@@ -504,6 +534,8 @@ public sealed class PayrollEntry : BaseEntity
     public string? Notes { get; set; }
     /// <summary>JSON-снимок применённых компонентов на момент расчёта.</summary>
     public string? ComponentsJson { get; set; }
+    /// <summary>JSON: массив дневных OT-часов (только дни где OT > 0 и прошёл threshold). Нужен чтобы tiers применялись per-day.</summary>
+    public string? OvertimeBreakdownJson { get; set; }
 }
 
 // ─── Notifications ─────────────────────────────────────────────────────────────
@@ -535,4 +567,32 @@ public sealed class NotificationRead
     public Guid NotificationId { get; set; }
     public Guid UserId { get; set; }
     public DateTime ReadAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Связка роли с permission'ом. Хранится по имени роли (а не RoleId), потому что
+/// имена ролей в этой системе уникальны и стабильны, а seed Admin/SecurityOperator/HrOperator
+/// идёт по имени. Custom-роли тоже хранятся по имени.
+/// </summary>
+public sealed class RolePermission
+{
+    public string RoleName { get; set; } = string.Empty;
+    public string Permission { get; set; } = string.Empty;
+}
+
+/// <summary>Системный аудит-лог. Кто, что, когда сделал. Пишется middleware-ом + точечными вызовами.</summary>
+public sealed class AuditLogEntry
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public Guid? UserId { get; set; }
+    public string UserEmail { get; set; } = "";
+    public string Category { get; set; } = "";       // Auth, Employees, Devices, AccessLevels, WorkSchedules, Users, Roles, System, Backup, GeoZones, Visitors, Other
+    public string Action { get; set; } = "";          // Human-readable: "Created device", "Login", etc.
+    public string Method { get; set; } = "";         // HTTP method (or "LOGIN" / "LOGOUT" for special events)
+    public string Path { get; set; } = "";           // Request path
+    public int? StatusCode { get; set; }
+    public string? IpAddress { get; set; }
+    public string? Description { get; set; }         // Free text — extra context (e.g. target email)
+    public bool Success { get; set; } = true;
 }

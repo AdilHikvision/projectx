@@ -61,4 +61,9 @@ public sealed class MockHikvisionSdkClient : IHikvisionSdkClient
     {
         return Task.FromResult<int?>(null); // Mock: SDK недоступен
     }
+
+    public Task<(bool Success, string? Response, uint ErrorCode)> TrySendIsapiViaSdkAsync(string deviceIdentifier, string requestLine, string? body, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<(bool, string?, uint)>((false, null, 0));
+    }
 }

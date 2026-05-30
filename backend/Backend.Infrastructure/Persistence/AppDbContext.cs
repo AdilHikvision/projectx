@@ -47,6 +47,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<EmployeeLeave> EmployeeLeaves => Set<EmployeeLeave>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<NotificationRead> NotificationReads => Set<NotificationRead>();
+    public DbSet<AuditLogEntry> AuditLogs => Set<AuditLogEntry>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -329,7 +331,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Status).HasConversion<int>().IsRequired();
             entity.Property(x => x.Notes).HasMaxLength(1000);
-            entity.HasIndex(x => new { x.Year, x.Month }).IsUnique();
+            // Year/Month больше не уникальны: период — это произвольный date range, нескольких в одном месяце допустимо.
         });
 
         builder.Entity<PayrollEntry>(entity =>
@@ -380,6 +382,31 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.ToTable("notification_reads");
             entity.HasKey(x => new { x.NotificationId, x.UserId });
             entity.HasOne<Notification>().WithMany().HasForeignKey(x => x.NotificationId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<RolePermission>(entity =>
+        {
+            entity.ToTable("role_permissions");
+            entity.HasKey(x => new { x.RoleName, x.Permission });
+            entity.Property(x => x.RoleName).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Permission).HasMaxLength(128).IsRequired();
+            entity.HasIndex(x => x.RoleName);
+        });
+
+        builder.Entity<AuditLogEntry>(entity =>
+        {
+            entity.ToTable("audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.UserEmail).HasMaxLength(256);
+            entity.Property(x => x.Category).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Action).HasMaxLength(256).IsRequired();
+            entity.Property(x => x.Method).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.Path).HasMaxLength(512).IsRequired();
+            entity.Property(x => x.IpAddress).HasMaxLength(64);
+            entity.Property(x => x.Description).HasMaxLength(2000);
+            entity.HasIndex(x => x.TimestampUtc);
+            entity.HasIndex(x => x.UserId);
+            entity.HasIndex(x => x.Category);
         });
     }
 }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Backend.Application.Devices;
 using Backend.Domain.Entities;
 using Backend.Infrastructure.Devices;
+using Backend.Infrastructure.Devices.Sdk;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -15,6 +16,7 @@ namespace Backend.Infrastructure.Devices.Services;
 public sealed class DeviceFaceCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
+    IHikvisionSdkClient sdkClient,
     IConfiguration configuration,
     ILogger<DeviceFaceCaptureService> logger) : IDeviceFaceCaptureService
 {
@@ -71,7 +73,7 @@ public sealed class DeviceFaceCaptureService(
             await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
 
         // Cancel any previous capture first to avoid "Device Busy"
-        await CancelCaptureAsync(client, cancellationToken);
+        await CancelCaptureAsync(device, client, cancellationToken);
 
         var (success, content, error) = isEnroller
             ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
@@ -81,7 +83,7 @@ public sealed class DeviceFaceCaptureService(
         if (!success && error != null && error.Contains("deviceBusy", StringComparison.OrdinalIgnoreCase))
         {
             logger.LogInformation("[CaptureFace] Device busy, cancelling and retrying...");
-            await CancelCaptureAsync(client, cancellationToken);
+            await CancelCaptureAsync(device, client, cancellationToken);
             await Task.Delay(1500, cancellationToken);
             (success, content, error) = isEnroller
                 ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
@@ -362,17 +364,52 @@ public sealed class DeviceFaceCaptureService(
 
     private static string Truncate(string s) => s.Length > 32 ? s[..32] : s;
 
-    private async Task CancelCaptureAsync(IsapiClient client, CancellationToken ct)
+    private async Task CancelCaptureAsync(Device device, IsapiClient client, CancellationToken ct)
     {
+        // Cancel через SDK-канал (NET_DVR_STDXMLConfig) — обходит HTTP digest-auth,
+        // поэтому неудачные cancel-попытки не вызывают локаута admin-аккаунта.
+        // Прошивки разных серий принимают cancel разными способами — пробуем все известные.
+        var cancelVariants = new (string Line, string? Body)[]
+        {
+            ("DELETE /ISAPI/AccessControl/CaptureFaceData", null),
+            ("PUT /ISAPI/AccessControl/CaptureFaceData/Cancel",
+                @"<?xml version=""1.0"" encoding=""UTF-8""?><CancelCaptureCmd version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""/>"),
+            ("POST /ISAPI/AccessControl/CaptureFaceData/Cancel",
+                @"<?xml version=""1.0"" encoding=""UTF-8""?><CancelCaptureCmd version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""/>"),
+            ("PUT /ISAPI/AccessControl/CaptureFaceData",
+                @"<?xml version=""1.0"" encoding=""UTF-8""?><CaptureFaceDataCond version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""><cancelFlag>true</cancelFlag></CaptureFaceDataCond>"),
+        };
+
+        var deviceId = device.DeviceIdentifier ?? device.IpAddress ?? string.Empty;
+        bool cancelled = false;
+        foreach (var (line, body) in cancelVariants)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                var (ok, resp, err) = await sdkClient.TrySendIsapiViaSdkAsync(deviceId, line, body, ct);
+                logger.LogDebug("[CaptureFace] SDK Cancel '{Line}': ok={Ok} err={Err} respLen={L}", line, ok, err, resp?.Length ?? 0);
+                if (ok)
+                {
+                    cancelled = true;
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[CaptureFace] SDK Cancel '{Line}' threw", line);
+            }
+        }
+
+        if (cancelled) return;
+
+        // HTTP fallback (если SDK не залогинен или STDXMLConfig недоступен в этой версии SDK).
         try
         {
-            // DELETE cancels in-progress face capture
             var (ok, _, err) = await client.DeleteAsync("ISAPI/AccessControl/CaptureFaceData", null, null, ct);
-            logger.LogDebug("[CaptureFace] Cancel: ok={Ok} err={Err}", ok, err ?? "-");
-
+            logger.LogDebug("[CaptureFace] HTTP Cancel: ok={Ok} err={Err}", ok, err ?? "-");
             if (!ok)
             {
-                // Some firmware accepts PUT with empty body to cancel
                 await client.PutAsync("ISAPI/AccessControl/CaptureFaceData/Cancel",
                     @"<?xml version=""1.0"" encoding=""UTF-8""?><CancelCaptureCmd version=""2.0"" xmlns=""http://www.isapi.org/ver20/XMLSchema""/>",
                     "application/xml", ct);
@@ -380,7 +417,7 @@ public sealed class DeviceFaceCaptureService(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "[CaptureFace] Cancel exception (non-fatal)");
+            logger.LogDebug(ex, "[CaptureFace] HTTP Cancel exception (non-fatal)");
         }
     }
 
