@@ -51,7 +51,8 @@
       "Bash(dir c:\\\\Users\\\\yagup\\\\Desktop\\\\projectx)",
       "Bash(echo \"EXIT=$?\")",
       "Bash(node c:/tmp/i18n-merge/merge.mjs)",
-      "Bash(node -e \"const en = require\\('./src/i18n/locales/en.json'\\); const ru = require\\('./src/i18n/locales/ru.json'\\); const az = require\\('./src/i18n/locales/az.json'\\); console.log\\('Sidebar nav \\(en/ru/az\\):', en.nav.dashboard, '|', ru.nav.dashboard, '|', az.nav.dashboard\\); console.log\\('Login \\(en/ru/az\\):', en.auth.signIn, '|', ru.auth.signIn, '|', az.auth.signIn\\); console.log\\('Total top-level namespaces:', Object.keys\\(en\\).length, Object.keys\\(ru\\).length, Object.keys\\(az\\).length\\);\")"
+      "Bash(node -e \"const en = require\\('./src/i18n/locales/en.json'\\); const ru = require\\('./src/i18n/locales/ru.json'\\); const az = require\\('./src/i18n/locales/az.json'\\); console.log\\('Sidebar nav \\(en/ru/az\\):', en.nav.dashboard, '|', ru.nav.dashboard, '|', az.nav.dashboard\\); console.log\\('Login \\(en/ru/az\\):', en.auth.signIn, '|', ru.auth.signIn, '|', az.auth.signIn\\); console.log\\('Total top-level namespaces:', Object.keys\\(en\\).length, Object.keys\\(ru\\).length, Object.keys\\(az\\).length\\);\")",
+      "Bash(git push *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\yagup\\Desktop\\projectx\\backend\\Backend.Infrastructure\\Persistence\\Migrations"
