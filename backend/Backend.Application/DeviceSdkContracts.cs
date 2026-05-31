@@ -155,6 +155,10 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> SyncEmployeeAsync(Guid employeeId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Синхронизирует посетителя на устройство (UserInfo Record).</summary>
     Task<DeviceSyncResult> SyncVisitorAsync(Guid visitorId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует клиента зала на устройство как custom-пользователя (userType "custom1").</summary>
+    Task<DeviceSyncResult> SyncGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Удаляет клиента зала с устройства.</summary>
+    Task<DeviceSyncResult> DeleteGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Синхронизирует карту на устройство (CardInfo Record).</summary>
     Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Синхронизирует лицо на устройство (FDLib pictureUpload).</summary>

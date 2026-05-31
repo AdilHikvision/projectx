@@ -98,6 +98,7 @@ public static class DependencyInjection
         services.AddScoped<IDeviceFingerprintCaptureService, DeviceFingerprintCaptureService>();
         services.AddScoped<IDeviceLocalizationService, DeviceLocalizationService>();
         services.AddHostedService<TimeSyncSchedulerService>();
+        services.AddHostedService<Gym.GymAutoRenewService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();

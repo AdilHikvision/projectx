@@ -7,6 +7,7 @@ using System.Xml.Linq;
 using Npgsql;
 using Backend.Application.Security;
 using Backend.Application.Devices;
+using Backend.Application.Gym;
 using Backend.Domain.Entities;
 using Backend.Infrastructure;
 using Backend.Infrastructure.Devices;
@@ -6102,6 +6103,517 @@ app.MapPost("/api/vault/secondary-db/test", async (VaultSecondaryDbRequest req, 
 
 // ─── End Vault ────────────────────────────────────────────────────────────────
 
+// ─── Gym Management: Tariffs (subscription plans) ───────────────────────────────
+
+static object GymTariffDto(GymTariff t) => new
+{
+    t.Id,
+    t.Name,
+    t.Description,
+    kind = t.Kind.ToString(),
+    t.Price,
+    t.Currency,
+    durationType = t.DurationType.ToString(),
+    t.VisitLimit,
+    t.HasTimeRestriction,
+    accessFrom = t.AccessFrom?.ToString(@"hh\:mm"),
+    accessTo = t.AccessTo?.ToString(@"hh\:mm"),
+    t.DaysOfWeekMask,
+    t.AutoRenew,
+    t.FreezeAllowed,
+    t.FreezeMaxDays,
+    t.TransferAllowed,
+    t.IsActive,
+    t.SortOrder,
+    t.CreatedUtc,
+    t.UpdatedUtc,
+};
+
+static (bool ok, string? error) ApplyGymTariff(GymTariff t, GymTariffRequest req)
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return (false, "Name is required.");
+    if (req.Price < 0) return (false, "Price cannot be negative.");
+    if (!Enum.TryParse<GymTariffKind>(req.Kind, ignoreCase: true, out var kind)) return (false, "Unknown tariff kind.");
+    if (!Enum.TryParse<GymTariffDuration>(req.DurationType, ignoreCase: true, out var duration)) return (false, "Unknown duration type.");
+    if (req.VisitLimit is < 1) return (false, "Visit limit must be at least 1, or null for unlimited.");
+    if (req.FreezeMaxDays < 0) return (false, "Freeze days cannot be negative.");
+
+    TimeSpan? from = null, to = null;
+    if (req.HasTimeRestriction)
+    {
+        if (!TimeSpan.TryParse(req.AccessFrom, out var f) || !TimeSpan.TryParse(req.AccessTo, out var tt))
+            return (false, "Access window requires valid From/To times (HH:mm).");
+        if (tt <= f) return (false, "Access 'to' time must be after 'from' time.");
+        from = f; to = tt;
+    }
+
+    t.Name = req.Name.Trim();
+    t.Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim();
+    t.Kind = kind;
+    t.Price = req.Price;
+    t.Currency = string.IsNullOrWhiteSpace(req.Currency) ? "AZN" : req.Currency.Trim().ToUpperInvariant();
+    t.DurationType = duration;
+    t.VisitLimit = req.VisitLimit;
+    t.HasTimeRestriction = req.HasTimeRestriction;
+    t.AccessFrom = from;
+    t.AccessTo = to;
+    t.DaysOfWeekMask = req.DaysOfWeekMask is >= 0 and <= 127 ? req.DaysOfWeekMask : 127;
+    t.AutoRenew = req.AutoRenew;
+    t.FreezeAllowed = req.FreezeAllowed;
+    t.FreezeMaxDays = req.FreezeAllowed ? req.FreezeMaxDays : 0;
+    t.TransferAllowed = req.TransferAllowed;
+    t.IsActive = req.IsActive;
+    t.SortOrder = req.SortOrder;
+    return (true, null);
+}
+
+app.MapGet("/api/gym/tariffs", async (AppDbContext db, CancellationToken ct) =>
+{
+    var items = await db.GymTariffs.AsNoTracking()
+        .OrderBy(x => x.SortOrder).ThenBy(x => x.Name)
+        .ToListAsync(ct);
+    return Results.Ok(items.Select(GymTariffDto));
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/tariffs/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var t = await db.GymTariffs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+    return t is null ? Results.NotFound() : Results.Ok(GymTariffDto(t));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/tariffs", async (GymTariffRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var t = new GymTariff();
+    var (ok, error) = ApplyGymTariff(t, req);
+    if (!ok) return Results.BadRequest(new { message = error });
+    db.GymTariffs.Add(t);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymTariffDto(t));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/tariffs/{id:guid}", async (Guid id, GymTariffRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var t = await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (t is null) return Results.NotFound();
+    var (ok, error) = ApplyGymTariff(t, req);
+    if (!ok) return Results.BadRequest(new { message = error });
+    t.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymTariffDto(t));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/tariffs/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var t = await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (t is null) return Results.NotFound();
+    db.GymTariffs.Remove(t);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Management: Customers ──────────────────────────────────────────────────
+
+static object GymCustomerDto(GymCustomer c) => new
+{
+    c.Id,
+    c.FirstName,
+    c.LastName,
+    c.Phone,
+    c.Email,
+    c.Gender,
+    birthDate = c.BirthDate?.ToString("yyyy-MM-dd"),
+    c.Notes,
+    c.IsActive,
+    c.CreatedUtc,
+    c.UpdatedUtc,
+};
+
+static (bool ok, string? error) ApplyGymCustomer(GymCustomer c, GymCustomerRequest req)
+{
+    if (string.IsNullOrWhiteSpace(req.FirstName)) return (false, "First name is required.");
+    DateOnly? birth = null;
+    if (!string.IsNullOrWhiteSpace(req.BirthDate))
+    {
+        if (!DateOnly.TryParse(req.BirthDate, out var b)) return (false, "Invalid birth date.");
+        birth = b;
+    }
+    string? gender = null;
+    if (!string.IsNullOrWhiteSpace(req.Gender))
+    {
+        if (req.Gender is not ("Male" or "Female")) return (false, "Gender must be Male or Female.");
+        gender = req.Gender;
+    }
+
+    c.FirstName = req.FirstName.Trim();
+    c.LastName = string.IsNullOrWhiteSpace(req.LastName) ? null : req.LastName.Trim();
+    c.Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim();
+    c.Email = string.IsNullOrWhiteSpace(req.Email) ? null : req.Email.Trim();
+    c.Gender = gender;
+    c.BirthDate = birth;
+    c.Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
+    c.IsActive = req.IsActive;
+    return (true, null);
+}
+
+app.MapGet("/api/gym/customers", async (string? search, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymCustomers.AsNoTracking().AsQueryable();
+    if (!string.IsNullOrWhiteSpace(search))
+    {
+        var s = search.Trim().ToLower();
+        query = query.Where(c =>
+            c.FirstName.ToLower().Contains(s) ||
+            (c.LastName != null && c.LastName.ToLower().Contains(s)) ||
+            (c.Phone != null && c.Phone.ToLower().Contains(s)) ||
+            (c.Email != null && c.Email.ToLower().Contains(s)));
+    }
+    var items = await query.OrderBy(c => c.FirstName).ThenBy(c => c.LastName).ToListAsync(ct);
+    return Results.Ok(items.Select(GymCustomerDto));
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/customers/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+    return c is null ? Results.NotFound() : Results.Ok(GymCustomerDto(c));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers", async (GymCustomerRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var c = new GymCustomer();
+    var (ok, error) = ApplyGymCustomer(c, req);
+    if (!ok) return Results.BadRequest(new { message = error });
+    db.GymCustomers.Add(c);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymCustomerDto(c));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/customers/{id:guid}", async (Guid id, GymCustomerRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.GymCustomers.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    var (ok, error) = ApplyGymCustomer(c, req);
+    if (!ok) return Results.BadRequest(new { message = error });
+    c.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymCustomerDto(c));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/customers/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.GymCustomers.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    db.GymCustomers.Remove(c);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Management: Memberships (subscriptions issued to customers) ─────────────
+
+static object GymMembershipDto(GymMembership m) => new
+{
+    m.Id,
+    m.CustomerId,
+    m.TariffId,
+    m.TariffName,
+    m.Price,
+    m.Currency,
+    startDate = m.StartDate.ToString("yyyy-MM-dd"),
+    endDate = m.EndDate.ToString("yyyy-MM-dd"),
+    m.VisitLimit,
+    m.VisitsUsed,
+    m.HasTimeRestriction,
+    accessFrom = m.AccessFrom?.ToString(@"hh\:mm"),
+    accessTo = m.AccessTo?.ToString(@"hh\:mm"),
+    m.DaysOfWeekMask,
+    m.FreezeAllowed,
+    m.FreezeMaxDays,
+    m.FrozenDaysUsed,
+    freezeRemaining = Math.Max(0, m.FreezeMaxDays - m.FrozenDaysUsed),
+    frozenUntil = m.FrozenUntil?.ToString("yyyy-MM-dd"),
+    m.TransferAllowed,
+    m.AutoRenew,
+    status = GymMembershipFactory.EffectiveStatus(m, DateOnly.FromDateTime(DateTime.UtcNow)),
+    rawStatus = m.Status.ToString(),
+    m.Notes,
+    m.CreatedUtc,
+};
+
+app.MapGet("/api/gym/customers/{customerId:guid}/memberships", async (Guid customerId, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == customerId, ct)) return Results.NotFound();
+    var items = await db.GymMemberships.AsNoTracking()
+        .Where(m => m.CustomerId == customerId)
+        .OrderByDescending(m => m.CreatedUtc)
+        .ToListAsync(ct);
+    return Results.Ok(items.Select(GymMembershipDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{customerId:guid}/memberships", async (Guid customerId, IssueMembershipRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == customerId, ct)) return Results.NotFound();
+    var tariff = await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == req.TariffId, ct);
+    if (tariff is null) return Results.BadRequest(new { message = "Tariff not found." });
+
+    var start = DateOnly.FromDateTime(DateTime.UtcNow);
+    if (!string.IsNullOrWhiteSpace(req.StartDate))
+    {
+        if (!DateOnly.TryParse(req.StartDate, out var s)) return Results.BadRequest(new { message = "Invalid start date." });
+        start = s;
+    }
+
+    var m = GymMembershipFactory.FromTariff(customerId, tariff, start);
+    db.GymMemberships.Add(m);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(m));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/memberships/{id:guid}/cancel", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    m.Status = GymMembershipStatus.Cancelled;
+    m.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(m));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/memberships/{id:guid}/freeze", async (Guid id, FreezeMembershipRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    if (m.Status == GymMembershipStatus.Cancelled) return Results.BadRequest(new { message = "Membership is cancelled." });
+    if (!m.FreezeAllowed) return Results.BadRequest(new { message = "Freeze is not allowed for this membership." });
+    if (m.FrozenUntil != null && m.FrozenUntil > today) return Results.BadRequest(new { message = "Membership is already frozen." });
+    if (req.Days < 1) return Results.BadRequest(new { message = "Days must be at least 1." });
+    if (m.FrozenDaysUsed + req.Days > m.FreezeMaxDays)
+        return Results.BadRequest(new { message = $"Only {Math.Max(0, m.FreezeMaxDays - m.FrozenDaysUsed)} freeze day(s) remaining." });
+
+    m.EndDate = m.EndDate.AddDays(req.Days);
+    m.FrozenUntil = today.AddDays(req.Days);
+    m.FrozenDaysUsed += req.Days;
+    m.Status = GymMembershipStatus.Frozen;
+    m.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(m));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/memberships/{id:guid}/unfreeze", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    if (m.FrozenUntil == null || m.FrozenUntil <= today) return Results.BadRequest(new { message = "Membership is not frozen." });
+
+    // Give back the unused freeze days (shorten end date + free up the freeze budget).
+    var remaining = m.FrozenUntil.Value.DayNumber - today.DayNumber;
+    m.EndDate = m.EndDate.AddDays(-remaining);
+    m.FrozenDaysUsed = Math.Max(0, m.FrozenDaysUsed - remaining);
+    m.FrozenUntil = null;
+    m.Status = GymMembershipStatus.Active;
+    m.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(m));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/memberships/{id:guid}/transfer", async (Guid id, TransferMembershipRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    if (!m.TransferAllowed) return Results.BadRequest(new { message = "Transfer is not allowed for this membership." });
+    if (m.Status == GymMembershipStatus.Cancelled) return Results.BadRequest(new { message = "Membership is cancelled." });
+    if (req.CustomerId == m.CustomerId) return Results.BadRequest(new { message = "Already belongs to this customer." });
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == req.CustomerId, ct)) return Results.BadRequest(new { message = "Target customer not found." });
+
+    m.CustomerId = req.CustomerId;
+    m.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(m));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/memberships/{id:guid}/renew", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    var tariff = m.TariffId is null ? null : await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == m.TariffId, ct);
+    if (tariff is null) return Results.BadRequest(new { message = "Original tariff no longer exists; issue a new membership instead." });
+
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    // New period starts when the current one ends (or today if already expired).
+    var start = m.EndDate > today ? m.EndDate : today;
+    var renewed = GymMembershipFactory.FromTariff(m.CustomerId, tariff, start);
+    db.GymMemberships.Add(renewed);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymMembershipDto(renewed));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/memberships/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var m = await db.GymMemberships.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (m is null) return Results.NotFound();
+    db.GymMemberships.Remove(m);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Management: Gift certificates ──────────────────────────────────────────
+
+static string GymGiftEffectiveStatus(GymGiftCertificate g, DateOnly today) =>
+    g.Status == GymGiftCertificateStatus.Redeemed ? "Redeemed"
+    : g.Status == GymGiftCertificateStatus.Cancelled ? "Cancelled"
+    : (g.ValidUntil != null && g.ValidUntil < today) ? "Expired"
+    : "Issued";
+
+static object GymGiftDto(GymGiftCertificate g) => new
+{
+    g.Id,
+    g.Code,
+    g.TariffId,
+    g.TariffName,
+    g.Price,
+    g.Currency,
+    g.RecipientName,
+    validUntil = g.ValidUntil?.ToString("yyyy-MM-dd"),
+    status = GymGiftEffectiveStatus(g, DateOnly.FromDateTime(DateTime.UtcNow)),
+    rawStatus = g.Status.ToString(),
+    g.RedeemedByCustomerId,
+    g.RedeemedMembershipId,
+    g.RedeemedUtc,
+    g.CreatedUtc,
+};
+
+static string GymGenerateGiftCode() =>
+    "GC-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant() + "-" + Guid.NewGuid().ToString("N")[..4].ToUpperInvariant();
+
+app.MapGet("/api/gym/gift-certificates", async (AppDbContext db, CancellationToken ct) =>
+{
+    var items = await db.GymGiftCertificates.AsNoTracking().OrderByDescending(g => g.CreatedUtc).ToListAsync(ct);
+    return Results.Ok(items.Select(GymGiftDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/gift-certificates", async (IssueGiftCertificateRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var tariff = await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == req.TariffId, ct);
+    if (tariff is null) return Results.BadRequest(new { message = "Tariff not found." });
+
+    DateOnly? validUntil = null;
+    if (!string.IsNullOrWhiteSpace(req.ValidUntil))
+    {
+        if (!DateOnly.TryParse(req.ValidUntil, out var v)) return Results.BadRequest(new { message = "Invalid valid-until date." });
+        validUntil = v;
+    }
+
+    string code;
+    do { code = GymGenerateGiftCode(); }
+    while (await db.GymGiftCertificates.AnyAsync(g => g.Code == code, ct));
+
+    var cert = new GymGiftCertificate
+    {
+        Code = code,
+        TariffId = tariff.Id,
+        TariffName = tariff.Name,
+        Price = tariff.Price,
+        Currency = tariff.Currency,
+        RecipientName = string.IsNullOrWhiteSpace(req.RecipientName) ? null : req.RecipientName.Trim(),
+        ValidUntil = validUntil,
+        Status = GymGiftCertificateStatus.Issued,
+    };
+    db.GymGiftCertificates.Add(cert);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymGiftDto(cert));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/gift-certificates/{id:guid}/redeem", async (Guid id, RedeemGiftCertificateRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var cert = await db.GymGiftCertificates.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (cert is null) return Results.NotFound();
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    if (cert.Status != GymGiftCertificateStatus.Issued) return Results.BadRequest(new { message = "Certificate is not redeemable." });
+    if (cert.ValidUntil != null && cert.ValidUntil < today) return Results.BadRequest(new { message = "Certificate has expired." });
+
+    var tariff = cert.TariffId is null ? null : await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == cert.TariffId, ct);
+    if (tariff is null) return Results.BadRequest(new { message = "Linked tariff no longer exists." });
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == req.CustomerId, ct)) return Results.BadRequest(new { message = "Customer not found." });
+
+    var start = today;
+    if (!string.IsNullOrWhiteSpace(req.StartDate))
+    {
+        if (!DateOnly.TryParse(req.StartDate, out var s)) return Results.BadRequest(new { message = "Invalid start date." });
+        start = s;
+    }
+
+    var membership = GymMembershipFactory.FromTariff(req.CustomerId, tariff, start);
+    db.GymMemberships.Add(membership);
+
+    cert.Status = GymGiftCertificateStatus.Redeemed;
+    cert.RedeemedByCustomerId = req.CustomerId;
+    cert.RedeemedMembershipId = membership.Id;
+    cert.RedeemedUtc = DateTime.UtcNow;
+    cert.UpdatedUtc = DateTime.UtcNow;
+
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymGiftDto(cert));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/gift-certificates/{id:guid}/cancel", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var cert = await db.GymGiftCertificates.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (cert is null) return Results.NotFound();
+    if (cert.Status == GymGiftCertificateStatus.Redeemed) return Results.BadRequest(new { message = "Redeemed certificate cannot be cancelled." });
+    cert.Status = GymGiftCertificateStatus.Cancelled;
+    cert.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymGiftDto(cert));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/gift-certificates/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var cert = await db.GymGiftCertificates.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (cert is null) return Results.NotFound();
+    db.GymGiftCertificates.Remove(cert);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Management: Customer device access (push as custom1) ────────────────────
+
+app.MapGet("/api/gym/devices", async (AppDbContext db, CancellationToken ct) =>
+{
+    var devices = await db.Devices.AsNoTracking()
+        .OrderBy(d => d.Name)
+        .Select(d => new { d.Id, d.Name, d.IpAddress, deviceType = d.DeviceType.ToString() })
+        .ToListAsync(ct);
+    return Results.Ok(devices);
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{id:guid}/access", async (Guid id, GymAccessRequest req, IDevicePersonSyncService sync, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    if (req.DeviceIds is null || req.DeviceIds.Length == 0) return Results.BadRequest(new { message = "No devices selected." });
+
+    var results = new List<object>();
+    foreach (var deviceId in req.DeviceIds)
+    {
+        var r = await sync.SyncGymCustomerAsync(id, deviceId, ct);
+        results.Add(new { deviceId, success = r.Success, error = r.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{id:guid}/access/revoke", async (Guid id, GymAccessRequest req, IDevicePersonSyncService sync, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    if (req.DeviceIds is null || req.DeviceIds.Length == 0) return Results.BadRequest(new { message = "No devices selected." });
+
+    var results = new List<object>();
+    foreach (var deviceId in req.DeviceIds)
+    {
+        var r = await sync.DeleteGymCustomerAsync(id, deviceId, ct);
+        results.Add(new { deviceId, success = r.Success, error = r.Message });
+    }
+    return Results.Ok(results);
+}).RequireAuthorization();
+
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
 if (File.Exists(indexHtmlPath))
 {
@@ -6551,6 +7063,42 @@ public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string 
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
 public sealed record AttendanceCorrectionRequest(Guid EmployeeId, DateTime Date, DateTime? CheckInUtc, DateTime? CheckOutUtc, string? Comment);
 public sealed record GeoZoneRequest(string Name, double Latitude, double Longitude, int RadiusMeters, bool IsActive);
+
+public sealed record GymTariffRequest(
+    string Name,
+    string? Description,
+    string Kind,
+    decimal Price,
+    string? Currency,
+    string DurationType,
+    int? VisitLimit,
+    bool HasTimeRestriction,
+    string? AccessFrom,
+    string? AccessTo,
+    int DaysOfWeekMask,
+    bool AutoRenew,
+    bool FreezeAllowed,
+    int FreezeMaxDays,
+    bool TransferAllowed,
+    bool IsActive,
+    int SortOrder);
+
+public sealed record GymCustomerRequest(
+    string FirstName,
+    string? LastName,
+    string? Phone,
+    string? Email,
+    string? Gender,
+    string? BirthDate,
+    string? Notes,
+    bool IsActive);
+
+public sealed record IssueMembershipRequest(Guid TariffId, string? StartDate);
+public sealed record FreezeMembershipRequest(int Days);
+public sealed record TransferMembershipRequest(Guid CustomerId);
+public sealed record IssueGiftCertificateRequest(Guid TariffId, string? ValidUntil, string? RecipientName);
+public sealed record RedeemGiftCertificateRequest(Guid CustomerId, string? StartDate);
+public sealed record GymAccessRequest(Guid[] DeviceIds);
 public sealed record ReviewAttendanceRequestBody(string? Comment);
 public sealed record SelfServiceLoginRequest(string Email, string Password);
 public sealed record SelfServiceChangePasswordRequest(string CurrentPassword, string NewPassword);

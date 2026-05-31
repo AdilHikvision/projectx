@@ -49,6 +49,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<NotificationRead> NotificationReads => Set<NotificationRead>();
     public DbSet<AuditLogEntry> AuditLogs => Set<AuditLogEntry>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<GymTariff> GymTariffs => Set<GymTariff>();
+    public DbSet<GymCustomer> GymCustomers => Set<GymCustomer>();
+    public DbSet<GymMembership> GymMemberships => Set<GymMembership>();
+    public DbSet<GymGiftCertificate> GymGiftCertificates => Set<GymGiftCertificate>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -391,6 +395,61 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.RoleName).HasMaxLength(128).IsRequired();
             entity.Property(x => x.Permission).HasMaxLength(128).IsRequired();
             entity.HasIndex(x => x.RoleName);
+        });
+
+        builder.Entity<GymTariff>(entity =>
+        {
+            entity.ToTable("gym_tariffs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.Property(x => x.Kind).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Price).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.DurationType).HasConversion<int>().IsRequired();
+            entity.HasIndex(x => x.IsActive);
+        });
+
+        builder.Entity<GymCustomer>(entity =>
+        {
+            entity.ToTable("gym_customers");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FirstName).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.LastName).HasMaxLength(120);
+            entity.Property(x => x.Phone).HasMaxLength(40);
+            entity.Property(x => x.Email).HasMaxLength(256);
+            entity.Property(x => x.Gender).HasMaxLength(16);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.IsActive);
+            entity.HasIndex(x => x.Phone);
+        });
+
+        builder.Entity<GymMembership>(entity =>
+        {
+            entity.ToTable("gym_memberships");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TariffName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Price).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Tariff).WithMany().HasForeignKey(x => x.TariffId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.CustomerId);
+        });
+
+        builder.Entity<GymGiftCertificate>(entity =>
+        {
+            entity.ToTable("gym_gift_certificates");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.TariffName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Price).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.RecipientName).HasMaxLength(200);
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.HasOne(x => x.Tariff).WithMany().HasForeignKey(x => x.TariffId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.Code).IsUnique();
         });
 
         builder.Entity<AuditLogEntry>(entity =>

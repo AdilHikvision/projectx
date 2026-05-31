@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260531094953_AddGymMemberships")]
+    partial class AddGymMemberships
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -977,71 +980,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("gym_customers", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymGiftCertificate", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasDefaultValue("AZN");
-
-                    b.Property<decimal>("Price")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<string>("RecipientName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<Guid?>("RedeemedByCustomerId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("RedeemedMembershipId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("RedeemedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid?>("TariffId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("TariffName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateOnly?>("ValidUntil")
-                        .HasColumnType("date");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Code")
-                        .IsUnique();
-
-                    b.HasIndex("TariffId");
-
-                    b.ToTable("gym_gift_certificates", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymMembership", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1053,9 +991,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
                     b.Property<TimeSpan?>("AccessTo")
                         .HasColumnType("interval");
-
-                    b.Property<bool>("AutoRenew")
-                        .HasColumnType("boolean");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1081,12 +1016,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("FreezeMaxDays")
                         .HasColumnType("integer");
-
-                    b.Property<int>("FrozenDaysUsed")
-                        .HasColumnType("integer");
-
-                    b.Property<DateOnly?>("FrozenUntil")
-                        .HasColumnType("date");
 
                     b.Property<bool>("HasTimeRestriction")
                         .HasColumnType("boolean");
@@ -2182,16 +2111,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Employee");
 
                     b.Navigation("Visitor");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.GymGiftCertificate", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.GymTariff", "Tariff")
-                        .WithMany()
-                        .HasForeignKey("TariffId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Tariff");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.GymMembership", b =>

@@ -119,6 +119,52 @@ public sealed class DevicePersonSyncService(
             cancellationToken: cancellationToken);
     }
 
+    /// <summary>Person ID клиента зала на терминале (детерминированный, без хранения).</summary>
+    private static string GymCustomerEmployeeNo(GymCustomer c) => c.Id.ToString("N")[..32];
+
+    public async Task<DeviceSyncResult> SyncGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        var customer = await dbContext.GymCustomers.FirstOrDefaultAsync(c => c.Id == customerId, cancellationToken);
+        if (customer is null)
+            return new DeviceSyncResult(false, "Клиент не найден.");
+
+        var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
+        if (device is null)
+            return new DeviceSyncResult(false, "Устройство не найдено.");
+
+        var employeeNo = GymCustomerEmployeeNo(customer);
+        var name = string.Join(" ", new[] { customer.FirstName, customer.LastName }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        // Окно доступа = до даты окончания самого позднего активного абонемента клиента (если есть).
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var latestEnd = await dbContext.GymMemberships
+            .Where(m => m.CustomerId == customerId
+                && m.Status != GymMembershipStatus.Cancelled
+                && m.EndDate >= today)
+            .OrderByDescending(m => m.EndDate)
+            .Select(m => (DateOnly?)m.EndDate)
+            .FirstOrDefaultAsync(cancellationToken);
+        DateTime? validToUtc = latestEnd is { } le
+            ? le.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Utc)
+            : null;
+
+        // userType "custom1" (Custom User 1) — клиенты зала отличаются от штатных пользователей.
+        return await SyncUserInfoAsync(device, employeeNo, name, userType: null, doorRight: [],
+            gender: customer.Gender,
+            validToUtc: validToUtc,
+            userCategory: "custom1",
+            cancellationToken: cancellationToken);
+    }
+
+    public async Task<DeviceSyncResult> DeleteGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        var customer = await dbContext.GymCustomers.FirstOrDefaultAsync(c => c.Id == customerId, cancellationToken);
+        if (customer is null)
+            return new DeviceSyncResult(false, "Клиент не найден.");
+        return await DeletePersonFromDeviceAsync(GymCustomerEmployeeNo(customer), deviceId, cancellationToken);
+    }
+
     public async Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default)
     {
         var card = await dbContext.Cards
@@ -733,7 +779,7 @@ public sealed class DevicePersonSyncService(
         Device device,
         string employeeNo,
         string name,
-        int userType,
+        int? userType,
         int[] doorRight,
         string? gender = null,
         DateTime? validFromUtc = null,
@@ -778,7 +824,6 @@ public sealed class DevicePersonSyncService(
         {
             ["employeeNo"] = employeeNo,
             ["name"] = name,
-            ["type"] = userType,
             ["userType"] = userTypeStr,
             ["givenName"] = givenName,
             ["familyName"] = familyName,
@@ -790,6 +835,10 @@ public sealed class DevicePersonSyncService(
             ["maxOpenDoorTime"] = 0,
             ["Valid"] = new Dictionary<string, object> { ["enable"] = true, ["beginTime"] = beginTime, ["endTime"] = endTime, ["timeType"] = "local" }
         };
+        // Legacy numeric "type" (1/2/3) — отправляем только для штатных типов; для custom-типов
+        // оно не нужно и конфликтует со строковым userType, поэтому опускается.
+        if (userType is int legacyType)
+            userInfo["type"] = legacyType;
 
         var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = null, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
         var recordBody = JsonSerializer.Serialize(new Dictionary<string, object> { ["UserInfo"] = userInfo }, jsonOpts);

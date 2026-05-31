@@ -580,6 +580,158 @@ public sealed class RolePermission
     public string Permission { get; set; } = string.Empty;
 }
 
+// ─── Gym Management module ───────────────────────────────────────────────────
+
+public enum GymTariffKind
+{
+    /// <summary>Обычный абонемент.</summary>
+    Membership = 1,
+    /// <summary>Подарочный сертификат (продаётся, затем активируется на клиента).</summary>
+    GiftCertificate = 2
+}
+
+public enum GymTariffDuration
+{
+    Day = 1,
+    Week = 2,
+    Month = 3,
+    Year = 4
+}
+
+/// <summary>
+/// Тариф (шаблон абонемента) модуля Gym Management. Описывает срок, цену, лимиты
+/// и политики (автопродление, заморозка, перенос). Выданные клиентам абонементы —
+/// отдельная сущность (следующий этап).
+/// </summary>
+public sealed class GymTariff : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public GymTariffKind Kind { get; set; } = GymTariffKind.Membership;
+
+    // Стоимость.
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = "AZN";
+
+    // Срок действия абонемента: день / неделя / месяц / год.
+    public GymTariffDuration DurationType { get; set; } = GymTariffDuration.Month;
+
+    // Ограничение по количеству посещений. null = безлимит.
+    public int? VisitLimit { get; set; }
+
+    // Ограничение по времени посещения (окно доступа в течение дня).
+    public bool HasTimeRestriction { get; set; }
+    public TimeSpan? AccessFrom { get; set; }
+    public TimeSpan? AccessTo { get; set; }
+    /// <summary>Битовая маска разрешённых дней недели (бит 0 = воскресенье … бит 6 = суббота). 127 = все дни.</summary>
+    public int DaysOfWeekMask { get; set; } = 127;
+
+    // Политики.
+    public bool AutoRenew { get; set; }
+    public bool FreezeAllowed { get; set; }
+    public int FreezeMaxDays { get; set; }
+    public bool TransferAllowed { get; set; }
+
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+}
+
+/// <summary>Клиент тренажёрного зала (модуль Gym Management).</summary>
+public sealed class GymCustomer : BaseEntity
+{
+    public string FirstName { get; set; } = string.Empty;
+    public string? LastName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    /// <summary>"Male" / "Female" / null.</summary>
+    public string? Gender { get; set; }
+    public DateOnly? BirthDate { get; set; }
+    public string? Notes { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public enum GymMembershipStatus
+{
+    Active = 1,
+    Frozen = 2,
+    Cancelled = 3
+}
+
+/// <summary>
+/// Выданный клиенту абонемент. Ключевые параметры тарифа копируются (снапшот) на момент
+/// выдачи, чтобы последующее изменение/удаление тарифа не меняло уже проданный абонемент.
+/// </summary>
+public sealed class GymMembership : BaseEntity
+{
+    public Guid CustomerId { get; set; }
+    public GymCustomer? Customer { get; set; }
+
+    /// <summary>Ссылка на исходный тариф (может стать null, если тариф удалён).</summary>
+    public Guid? TariffId { get; set; }
+    public GymTariff? Tariff { get; set; }
+
+    // Снапшот тарифа.
+    public string TariffName { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = "AZN";
+
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate { get; set; }
+
+    public int? VisitLimit { get; set; }
+    public int VisitsUsed { get; set; }
+
+    public bool HasTimeRestriction { get; set; }
+    public TimeSpan? AccessFrom { get; set; }
+    public TimeSpan? AccessTo { get; set; }
+    public int DaysOfWeekMask { get; set; } = 127;
+
+    public bool FreezeAllowed { get; set; }
+    public int FreezeMaxDays { get; set; }
+    /// <summary>Сколько дней заморозки уже использовано (кумулятивно, против FreezeMaxDays).</summary>
+    public int FrozenDaysUsed { get; set; }
+    /// <summary>Дата окончания текущей заморозки. null = не заморожен.</summary>
+    public DateOnly? FrozenUntil { get; set; }
+
+    public bool TransferAllowed { get; set; }
+    public bool AutoRenew { get; set; }
+
+    public GymMembershipStatus Status { get; set; } = GymMembershipStatus.Active;
+    public string? Notes { get; set; }
+}
+
+public enum GymGiftCertificateStatus
+{
+    Issued = 1,
+    Redeemed = 2,
+    Cancelled = 3
+}
+
+/// <summary>
+/// Подарочный сертификат: продаётся под определённый тариф, имеет код и может быть
+/// активирован (redeem) на клиента — при активации создаётся абонемент.
+/// </summary>
+public sealed class GymGiftCertificate : BaseEntity
+{
+    public string Code { get; set; } = string.Empty;
+
+    public Guid? TariffId { get; set; }
+    public GymTariff? Tariff { get; set; }
+    public string TariffName { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = "AZN";
+
+    public string? RecipientName { get; set; }
+    /// <summary>Активировать до этой даты (null = без срока).</summary>
+    public DateOnly? ValidUntil { get; set; }
+
+    public GymGiftCertificateStatus Status { get; set; } = GymGiftCertificateStatus.Issued;
+
+    public Guid? RedeemedByCustomerId { get; set; }
+    public Guid? RedeemedMembershipId { get; set; }
+    public DateTime? RedeemedUtc { get; set; }
+}
+
 /// <summary>Системный аудит-лог. Кто, что, когда сделал. Пишется middleware-ом + точечными вызовами.</summary>
 public sealed class AuditLogEntry
 {

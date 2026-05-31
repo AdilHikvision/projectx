@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { LoadingOverlay } from './components/organisms'
+import { LoadingOverlay, ModuleSwitcher } from './components/organisms'
 import { useLoading } from './context/LoadingContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AccessLevelsPage } from './pages/AccessLevelsPage'
@@ -21,6 +21,14 @@ import { AttendanceApprovalsPage } from './pages/AttendanceApprovalsPage'
 import { GeoZonesPage } from './pages/GeoZonesPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { SelfServicePage } from './pages/SelfServicePage'
+import {
+  GymCustomersPage,
+  GymSubscriptionsPage,
+  GymInventoryPage,
+  GymFinancePage,
+  GymAnalyticsPage,
+  GymPosPage,
+} from './pages/gym'
 import './App.css'
 
 import { useAuth } from './auth/AuthContext'
@@ -59,11 +67,23 @@ function App() {
           <Route path="/approvals" element={<AttendanceApprovalsPage />} />
           <Route path="/geo-zones" element={<GeoZonesPage />} />
           <Route path="/payroll" element={<PayrollCalculationPage />} />
+
+          {/* ─── Gym Management module ─── */}
+          <Route path="/gym/customers" element={<GymCustomersPage />} />
+          <Route path="/gym/subscriptions" element={<GymSubscriptionsPage />} />
+          <Route path="/gym/inventory" element={<GymInventoryPage />} />
+          <Route path="/gym/finance" element={<GymFinancePage />} />
+          <Route path="/gym/analytics" element={<GymAnalyticsPage />} />
+          <Route path="/gym/pos" element={<GymPosPage />} />
+
           <Route path="/settings" element={<SystemSettingsPage />} />
           <Route path="/status" element={<SystemStatusPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+
+      {/* Full-screen module picker overlay (opened from the sidebar module card) */}
+      <ModuleSwitcher />
     </>
   )
 }

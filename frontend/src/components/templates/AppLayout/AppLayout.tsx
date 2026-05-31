@@ -28,6 +28,14 @@ const ROUTE_META: Record<string, RouteMeta> = {
     '/payroll': { titleKey: 'nav.payroll', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.processAll', actionIcon: 'payments', searchPlaceholderKey: 'topBar.searchPayroll' },
     '/settings': { titleKey: 'nav.settings', breadcrumbKey: 'nav.dashboard', actionTextKey: 'common.saveChanges', actionIcon: 'save', searchPlaceholderKey: 'topBar.searchSettings' },
     '/status': { titleKey: 'nav.systemStatus', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchLogs' },
+
+    // ─── Gym Management module ───
+    '/gym/customers': { titleKey: 'gym.nav.customers', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/gym/subscriptions': { titleKey: 'gym.nav.subscriptions', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/gym/inventory': { titleKey: 'gym.nav.inventory', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/gym/finance': { titleKey: 'gym.nav.finance', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/gym/analytics': { titleKey: 'gym.nav.analytics', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/gym/pos': { titleKey: 'gym.nav.pos', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
 };
 
 export function AppLayout({ children, onAction }: AppLayoutProps) {

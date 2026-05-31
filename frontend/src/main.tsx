@@ -6,13 +6,16 @@ import './i18n'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthContext.tsx'
 import { LoadingProvider } from './context/LoadingContext.tsx'
+import { ModuleProvider } from './context/ModuleContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <LoadingProvider>
         <AuthProvider>
-          <App />
+          <ModuleProvider>
+            <App />
+          </ModuleProvider>
         </AuthProvider>
       </LoadingProvider>
     </BrowserRouter>
