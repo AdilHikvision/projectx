@@ -2856,7 +2856,7 @@ app.MapGet("/api/faces/{id:guid}/image", async (Guid id, AppDbContext dbContext,
     var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
     if (!File.Exists(fullPath)) return Results.NotFound();
     return Results.File(fullPath, "image/jpeg");
-}).RequireAuthorization("Employees.View");
+}).RequireAuthorization();
 
 app.MapPost("/api/faces", async (HttpRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
@@ -6213,7 +6213,7 @@ app.MapDelete("/api/gym/tariffs/{id:guid}", async (Guid id, AppDbContext db, Can
 
 // ─── Gym Management: Customers ──────────────────────────────────────────────────
 
-static object GymCustomerDto(GymCustomer c) => new
+static object GymCustomerDto(GymCustomer c, Guid? primaryFaceId = null) => new
 {
     c.Id,
     c.FirstName,
@@ -6224,6 +6224,8 @@ static object GymCustomerDto(GymCustomer c) => new
     birthDate = c.BirthDate?.ToString("yyyy-MM-dd"),
     c.Notes,
     c.IsActive,
+    c.VisitCount,
+    primaryFaceId,
     c.CreatedUtc,
     c.UpdatedUtc,
 };
@@ -6268,13 +6270,29 @@ app.MapGet("/api/gym/customers", async (string? search, AppDbContext db, Cancell
             (c.Email != null && c.Email.ToLower().Contains(s)));
     }
     var items = await query.OrderBy(c => c.FirstName).ThenBy(c => c.LastName).ToListAsync(ct);
-    return Results.Ok(items.Select(GymCustomerDto));
+
+    // Latest face per customer → shown as the avatar in the table.
+    var ids = items.Select(c => c.Id).ToList();
+    var faceByCustomer = (await db.Faces.AsNoTracking()
+            .Where(f => f.GymCustomerId != null && ids.Contains(f.GymCustomerId!.Value))
+            .Select(f => new { CustomerId = f.GymCustomerId!.Value, f.Id, f.CreatedUtc })
+            .ToListAsync(ct))
+        .GroupBy(x => x.CustomerId)
+        .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedUtc).First().Id);
+
+    return Results.Ok(items.Select(c => GymCustomerDto(c, faceByCustomer.TryGetValue(c.Id, out var fid) ? fid : null)));
 }).RequireAuthorization();
 
 app.MapGet("/api/gym/customers/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
     var c = await db.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-    return c is null ? Results.NotFound() : Results.Ok(GymCustomerDto(c));
+    if (c is null) return Results.NotFound();
+    var primaryFaceId = await db.Faces.AsNoTracking()
+        .Where(f => f.GymCustomerId == id)
+        .OrderByDescending(f => f.CreatedUtc)
+        .Select(f => (Guid?)f.Id)
+        .FirstOrDefaultAsync(ct);
+    return Results.Ok(GymCustomerDto(c, primaryFaceId));
 }).RequireAuthorization();
 
 app.MapPost("/api/gym/customers", async (GymCustomerRequest req, AppDbContext db, CancellationToken ct) =>
@@ -6298,10 +6316,18 @@ app.MapPut("/api/gym/customers/{id:guid}", async (Guid id, GymCustomerRequest re
     return Results.Ok(GymCustomerDto(c));
 }).RequireAuthorization();
 
-app.MapDelete("/api/gym/customers/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+app.MapDelete("/api/gym/customers/{id:guid}", async (Guid id, AppDbContext db, IDevicePersonSyncService sync, CancellationToken ct) =>
 {
     var c = await db.GymCustomers.FirstOrDefaultAsync(x => x.Id == id, ct);
     if (c is null) return Results.NotFound();
+
+    // Best-effort: remove the person (and their credentials) from every device before deleting locally.
+    var deviceIds = await db.Devices.Select(d => d.Id).ToListAsync(ct);
+    foreach (var deviceId in deviceIds)
+    {
+        try { await sync.DeleteGymCustomerAsync(id, deviceId, ct); } catch { /* per-device failure is non-fatal */ }
+    }
+
     db.GymCustomers.Remove(c);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
@@ -6348,9 +6374,10 @@ app.MapGet("/api/gym/customers/{customerId:guid}/memberships", async (Guid custo
     return Results.Ok(items.Select(GymMembershipDto));
 }).RequireAuthorization();
 
-app.MapPost("/api/gym/customers/{customerId:guid}/memberships", async (Guid customerId, IssueMembershipRequest req, AppDbContext db, CancellationToken ct) =>
+app.MapPost("/api/gym/customers/{customerId:guid}/memberships", async (Guid customerId, IssueMembershipRequest req, AppDbContext db, IDevicePersonSyncService sync, CancellationToken ct) =>
 {
-    if (!await db.GymCustomers.AnyAsync(c => c.Id == customerId, ct)) return Results.NotFound();
+    var customer = await db.GymCustomers.FirstOrDefaultAsync(c => c.Id == customerId, ct);
+    if (customer is null) return Results.NotFound();
     var tariff = await db.GymTariffs.FirstOrDefaultAsync(x => x.Id == req.TariffId, ct);
     if (tariff is null) return Results.BadRequest(new { message = "Tariff not found." });
 
@@ -6363,7 +6390,37 @@ app.MapPost("/api/gym/customers/{customerId:guid}/memberships", async (Guid cust
 
     var m = GymMembershipFactory.FromTariff(customerId, tariff, start);
     db.GymMemberships.Add(m);
+    // New subscription → fresh visit counter, re-activate the customer.
+    customer.VisitCount = 0;
+    customer.IsActive = true;
+    customer.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
+
+    // If the customer already has credentials (i.e. an existing/renewing member who may have been
+    // blocked at the visit limit), re-push them so the device access period is restored/extended
+    // to the NEW membership's end date — and their face/card/fingerprint are re-applied.
+    var hasCredentials = await db.Cards.AnyAsync(x => x.GymCustomerId == customerId, ct)
+        || await db.Faces.AnyAsync(x => x.GymCustomerId == customerId, ct)
+        || await db.Fingerprints.AnyAsync(x => x.GymCustomerId == customerId, ct);
+    if (hasCredentials)
+    {
+        var deviceIds = await db.Devices.Select(d => d.Id).ToListAsync(ct);
+        var faceIds = await db.Faces.Where(f => f.GymCustomerId == customerId).Select(f => f.Id).ToListAsync(ct);
+        var fingerprintIds = await db.Fingerprints.Where(f => f.GymCustomerId == customerId).Select(f => f.Id).ToListAsync(ct);
+        var cardIds = await db.Cards.Where(c => c.GymCustomerId == customerId).Select(c => c.Id).ToListAsync(ct);
+        foreach (var deviceId in deviceIds)
+        {
+            try
+            {
+                await sync.SyncGymCustomerAsync(customerId, deviceId, ct);
+                foreach (var faceId in faceIds) await sync.SyncFaceAsync(faceId, deviceId, ct);
+                foreach (var fpId in fingerprintIds) await sync.SyncFingerprintAsync(fpId, deviceId, ct);
+                foreach (var cardId in cardIds) await sync.SyncCardAsync(cardId, deviceId, ct);
+            }
+            catch { /* per-device failure is non-fatal */ }
+        }
+    }
+
     return Results.Ok(GymMembershipDto(m));
 }).RequireAuthorization();
 
@@ -6591,11 +6648,36 @@ app.MapPost("/api/gym/customers/{id:guid}/access", async (Guid id, GymAccessRequ
     if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
     if (req.DeviceIds is null || req.DeviceIds.Length == 0) return Results.BadRequest(new { message = "No devices selected." });
 
+    // Like the workforce person-push: write the person AND all their credentials
+    // (faces / fingerprints / cards) to each device, otherwise biometrics never land on the device.
+    var faceIds = await db.Faces.Where(f => f.GymCustomerId == id).Select(f => f.Id).ToListAsync(ct);
+    var fingerprintIds = await db.Fingerprints.Where(f => f.GymCustomerId == id).Select(f => f.Id).ToListAsync(ct);
+    var cardIds = await db.Cards.Where(c => c.GymCustomerId == id).Select(c => c.Id).ToListAsync(ct);
+
     var results = new List<object>();
     foreach (var deviceId in req.DeviceIds)
     {
-        var r = await sync.SyncGymCustomerAsync(id, deviceId, ct);
-        results.Add(new { deviceId, success = r.Success, error = r.Message });
+        var personRes = await sync.SyncGymCustomerAsync(id, deviceId, ct);
+        var ok = personRes.Success;
+        string? error = personRes.Message;
+
+        foreach (var faceId in faceIds)
+        {
+            var r = await sync.SyncFaceAsync(faceId, deviceId, ct);
+            if (!r.Success) { ok = false; error ??= r.Message; }
+        }
+        foreach (var fpId in fingerprintIds)
+        {
+            var r = await sync.SyncFingerprintAsync(fpId, deviceId, ct);
+            if (!r.Success) { ok = false; error ??= r.Message; }
+        }
+        foreach (var cardId in cardIds)
+        {
+            var r = await sync.SyncCardAsync(cardId, deviceId, ct);
+            if (!r.Success) { ok = false; error ??= r.Message; }
+        }
+
+        results.Add(new { deviceId, success = ok, error });
     }
     return Results.Ok(results);
 }).RequireAuthorization();
@@ -6612,6 +6694,1627 @@ app.MapPost("/api/gym/customers/{id:guid}/access/revoke", async (Guid id, GymAcc
         results.Add(new { deviceId, success = r.Success, error = r.Message });
     }
     return Results.Ok(results);
+}).RequireAuthorization();
+
+// ─── Gym Management: Customer credentials (capture face/card/fingerprint as gymcustomer) ──
+
+app.MapPost("/api/gym/customers/{id:guid}/capture/face", async (Guid id, GymCaptureRequest req, IDeviceFaceCaptureService capture, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    var r = await capture.StartCaptureAsync(req.DeviceId, id, "gymcustomer", ct);
+    return r.Success ? Results.Ok(new { started = true }) : Results.BadRequest(new { message = r.Message });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/customers/capture/face/progress", async (Guid deviceId, IDeviceFaceCaptureService capture, CancellationToken ct) =>
+{
+    var p = await capture.GetProgressAsync(deviceId, ct);
+    return Results.Ok(new { p.Status, p.Progress, p.Message, p.FaceId });
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{id:guid}/capture/card", async (Guid id, GymCaptureRequest req, IDeviceCardCaptureService capture, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    var r = await capture.StartCaptureAsync(req.DeviceId, id, "gymcustomer", ct);
+    return r.Success ? Results.Ok(new { started = true }) : Results.BadRequest(new { message = r.Message });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/customers/capture/card/progress", async (Guid deviceId, IDeviceCardCaptureService capture, CancellationToken ct) =>
+{
+    var p = await capture.GetProgressAsync(deviceId, ct);
+    return Results.Ok(new { p.Status, p.Message, p.CardId });
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{id:guid}/capture/fingerprint", async (Guid id, GymCaptureRequest req, IDeviceFingerprintCaptureService capture, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    var fingerIndex = Math.Clamp(req.FingerIndex ?? 1, 1, 10);
+    var r = await capture.StartCaptureAsync(req.DeviceId, id, "gymcustomer", fingerIndex, ct);
+    return r.Success ? Results.Ok(new { started = true }) : Results.BadRequest(new { message = r.Message });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/customers/capture/fingerprint/progress", async (Guid deviceId, IDeviceFingerprintCaptureService capture, CancellationToken ct) =>
+{
+    var p = await capture.GetProgressAsync(deviceId, ct);
+    return Results.Ok(new { p.Status, p.Message, p.FingerprintId });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/customers/{id:guid}/credentials", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    var cards = await db.Cards.AsNoTracking().Where(x => x.GymCustomerId == id)
+        .Select(x => new { x.Id, x.CardNo }).ToListAsync(ct);
+    var faces = await db.Faces.AsNoTracking().Where(x => x.GymCustomerId == id)
+        .Select(x => new { x.Id }).ToListAsync(ct);
+    var fingerprints = await db.Fingerprints.AsNoTracking().Where(x => x.GymCustomerId == id)
+        .Select(x => new { x.Id, x.FingerIndex }).ToListAsync(ct);
+    return Results.Ok(new { cards, faces, fingerprints });
+}).RequireAuthorization();
+
+// Add a card by number (manual) and optionally sync to devices.
+app.MapPost("/api/gym/customers/{id:guid}/cards", async (Guid id, GymAddCardRequest req, AppDbContext db, IDevicePersonSyncService sync, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.CardNo)) return Results.BadRequest(new { message = "Card number is required." });
+    var cardNo = req.CardNo.Trim();
+    if (await db.Cards.AnyAsync(x => x.CardNo == cardNo, ct)) return Results.Conflict(new { message = "Card with this number already exists." });
+
+    var card = new Card { GymCustomerId = id, CardNo = cardNo, CardNumber = string.IsNullOrWhiteSpace(req.CardNumber) ? null : req.CardNumber.Trim() };
+    db.Cards.Add(card);
+    await db.SaveChangesAsync(ct);
+
+    var warnings = new List<string>();
+    foreach (var deviceId in req.DeviceIds ?? [])
+    {
+        var r = await sync.SyncCardAsync(card.Id, deviceId, ct);
+        if (!r.Success) warnings.Add(r.Message ?? "sync failed");
+    }
+    return Results.Ok(new { card.Id, card.CardNo, syncWarnings = warnings.Count > 0 ? warnings : null });
+}).RequireAuthorization();
+
+// Add a face by image upload (multipart) and optionally sync to devices.
+app.MapPost("/api/gym/customers/{id:guid}/faces", async (Guid id, HttpRequest request, AppDbContext db, IDevicePersonSyncService sync, IConfiguration configuration, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    if (!request.HasFormContentType) return Results.BadRequest(new { message = "multipart/form-data expected." });
+    var form = await request.ReadFormAsync(ct);
+    var file = form.Files.GetFile("Image");
+    if (file is null || file.Length == 0) return Results.BadRequest(new { message = "Image file is required." });
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    Directory.CreateDirectory(facesPath);
+    var fileName = $"{Guid.NewGuid():N}.jpg";
+    await using (var stream = File.Create(Path.Combine(facesPath, fileName)))
+        await file.CopyToAsync(stream, ct);
+
+    // One face per customer — replace existing.
+    var old = await db.Faces.Where(f => f.GymCustomerId == id).ToListAsync(ct);
+    if (old.Count > 0)
+    {
+        db.Faces.RemoveRange(old);
+        foreach (var o in old)
+        {
+            try { var p = Path.Combine(facesPath, o.FilePath.TrimStart('/', '\\')); if (File.Exists(p)) File.Delete(p); } catch { /* ignore */ }
+        }
+    }
+
+    var face = new Face { GymCustomerId = id, FilePath = fileName, FDID = 1 };
+    db.Faces.Add(face);
+    await db.SaveChangesAsync(ct);
+
+    var warnings = new List<string>();
+    var deviceIds = form["DeviceIds"].Where(s => Guid.TryParse(s, out _)).Select(Guid.Parse).ToArray();
+    foreach (var deviceId in deviceIds)
+    {
+        var r = await sync.SyncFaceAsync(face.Id, deviceId, ct);
+        if (!r.Success) warnings.Add(r.Message ?? "sync failed");
+    }
+    return Results.Ok(new { face.Id, syncWarnings = warnings.Count > 0 ? warnings : null });
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/customers/{id:guid}/cards/{cardId:guid}", async (Guid id, Guid cardId, AppDbContext db, CancellationToken ct) =>
+{
+    var card = await db.Cards.FirstOrDefaultAsync(x => x.Id == cardId && x.GymCustomerId == id, ct);
+    if (card is null) return Results.NotFound();
+    db.Cards.Remove(card);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/customers/{id:guid}/faces/{faceId:guid}", async (Guid id, Guid faceId, AppDbContext db, IConfiguration configuration, CancellationToken ct) =>
+{
+    var face = await db.Faces.FirstOrDefaultAsync(x => x.Id == faceId && x.GymCustomerId == id, ct);
+    if (face is null) return Results.NotFound();
+    db.Faces.Remove(face);
+    await db.SaveChangesAsync(ct);
+    try
+    {
+        var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+        var p = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+        if (File.Exists(p)) File.Delete(p);
+    }
+    catch { /* ignore */ }
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/customers/{id:guid}/fingerprints/{fpId:guid}", async (Guid id, Guid fpId, AppDbContext db, CancellationToken ct) =>
+{
+    var fp = await db.Fingerprints.FirstOrDefaultAsync(x => x.Id == fpId && x.GymCustomerId == id, ct);
+    if (fp is null) return Results.NotFound();
+    db.Fingerprints.Remove(fp);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Management: Payments ───────────────────────────────────────────────────
+
+app.MapGet("/api/gym/customers/{id:guid}/payments", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    var items = await db.GymPayments.AsNoTracking()
+        .Where(p => p.CustomerId == id)
+        .OrderByDescending(p => p.PaidUtc)
+        .Select(p => new { p.Id, p.MembershipId, p.Amount, p.Currency, method = p.Method.ToString(), p.Note, p.PaidUtc })
+        .ToListAsync(ct);
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/customers/{id:guid}/payments", async (Guid id, GymPaymentRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.GymCustomers.AnyAsync(c => c.Id == id, ct)) return Results.NotFound();
+    if (req.Amount < 0) return Results.BadRequest(new { message = "Amount cannot be negative." });
+    if (!Enum.TryParse<GymPaymentMethod>(req.Method, ignoreCase: true, out var method))
+        return Results.BadRequest(new { message = "Unknown payment method." });
+    if (req.MembershipId is { } mid && !await db.GymMemberships.AnyAsync(m => m.Id == mid && m.CustomerId == id, ct))
+        return Results.BadRequest(new { message = "Membership not found for this customer." });
+
+    var payment = new GymPayment
+    {
+        CustomerId = id,
+        MembershipId = req.MembershipId,
+        Amount = req.Amount,
+        Currency = string.IsNullOrWhiteSpace(req.Currency) ? "AZN" : req.Currency.Trim().ToUpperInvariant(),
+        Method = method,
+        Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
+        PaidUtc = DateTime.UtcNow,
+    };
+    db.GymPayments.Add(payment);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { payment.Id, payment.Amount, payment.Currency, method = payment.Method.ToString(), payment.PaidUtc });
+}).RequireAuthorization();
+
+// ─── Gym Inventory / Warehouse: shared helpers ──────────────────────────────────
+
+static string GymGenSeq(string prefix) =>
+    prefix + "-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+
+static string? GymUserEmail(ClaimsPrincipal user) =>
+    user.FindFirst(ClaimTypes.Email)?.Value
+    ?? user.FindFirst("email")?.Value
+    ?? user.Identity?.Name;
+
+static void ApplyGymSupplier(GymSupplier s, GymSupplierRequest req)
+{
+    s.Name = req.Name.Trim();
+    s.ContactName = string.IsNullOrWhiteSpace(req.ContactName) ? null : req.ContactName.Trim();
+    s.Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim();
+    s.Email = string.IsNullOrWhiteSpace(req.Email) ? null : req.Email.Trim();
+    s.Address = string.IsNullOrWhiteSpace(req.Address) ? null : req.Address.Trim();
+    s.Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
+    s.IsActive = req.IsActive;
+}
+
+// NOTE: stock quantity is intentionally NOT set here — it is owned by the movements ledger.
+static void ApplyGymProduct(GymProduct p, GymProductRequest req)
+{
+    p.Name = req.Name.Trim();
+    p.Sku = string.IsNullOrWhiteSpace(req.Sku) ? null : req.Sku.Trim();
+    p.Barcode = string.IsNullOrWhiteSpace(req.Barcode) ? null : req.Barcode.Trim();
+    p.Category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim();
+    p.Unit = string.IsNullOrWhiteSpace(req.Unit) ? "pcs" : req.Unit.Trim();
+    p.SalePrice = req.SalePrice;
+    p.Cost = req.Cost;
+    p.Currency = string.IsNullOrWhiteSpace(req.Currency) ? "AZN" : req.Currency.Trim().ToUpperInvariant();
+    p.MinStock = req.MinStock;
+    p.SupplierId = req.SupplierId;
+    p.IsActive = req.IsActive;
+}
+
+static GymStockMovement ApplyGymStock(AppDbContext db, GymProduct product, GymStockMovementType type,
+    decimal signedQty, decimal unitCost, string? reason, string? reference, Guid? supplierId, string? userEmail)
+{
+    product.StockQuantity += signedQty;
+    product.UpdatedUtc = DateTime.UtcNow;
+    var mv = new GymStockMovement
+    {
+        ProductId = product.Id,
+        Type = type,
+        Quantity = signedQty,
+        UnitCost = unitCost,
+        BalanceAfter = product.StockQuantity,
+        Reason = reason,
+        Reference = reference,
+        SupplierId = supplierId,
+        UserEmail = userEmail,
+    };
+    db.GymStockMovements.Add(mv);
+    return mv;
+}
+
+// ─── Gym Inventory / Warehouse: Suppliers ───────────────────────────────────────
+
+static object GymSupplierDto(GymSupplier s) => new
+{
+    s.Id, s.Name, s.ContactName, s.Phone, s.Email, s.Address, s.Notes, s.IsActive,
+    s.CreatedUtc, s.UpdatedUtc,
+};
+
+app.MapGet("/api/gym/suppliers", async (AppDbContext db, CancellationToken ct) =>
+{
+    var items = await db.GymSuppliers.AsNoTracking().OrderBy(x => x.Name).ToListAsync(ct);
+    return Results.Ok(items.Select(GymSupplierDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/suppliers", async (GymSupplierRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    var s = new GymSupplier();
+    ApplyGymSupplier(s, req);
+    db.GymSuppliers.Add(s);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymSupplierDto(s));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/suppliers/{id:guid}", async (Guid id, GymSupplierRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    var s = await db.GymSuppliers.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (s is null) return Results.NotFound();
+    ApplyGymSupplier(s, req);
+    s.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymSupplierDto(s));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/suppliers/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var s = await db.GymSuppliers.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (s is null) return Results.NotFound();
+    db.GymSuppliers.Remove(s);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Inventory / Warehouse: Products (stock balances) ───────────────────────
+
+static object GymProductDto(GymProduct p, string? supplierName = null) => new
+{
+    p.Id, p.Name, p.Sku, p.Barcode, p.Category, p.Unit,
+    p.SalePrice, p.Cost, p.Currency, p.StockQuantity, p.MinStock,
+    p.SupplierId, supplierName,
+    isLow = p.MinStock > 0 && p.StockQuantity <= p.MinStock,
+    p.IsActive, p.CreatedUtc, p.UpdatedUtc,
+};
+
+app.MapGet("/api/gym/products", async (string? search, bool? lowStock, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymProducts.AsNoTracking().AsQueryable();
+    if (!string.IsNullOrWhiteSpace(search))
+    {
+        var s = search.Trim().ToLower();
+        query = query.Where(p =>
+            p.Name.ToLower().Contains(s) ||
+            (p.Sku != null && p.Sku.ToLower().Contains(s)) ||
+            (p.Barcode != null && p.Barcode.ToLower().Contains(s)) ||
+            (p.Category != null && p.Category.ToLower().Contains(s)));
+    }
+    if (lowStock == true)
+        query = query.Where(p => p.MinStock > 0 && p.StockQuantity <= p.MinStock);
+
+    var items = await query.OrderBy(p => p.Name).ToListAsync(ct);
+    var supplierIds = items.Where(p => p.SupplierId != null).Select(p => p.SupplierId!.Value).Distinct().ToList();
+    var suppliers = await db.GymSuppliers.AsNoTracking()
+        .Where(x => supplierIds.Contains(x.Id))
+        .ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+    return Results.Ok(items.Select(p => GymProductDto(p,
+        p.SupplierId != null && suppliers.TryGetValue(p.SupplierId.Value, out var n) ? n : null)));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/products", async (GymProductRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (req.SalePrice < 0 || req.Cost < 0) return Results.BadRequest(new { message = "Prices cannot be negative." });
+    if (req.MinStock < 0) return Results.BadRequest(new { message = "Min stock cannot be negative." });
+    if (req.SupplierId is { } sid && !await db.GymSuppliers.AnyAsync(x => x.Id == sid, ct))
+        return Results.BadRequest(new { message = "Supplier not found." });
+    if (!string.IsNullOrWhiteSpace(req.Sku) && await db.GymProducts.AnyAsync(p => p.Sku == req.Sku!.Trim(), ct))
+        return Results.Conflict(new { message = "Product with this SKU already exists." });
+
+    var p = new GymProduct();
+    ApplyGymProduct(p, req);
+    db.GymProducts.Add(p);
+
+    var opening = req.OpeningStock ?? 0m;
+    if (opening > 0)
+        ApplyGymStock(db, p, GymStockMovementType.Receipt, opening, p.Cost, "Opening stock", null, p.SupplierId, GymUserEmail(user));
+
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymProductDto(p));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/products/{id:guid}", async (Guid id, GymProductRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (req.SalePrice < 0 || req.Cost < 0) return Results.BadRequest(new { message = "Prices cannot be negative." });
+    if (req.MinStock < 0) return Results.BadRequest(new { message = "Min stock cannot be negative." });
+    var p = await db.GymProducts.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (p is null) return Results.NotFound();
+    if (req.SupplierId is { } sid && !await db.GymSuppliers.AnyAsync(x => x.Id == sid, ct))
+        return Results.BadRequest(new { message = "Supplier not found." });
+    if (!string.IsNullOrWhiteSpace(req.Sku) && await db.GymProducts.AnyAsync(x => x.Sku == req.Sku!.Trim() && x.Id != id, ct))
+        return Results.Conflict(new { message = "Product with this SKU already exists." });
+
+    ApplyGymProduct(p, req); // NOTE: stock quantity is managed by movements, not by edit.
+    p.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymProductDto(p));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/products/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var p = await db.GymProducts.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (p is null) return Results.NotFound();
+    if (await db.GymPurchaseOrderItems.AnyAsync(i => i.ProductId == id, ct)
+        || await db.GymStocktakeItems.AnyAsync(i => i.ProductId == id, ct))
+        return Results.BadRequest(new { message = "Product is referenced by purchases or stocktakes; deactivate it instead." });
+    db.GymProducts.Remove(p); // stock movements cascade-delete.
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Inventory: Stock movements (receipt / write-off / ledger) ──────────────
+
+static object GymStockMovementDto(GymStockMovement m, string? productName = null) => new
+{
+    m.Id, m.ProductId, productName,
+    type = m.Type.ToString(),
+    m.Quantity, m.UnitCost, m.BalanceAfter, m.Reason, m.Reference,
+    m.SupplierId, m.UserEmail, m.CreatedUtc,
+};
+
+app.MapGet("/api/gym/stock-movements", async (Guid? productId, string? type, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymStockMovements.AsNoTracking().AsQueryable();
+    if (productId is { } pid) query = query.Where(m => m.ProductId == pid);
+    if (!string.IsNullOrWhiteSpace(type) && Enum.TryParse<GymStockMovementType>(type, ignoreCase: true, out var t))
+        query = query.Where(m => m.Type == t);
+
+    var items = await query.OrderByDescending(m => m.CreatedUtc).Take(500).ToListAsync(ct);
+    var productIds = items.Select(m => m.ProductId).Distinct().ToList();
+    var names = await db.GymProducts.AsNoTracking()
+        .Where(p => productIds.Contains(p.Id))
+        .ToDictionaryAsync(p => p.Id, p => p.Name, ct);
+    return Results.Ok(items.Select(m => GymStockMovementDto(m, names.TryGetValue(m.ProductId, out var n) ? n : null)));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/stock-movements/receipt", async (GymReceiptRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Quantity <= 0) return Results.BadRequest(new { message = "Quantity must be greater than zero." });
+    var p = await db.GymProducts.FirstOrDefaultAsync(x => x.Id == req.ProductId, ct);
+    if (p is null) return Results.BadRequest(new { message = "Product not found." });
+    if (req.SupplierId is { } sid && !await db.GymSuppliers.AnyAsync(x => x.Id == sid, ct))
+        return Results.BadRequest(new { message = "Supplier not found." });
+
+    var unitCost = req.UnitCost ?? p.Cost;
+    if (unitCost < 0) return Results.BadRequest(new { message = "Unit cost cannot be negative." });
+    if (req.UnitCost is { } uc && uc > 0) p.Cost = uc; // refresh last cost
+    var mv = ApplyGymStock(db, p, GymStockMovementType.Receipt, req.Quantity, unitCost,
+        string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(), null, req.SupplierId, GymUserEmail(user));
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStockMovementDto(mv, p.Name));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/stock-movements/writeoff", async (GymWriteOffRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Quantity <= 0) return Results.BadRequest(new { message = "Quantity must be greater than zero." });
+    var p = await db.GymProducts.FirstOrDefaultAsync(x => x.Id == req.ProductId, ct);
+    if (p is null) return Results.BadRequest(new { message = "Product not found." });
+    if (req.Quantity > p.StockQuantity)
+        return Results.BadRequest(new { message = $"Cannot write off more than the current stock ({p.StockQuantity})." });
+
+    var mv = ApplyGymStock(db, p, GymStockMovementType.WriteOff, -req.Quantity, p.Cost,
+        string.IsNullOrWhiteSpace(req.Reason) ? null : req.Reason.Trim(), null, null, GymUserEmail(user));
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStockMovementDto(mv, p.Name));
+}).RequireAuthorization();
+
+// ─── Gym Inventory: Purchase orders (Закупки) ───────────────────────────────────
+
+static object GymPurchaseOrderDto(GymPurchaseOrder o, bool withItems = false) => new
+{
+    o.Id, o.Number, o.SupplierId, o.SupplierName,
+    status = o.Status.ToString(),
+    expectedDate = o.ExpectedDate?.ToString("yyyy-MM-dd"),
+    o.ReceivedUtc, o.Currency, o.Total, o.Notes, o.CreatedUtc,
+    itemCount = o.Items?.Count ?? 0,
+    items = withItems
+        ? o.Items.OrderBy(i => i.ProductName).Select(i => new { i.Id, i.ProductId, i.ProductName, i.Quantity, i.UnitCost }).ToArray()
+        : null,
+};
+
+app.MapGet("/api/gym/purchase-orders", async (AppDbContext db, CancellationToken ct) =>
+{
+    var items = await db.GymPurchaseOrders.AsNoTracking()
+        .Include(o => o.Items)
+        .OrderByDescending(o => o.CreatedUtc)
+        .ToListAsync(ct);
+    return Results.Ok(items.Select(o => GymPurchaseOrderDto(o)));
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/purchase-orders/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var o = await db.GymPurchaseOrders.AsNoTracking()
+        .Include(x => x.Items)
+        .FirstOrDefaultAsync(x => x.Id == id, ct);
+    return o is null ? Results.NotFound() : Results.Ok(GymPurchaseOrderDto(o, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/purchase-orders", async (GymPurchaseOrderRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Items is null || req.Items.Length == 0) return Results.BadRequest(new { message = "At least one item is required." });
+
+    GymSupplier? supplier = null;
+    if (req.SupplierId is { } sid)
+    {
+        supplier = await db.GymSuppliers.FirstOrDefaultAsync(x => x.Id == sid, ct);
+        if (supplier is null) return Results.BadRequest(new { message = "Supplier not found." });
+    }
+
+    var productIds = req.Items.Select(i => i.ProductId).Distinct().ToList();
+    var products = await db.GymProducts.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+    if (products.Count != productIds.Count) return Results.BadRequest(new { message = "One or more products not found." });
+
+    DateOnly? expected = null;
+    if (!string.IsNullOrWhiteSpace(req.ExpectedDate))
+    {
+        if (!DateOnly.TryParse(req.ExpectedDate, out var d)) return Results.BadRequest(new { message = "Invalid expected date." });
+        expected = d;
+    }
+
+    string number;
+    do { number = GymGenSeq("PO"); }
+    while (await db.GymPurchaseOrders.AnyAsync(o => o.Number == number, ct));
+
+    var order = new GymPurchaseOrder
+    {
+        Number = number,
+        SupplierId = supplier?.Id,
+        SupplierName = supplier?.Name ?? "",
+        Status = GymPurchaseOrderStatus.Draft,
+        ExpectedDate = expected,
+        Currency = "AZN",
+        Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
+    };
+    foreach (var item in req.Items)
+    {
+        if (item.Quantity <= 0 || item.UnitCost < 0) return Results.BadRequest(new { message = "Item quantity must be > 0 and cost >= 0." });
+        var prod = products[item.ProductId];
+        order.Items.Add(new GymPurchaseOrderItem
+        {
+            ProductId = prod.Id, ProductName = prod.Name,
+            Quantity = item.Quantity, UnitCost = item.UnitCost,
+        });
+    }
+    order.Total = order.Items.Sum(i => i.Quantity * i.UnitCost);
+    db.GymPurchaseOrders.Add(order);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymPurchaseOrderDto(order, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/purchase-orders/{id:guid}/receive", async (Guid id, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    var order = await db.GymPurchaseOrders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Id == id, ct);
+    if (order is null) return Results.NotFound();
+    if (order.Status == GymPurchaseOrderStatus.Received) return Results.BadRequest(new { message = "Purchase order is already received." });
+    if (order.Status == GymPurchaseOrderStatus.Cancelled) return Results.BadRequest(new { message = "Cancelled purchase order cannot be received." });
+
+    var productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
+    var products = await db.GymProducts.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+    foreach (var item in order.Items)
+    {
+        if (!products.TryGetValue(item.ProductId, out var prod)) continue;
+        prod.Cost = item.UnitCost; // refresh last cost from the received price
+        ApplyGymStock(db, prod, GymStockMovementType.Purchase, item.Quantity, item.UnitCost,
+            null, order.Number, order.SupplierId, GymUserEmail(user));
+    }
+    order.Status = GymPurchaseOrderStatus.Received;
+    order.ReceivedUtc = DateTime.UtcNow;
+    order.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymPurchaseOrderDto(order, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/purchase-orders/{id:guid}/cancel", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var order = await db.GymPurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
+    if (order is null) return Results.NotFound();
+    if (order.Status == GymPurchaseOrderStatus.Received) return Results.BadRequest(new { message = "Received purchase order cannot be cancelled." });
+    order.Status = GymPurchaseOrderStatus.Cancelled;
+    order.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymPurchaseOrderDto(order));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/purchase-orders/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var order = await db.GymPurchaseOrders.FirstOrDefaultAsync(o => o.Id == id, ct);
+    if (order is null) return Results.NotFound();
+    if (order.Status == GymPurchaseOrderStatus.Received) return Results.BadRequest(new { message = "Received purchase order cannot be deleted." });
+    db.GymPurchaseOrders.Remove(order);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Inventory: Stocktakes (Инвентаризация) ─────────────────────────────────
+
+static object GymStocktakeDto(GymStocktake s, bool withItems = false) => new
+{
+    s.Id, s.Number,
+    status = s.Status.ToString(),
+    s.CompletedUtc, s.Notes, s.CreatedUtc,
+    itemCount = s.Items?.Count ?? 0,
+    items = withItems
+        ? s.Items.OrderBy(i => i.ProductName).Select(i => new
+        {
+            i.Id, i.ProductId, i.ProductName, i.ExpectedQuantity, i.CountedQuantity,
+            difference = i.CountedQuantity - i.ExpectedQuantity,
+        }).ToArray()
+        : null,
+};
+
+app.MapGet("/api/gym/stocktakes", async (AppDbContext db, CancellationToken ct) =>
+{
+    var items = await db.GymStocktakes.AsNoTracking()
+        .Include(s => s.Items)
+        .OrderByDescending(s => s.CreatedUtc)
+        .ToListAsync(ct);
+    return Results.Ok(items.Select(s => GymStocktakeDto(s)));
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/stocktakes/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var s = await db.GymStocktakes.AsNoTracking().Include(x => x.Items).FirstOrDefaultAsync(x => x.Id == id, ct);
+    return s is null ? Results.NotFound() : Results.Ok(GymStocktakeDto(s, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/stocktakes", async (GymStocktakeRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    string number;
+    do { number = GymGenSeq("ST"); }
+    while (await db.GymStocktakes.AnyAsync(s => s.Number == number, ct));
+
+    var stocktake = new GymStocktake
+    {
+        Number = number,
+        Status = GymStocktakeStatus.Draft,
+        Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
+    };
+    if (req.SeedAllProducts)
+    {
+        var products = await db.GymProducts.AsNoTracking().Where(p => p.IsActive).OrderBy(p => p.Name).ToListAsync(ct);
+        foreach (var p in products)
+            stocktake.Items.Add(new GymStocktakeItem
+            {
+                ProductId = p.Id, ProductName = p.Name,
+                ExpectedQuantity = p.StockQuantity, CountedQuantity = p.StockQuantity,
+            });
+    }
+    db.GymStocktakes.Add(stocktake);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStocktakeDto(stocktake, withItems: true));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/stocktakes/{id:guid}/counts", async (Guid id, GymStocktakeCountsRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var stocktake = await db.GymStocktakes.Include(s => s.Items).FirstOrDefaultAsync(s => s.Id == id, ct);
+    if (stocktake is null) return Results.NotFound();
+    if (stocktake.Status != GymStocktakeStatus.Draft) return Results.BadRequest(new { message = "Only draft stocktakes can be edited." });
+
+    var byId = stocktake.Items.ToDictionary(i => i.Id);
+    foreach (var c in req.Items ?? [])
+        if (byId.TryGetValue(c.ItemId, out var item) && c.CountedQuantity >= 0)
+            item.CountedQuantity = c.CountedQuantity;
+    stocktake.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStocktakeDto(stocktake, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/stocktakes/{id:guid}/complete", async (Guid id, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    var stocktake = await db.GymStocktakes.Include(s => s.Items).FirstOrDefaultAsync(s => s.Id == id, ct);
+    if (stocktake is null) return Results.NotFound();
+    if (stocktake.Status != GymStocktakeStatus.Draft) return Results.BadRequest(new { message = "Stocktake is not in draft state." });
+
+    var productIds = stocktake.Items.Select(i => i.ProductId).Distinct().ToList();
+    var products = await db.GymProducts.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+    foreach (var item in stocktake.Items)
+    {
+        if (!products.TryGetValue(item.ProductId, out var prod)) continue;
+        var delta = item.CountedQuantity - prod.StockQuantity; // reconcile against live stock
+        if (delta != 0)
+            ApplyGymStock(db, prod, GymStockMovementType.Stocktake, delta, prod.Cost,
+                "Stocktake adjustment", stocktake.Number, null, GymUserEmail(user));
+    }
+    stocktake.Status = GymStocktakeStatus.Completed;
+    stocktake.CompletedUtc = DateTime.UtcNow;
+    stocktake.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStocktakeDto(stocktake, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/stocktakes/{id:guid}/cancel", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var stocktake = await db.GymStocktakes.FirstOrDefaultAsync(s => s.Id == id, ct);
+    if (stocktake is null) return Results.NotFound();
+    if (stocktake.Status == GymStocktakeStatus.Completed) return Results.BadRequest(new { message = "Completed stocktake cannot be cancelled." });
+    stocktake.Status = GymStocktakeStatus.Cancelled;
+    stocktake.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymStocktakeDto(stocktake));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/stocktakes/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var stocktake = await db.GymStocktakes.FirstOrDefaultAsync(s => s.Id == id, ct);
+    if (stocktake is null) return Results.NotFound();
+    if (stocktake.Status == GymStocktakeStatus.Completed) return Results.BadRequest(new { message = "Completed stocktake cannot be deleted." });
+    db.GymStocktakes.Remove(stocktake);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Finance: shared helpers ────────────────────────────────────────────────
+
+static DateOnly GymParseDate(string? s, DateOnly fallback) => DateOnly.TryParse(s, out var d) ? d : fallback;
+
+static GymFinanceTransaction ApplyGymFinanceTxn(AppDbContext db, GymFinanceAccount acc, GymFinanceDirection dir,
+    decimal amount, Guid? categoryId, DateOnly occurredOn, string? description, string? reference,
+    string? counterparty, string? method, bool isTransfer, string? userEmail)
+{
+    var signed = dir == GymFinanceDirection.Income ? amount : -amount;
+    acc.Balance += signed;
+    acc.UpdatedUtc = DateTime.UtcNow;
+    var txn = new GymFinanceTransaction
+    {
+        AccountId = acc.Id,
+        Direction = dir,
+        Amount = amount,
+        Currency = acc.Currency,
+        CategoryId = categoryId,
+        OccurredOn = occurredOn,
+        Description = description,
+        Reference = reference,
+        CounterpartyName = counterparty,
+        Method = method,
+        IsTransfer = isTransfer,
+        BalanceAfter = acc.Balance,
+        UserEmail = userEmail,
+    };
+    db.GymFinanceTransactions.Add(txn);
+    return txn;
+}
+
+// ─── Gym Finance: Accounts (cash registers + bank accounts) ─────────────────────
+
+static object GymFinanceAccountDto(GymFinanceAccount a) => new
+{
+    a.Id, a.Name, type = a.Type.ToString(), a.Currency,
+    a.OpeningBalance, a.Balance, a.BankName, a.AccountNumber, a.IsActive,
+    a.CreatedUtc, a.UpdatedUtc,
+};
+
+app.MapGet("/api/gym/finance/accounts", async (string? type, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymFinanceAccounts.AsNoTracking().AsQueryable();
+    if (!string.IsNullOrWhiteSpace(type) && Enum.TryParse<GymFinanceAccountType>(type, ignoreCase: true, out var t))
+        query = query.Where(a => a.Type == t);
+    var items = await query.OrderBy(a => a.Name).ToListAsync(ct);
+    return Results.Ok(items.Select(GymFinanceAccountDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/finance/accounts", async (GymFinanceAccountRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (!Enum.TryParse<GymFinanceAccountType>(req.Type, ignoreCase: true, out var type)) return Results.BadRequest(new { message = "Unknown account type." });
+    var a = new GymFinanceAccount
+    {
+        Name = req.Name.Trim(),
+        Type = type,
+        Currency = string.IsNullOrWhiteSpace(req.Currency) ? "AZN" : req.Currency.Trim().ToUpperInvariant(),
+        OpeningBalance = req.OpeningBalance,
+        Balance = req.OpeningBalance,
+        BankName = string.IsNullOrWhiteSpace(req.BankName) ? null : req.BankName.Trim(),
+        AccountNumber = string.IsNullOrWhiteSpace(req.AccountNumber) ? null : req.AccountNumber.Trim(),
+        IsActive = req.IsActive,
+    };
+    db.GymFinanceAccounts.Add(a);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceAccountDto(a));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/finance/accounts/{id:guid}", async (Guid id, GymFinanceAccountRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (!Enum.TryParse<GymFinanceAccountType>(req.Type, ignoreCase: true, out var type)) return Results.BadRequest(new { message = "Unknown account type." });
+    var a = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (a is null) return Results.NotFound();
+    // Adjust live balance by the change in opening balance (transaction effects are preserved).
+    a.Balance += req.OpeningBalance - a.OpeningBalance;
+    a.OpeningBalance = req.OpeningBalance;
+    a.Name = req.Name.Trim();
+    a.Type = type;
+    a.Currency = string.IsNullOrWhiteSpace(req.Currency) ? "AZN" : req.Currency.Trim().ToUpperInvariant();
+    a.BankName = string.IsNullOrWhiteSpace(req.BankName) ? null : req.BankName.Trim();
+    a.AccountNumber = string.IsNullOrWhiteSpace(req.AccountNumber) ? null : req.AccountNumber.Trim();
+    a.IsActive = req.IsActive;
+    a.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceAccountDto(a));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/finance/accounts/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var a = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (a is null) return Results.NotFound();
+    if (await db.GymFinanceTransactions.AnyAsync(t => t.AccountId == id, ct))
+        return Results.BadRequest(new { message = "Account has transactions; deactivate it instead." });
+    db.GymFinanceAccounts.Remove(a);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Finance: Categories ────────────────────────────────────────────────────
+
+static object GymFinanceCategoryDto(GymFinanceCategory c) => new
+{
+    c.Id, c.Name, direction = c.Direction.ToString(), c.Color, c.IsActive, c.CreatedUtc,
+};
+
+app.MapGet("/api/gym/finance/categories", async (string? direction, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymFinanceCategories.AsNoTracking().AsQueryable();
+    if (!string.IsNullOrWhiteSpace(direction) && Enum.TryParse<GymFinanceDirection>(direction, ignoreCase: true, out var d))
+        query = query.Where(c => c.Direction == d);
+    var items = await query.OrderBy(c => c.Name).ToListAsync(ct);
+    return Results.Ok(items.Select(GymFinanceCategoryDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/finance/categories", async (GymFinanceCategoryRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (!Enum.TryParse<GymFinanceDirection>(req.Direction, ignoreCase: true, out var dir)) return Results.BadRequest(new { message = "Unknown direction." });
+    var c = new GymFinanceCategory
+    {
+        Name = req.Name.Trim(),
+        Direction = dir,
+        Color = string.IsNullOrWhiteSpace(req.Color) ? "#6366f1" : req.Color.Trim(),
+        IsActive = req.IsActive,
+    };
+    db.GymFinanceCategories.Add(c);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceCategoryDto(c));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/finance/categories/{id:guid}", async (Guid id, GymFinanceCategoryRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    if (!Enum.TryParse<GymFinanceDirection>(req.Direction, ignoreCase: true, out var dir)) return Results.BadRequest(new { message = "Unknown direction." });
+    var c = await db.GymFinanceCategories.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    c.Name = req.Name.Trim();
+    c.Direction = dir;
+    c.Color = string.IsNullOrWhiteSpace(req.Color) ? "#6366f1" : req.Color.Trim();
+    c.IsActive = req.IsActive;
+    c.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceCategoryDto(c));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/finance/categories/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var c = await db.GymFinanceCategories.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (c is null) return Results.NotFound();
+    db.GymFinanceCategories.Remove(c); // transactions keep history, category link is set to null.
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Gym Finance: Transactions (income / expense) + transfers ───────────────────
+
+static object GymFinanceTxnDto(GymFinanceTransaction t, string? accountName, string? categoryName) => new
+{
+    t.Id, t.AccountId, accountName,
+    direction = t.Direction.ToString(),
+    t.Amount, t.Currency, t.CategoryId, categoryName,
+    occurredOn = t.OccurredOn.ToString("yyyy-MM-dd"),
+    t.Description, t.Reference, t.CounterpartyName, t.Method, t.IsTransfer, t.BalanceAfter,
+    t.UserEmail, t.CreatedUtc,
+};
+
+app.MapGet("/api/gym/finance/transactions", async (string? direction, Guid? accountId, Guid? categoryId,
+    string? from, string? to, bool? includeTransfers, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymFinanceTransactions.AsNoTracking().AsQueryable();
+    if (!string.IsNullOrWhiteSpace(direction) && Enum.TryParse<GymFinanceDirection>(direction, ignoreCase: true, out var dir))
+        query = query.Where(t => t.Direction == dir);
+    if (accountId is { } aid) query = query.Where(t => t.AccountId == aid);
+    if (categoryId is { } cid) query = query.Where(t => t.CategoryId == cid);
+    if (includeTransfers != true) query = query.Where(t => !t.IsTransfer);
+    if (DateOnly.TryParse(from, out var f)) query = query.Where(t => t.OccurredOn >= f);
+    if (DateOnly.TryParse(to, out var tt)) query = query.Where(t => t.OccurredOn <= tt);
+
+    var items = await query.OrderByDescending(t => t.OccurredOn).ThenByDescending(t => t.CreatedUtc).Take(1000).ToListAsync(ct);
+    var accIds = items.Select(t => t.AccountId).Distinct().ToList();
+    var catIds = items.Where(t => t.CategoryId != null).Select(t => t.CategoryId!.Value).Distinct().ToList();
+    var accNames = await db.GymFinanceAccounts.AsNoTracking().Where(a => accIds.Contains(a.Id)).ToDictionaryAsync(a => a.Id, a => a.Name, ct);
+    var catNames = await db.GymFinanceCategories.AsNoTracking().Where(c => catIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+    return Results.Ok(items.Select(t => GymFinanceTxnDto(t,
+        accNames.TryGetValue(t.AccountId, out var an) ? an : null,
+        t.CategoryId != null && catNames.TryGetValue(t.CategoryId.Value, out var cn) ? cn : null)));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/finance/transactions", async (GymFinanceTxnRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (!Enum.TryParse<GymFinanceDirection>(req.Direction, ignoreCase: true, out var dir)) return Results.BadRequest(new { message = "Unknown direction." });
+    if (req.Amount <= 0) return Results.BadRequest(new { message = "Amount must be greater than zero." });
+    var acc = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == req.AccountId, ct);
+    if (acc is null) return Results.BadRequest(new { message = "Account not found." });
+    if (req.CategoryId is { } cid && !await db.GymFinanceCategories.AnyAsync(c => c.Id == cid, ct))
+        return Results.BadRequest(new { message = "Category not found." });
+
+    var occurredOn = GymParseDate(req.OccurredOn, DateOnly.FromDateTime(DateTime.UtcNow));
+    var txn = ApplyGymFinanceTxn(db, acc, dir, req.Amount, req.CategoryId, occurredOn,
+        string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(), null,
+        string.IsNullOrWhiteSpace(req.CounterpartyName) ? null : req.CounterpartyName.Trim(),
+        string.IsNullOrWhiteSpace(req.Method) ? null : req.Method.Trim(), false, GymUserEmail(user));
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceTxnDto(txn, acc.Name, null));
+}).RequireAuthorization();
+
+app.MapPut("/api/gym/finance/transactions/{id:guid}", async (Guid id, GymFinanceTxnRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!Enum.TryParse<GymFinanceDirection>(req.Direction, ignoreCase: true, out var dir)) return Results.BadRequest(new { message = "Unknown direction." });
+    if (req.Amount <= 0) return Results.BadRequest(new { message = "Amount must be greater than zero." });
+    var txn = await db.GymFinanceTransactions.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (txn is null) return Results.NotFound();
+    if (txn.IsTransfer) return Results.BadRequest(new { message = "Transfer legs cannot be edited; delete and recreate the transfer." });
+    if (req.CategoryId is { } cid && !await db.GymFinanceCategories.AnyAsync(c => c.Id == cid, ct))
+        return Results.BadRequest(new { message = "Category not found." });
+
+    var acc = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == txn.AccountId, ct);
+    if (acc is null) return Results.BadRequest(new { message = "Account not found." });
+
+    // Reverse old effect, apply new effect (account may stay the same).
+    var oldSigned = txn.Direction == GymFinanceDirection.Income ? txn.Amount : -txn.Amount;
+    acc.Balance -= oldSigned;
+    if (req.AccountId != acc.Id)
+    {
+        var newAcc = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == req.AccountId, ct);
+        if (newAcc is null) return Results.BadRequest(new { message = "Account not found." });
+        acc.UpdatedUtc = DateTime.UtcNow;
+        acc = newAcc;
+    }
+    var newSigned = dir == GymFinanceDirection.Income ? req.Amount : -req.Amount;
+    acc.Balance += newSigned;
+    acc.UpdatedUtc = DateTime.UtcNow;
+
+    txn.AccountId = acc.Id;
+    txn.Direction = dir;
+    txn.Amount = req.Amount;
+    txn.Currency = acc.Currency;
+    txn.CategoryId = req.CategoryId;
+    txn.OccurredOn = GymParseDate(req.OccurredOn, txn.OccurredOn);
+    txn.Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim();
+    txn.CounterpartyName = string.IsNullOrWhiteSpace(req.CounterpartyName) ? null : req.CounterpartyName.Trim();
+    txn.Method = string.IsNullOrWhiteSpace(req.Method) ? null : req.Method.Trim();
+    txn.BalanceAfter = acc.Balance;
+    txn.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymFinanceTxnDto(txn, acc.Name, null));
+}).RequireAuthorization();
+
+app.MapDelete("/api/gym/finance/transactions/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var txn = await db.GymFinanceTransactions.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (txn is null) return Results.NotFound();
+    var acc = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == txn.AccountId, ct);
+    if (acc is not null)
+    {
+        var signed = txn.Direction == GymFinanceDirection.Income ? txn.Amount : -txn.Amount;
+        acc.Balance -= signed;
+        acc.UpdatedUtc = DateTime.UtcNow;
+    }
+    db.GymFinanceTransactions.Remove(txn);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/finance/transfers", async (GymFinanceTransferRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Amount <= 0) return Results.BadRequest(new { message = "Amount must be greater than zero." });
+    if (req.FromAccountId == req.ToAccountId) return Results.BadRequest(new { message = "Source and destination must differ." });
+    var from = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == req.FromAccountId, ct);
+    var to = await db.GymFinanceAccounts.FirstOrDefaultAsync(x => x.Id == req.ToAccountId, ct);
+    if (from is null || to is null) return Results.BadRequest(new { message = "Account not found." });
+
+    var occurredOn = GymParseDate(req.OccurredOn, DateOnly.FromDateTime(DateTime.UtcNow));
+    var reference = GymGenSeq("TRF");
+    var note = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim();
+    var email = GymUserEmail(user);
+    ApplyGymFinanceTxn(db, from, GymFinanceDirection.Expense, req.Amount, null, occurredOn, note, reference, to.Name, "Transfer", true, email);
+    ApplyGymFinanceTxn(db, to, GymFinanceDirection.Income, req.Amount, null, occurredOn, note, reference, from.Name, "Transfer", true, email);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { reference, from = GymFinanceAccountDto(from), to = GymFinanceAccountDto(to) });
+}).RequireAuthorization();
+
+// ─── Gym Finance: Summary (profit) + period reports + analytics ─────────────────
+
+app.MapGet("/api/gym/finance/summary", async (string? from, string? to, AppDbContext db, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromD = GymParseDate(from, new DateOnly(today.Year, today.Month, 1));
+    var toD = GymParseDate(to, today);
+
+    var txns = await db.GymFinanceTransactions.AsNoTracking()
+        .Where(t => !t.IsTransfer && t.OccurredOn >= fromD && t.OccurredOn <= toD)
+        .Select(t => new { t.Direction, t.Amount, t.CategoryId })
+        .ToListAsync(ct);
+
+    var income = txns.Where(t => t.Direction == GymFinanceDirection.Income).Sum(t => t.Amount);
+    var expense = txns.Where(t => t.Direction == GymFinanceDirection.Expense).Sum(t => t.Amount);
+
+    var categories = await db.GymFinanceCategories.AsNoTracking().ToDictionaryAsync(c => c.Id, c => new { c.Name, c.Color }, ct);
+    object[] ByCategory(GymFinanceDirection dir) => txns
+        .Where(t => t.Direction == dir)
+        .GroupBy(t => t.CategoryId)
+        .Select(g => new
+        {
+            categoryId = g.Key,
+            name = g.Key != null && categories.TryGetValue(g.Key.Value, out var c) ? c.Name : "—",
+            color = g.Key != null && categories.TryGetValue(g.Key.Value, out var c2) ? c2.Color : "#94a3b8",
+            amount = g.Sum(x => x.Amount),
+        })
+        .OrderByDescending(x => x.amount).Cast<object>().ToArray();
+
+    var accounts = await db.GymFinanceAccounts.AsNoTracking().OrderBy(a => a.Name).ToListAsync(ct);
+
+    return Results.Ok(new
+    {
+        from = fromD.ToString("yyyy-MM-dd"),
+        to = toD.ToString("yyyy-MM-dd"),
+        income, expense, profit = income - expense,
+        incomeByCategory = ByCategory(GymFinanceDirection.Income),
+        expenseByCategory = ByCategory(GymFinanceDirection.Expense),
+        accounts = accounts.Select(GymFinanceAccountDto),
+        totalCashBalance = accounts.Where(a => a.Type == GymFinanceAccountType.Cash).Sum(a => a.Balance),
+        totalBankBalance = accounts.Where(a => a.Type == GymFinanceAccountType.Bank).Sum(a => a.Balance),
+        totalBalance = accounts.Sum(a => a.Balance),
+    });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/finance/reports", async (string? from, string? to, string? groupBy, AppDbContext db, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromD = GymParseDate(from, new DateOnly(today.Year, today.Month, 1).AddMonths(-11));
+    var toD = GymParseDate(to, today);
+    var mode = string.IsNullOrWhiteSpace(groupBy) ? "month" : groupBy.Trim().ToLowerInvariant();
+
+    var txns = await db.GymFinanceTransactions.AsNoTracking()
+        .Where(t => !t.IsTransfer && t.OccurredOn >= fromD && t.OccurredOn <= toD)
+        .Select(t => new { t.Direction, t.Amount, t.OccurredOn })
+        .ToListAsync(ct);
+
+    static string KeyOf(DateOnly d, string mode) => mode switch
+    {
+        "day" => d.ToString("yyyy-MM-dd"),
+        "year" => d.ToString("yyyy"),
+        _ => d.ToString("yyyy-MM"),
+    };
+
+    var periods = txns
+        .GroupBy(t => KeyOf(t.OccurredOn, mode))
+        .Select(g => new
+        {
+            period = g.Key,
+            income = g.Where(x => x.Direction == GymFinanceDirection.Income).Sum(x => x.Amount),
+            expense = g.Where(x => x.Direction == GymFinanceDirection.Expense).Sum(x => x.Amount),
+        })
+        .Select(x => new { x.period, x.income, x.expense, profit = x.income - x.expense })
+        .OrderBy(x => x.period)
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        from = fromD.ToString("yyyy-MM-dd"),
+        to = toD.ToString("yyyy-MM-dd"),
+        groupBy = mode,
+        periods,
+        totals = new
+        {
+            income = periods.Sum(p => p.income),
+            expense = periods.Sum(p => p.expense),
+            profit = periods.Sum(p => p.profit),
+        },
+    });
+}).RequireAuthorization();
+
+// ─── Gym Management: Analytics & Reports (cross-module business overview) ─────────
+
+app.MapGet("/api/gym/analytics/overview", async (string? from, string? to, AppDbContext db, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromD = GymParseDate(from, new DateOnly(today.Year, today.Month, 1));
+    var toD = GymParseDate(to, today);
+    var fromUtc = fromD.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var toUtcExclusive = toD.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+    // Customers
+    var totalCustomers = await db.GymCustomers.CountAsync(ct);
+    var activeCustomers = await db.GymCustomers.CountAsync(c => c.IsActive, ct);
+    var newCustomers = await db.GymCustomers.CountAsync(c => c.CreatedUtc >= fromUtc && c.CreatedUtc < toUtcExclusive, ct);
+    var lifetimeVisits = await db.GymCustomers.SumAsync(c => c.VisitCount, ct);
+
+    // Memberships
+    var memberships = await db.GymMemberships.AsNoTracking()
+        .Select(m => new { m.Status, m.EndDate, m.VisitLimit, m.VisitsUsed, m.FrozenUntil, m.TariffName })
+        .ToListAsync(ct);
+    bool IsActiveNow(DateOnly end, GymMembershipStatus st, int? lim, int used, DateOnly? frozen) =>
+        st != GymMembershipStatus.Cancelled && end >= today && (lim == null || used < lim)
+        && (frozen == null || frozen <= today);
+    var activeMemberships = memberships.Count(m => IsActiveNow(m.EndDate, m.Status, m.VisitLimit, m.VisitsUsed, m.FrozenUntil));
+    var frozenMemberships = memberships.Count(m => m.FrozenUntil != null && m.FrozenUntil > today && m.Status != GymMembershipStatus.Cancelled);
+    var expiringSoon = memberships.Count(m => m.Status != GymMembershipStatus.Cancelled && m.EndDate >= today && m.EndDate <= today.AddDays(7));
+    var membershipsByTariff = memberships
+        .Where(m => IsActiveNow(m.EndDate, m.Status, m.VisitLimit, m.VisitsUsed, m.FrozenUntil))
+        .GroupBy(m => m.TariffName)
+        .Select(g => new { name = g.Key, count = g.Count() })
+        .OrderByDescending(x => x.count).Take(10).ToArray();
+
+    // Revenue (gym payments in period)
+    var payments = await db.GymPayments.AsNoTracking()
+        .Where(p => p.PaidUtc >= fromUtc && p.PaidUtc < toUtcExclusive)
+        .Select(p => new { p.Amount, p.Method })
+        .ToListAsync(ct);
+    var revenue = payments.Sum(p => p.Amount);
+    var revenueByMethod = payments
+        .GroupBy(p => p.Method)
+        .Select(g => new { method = g.Key.ToString(), amount = g.Sum(x => x.Amount), count = g.Count() })
+        .OrderByDescending(x => x.amount).ToArray();
+
+    // Gift certificates
+    var certs = await db.GymGiftCertificates.AsNoTracking().Select(g => new { g.Status, g.Price }).ToListAsync(ct);
+    var giftIssued = certs.Count(c => c.Status == GymGiftCertificateStatus.Issued);
+    var giftRedeemed = certs.Count(c => c.Status == GymGiftCertificateStatus.Redeemed);
+
+    return Results.Ok(new
+    {
+        from = fromD.ToString("yyyy-MM-dd"),
+        to = toD.ToString("yyyy-MM-dd"),
+        customers = new { total = totalCustomers, active = activeCustomers, inactive = totalCustomers - activeCustomers, @new = newCustomers },
+        memberships = new { active = activeMemberships, frozen = frozenMemberships, expiringSoon, byTariff = membershipsByTariff },
+        revenue = new { total = revenue, paymentsCount = payments.Count, byMethod = revenueByMethod },
+        giftCertificates = new { issued = giftIssued, redeemed = giftRedeemed },
+        visits = new { lifetimeTotal = lifetimeVisits },
+    });
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/analytics/revenue", async (string? from, string? to, string? groupBy, AppDbContext db, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromD = GymParseDate(from, new DateOnly(today.Year, today.Month, 1).AddMonths(-11));
+    var toD = GymParseDate(to, today);
+    var fromUtc = fromD.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var toUtcExclusive = toD.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var mode = string.IsNullOrWhiteSpace(groupBy) ? "month" : groupBy.Trim().ToLowerInvariant();
+
+    var payments = await db.GymPayments.AsNoTracking()
+        .Where(p => p.PaidUtc >= fromUtc && p.PaidUtc < toUtcExclusive)
+        .Select(p => new { p.Amount, p.PaidUtc })
+        .ToListAsync(ct);
+
+    static string KeyOf(DateTime d, string mode) => mode switch
+    {
+        "day" => d.ToString("yyyy-MM-dd"),
+        "year" => d.ToString("yyyy"),
+        _ => d.ToString("yyyy-MM"),
+    };
+
+    var periods = payments
+        .GroupBy(p => KeyOf(p.PaidUtc, mode))
+        .Select(g => new { period = g.Key, revenue = g.Sum(x => x.Amount), count = g.Count() })
+        .OrderBy(x => x.period).ToArray();
+
+    return Results.Ok(new
+    {
+        from = fromD.ToString("yyyy-MM-dd"),
+        to = toD.ToString("yyyy-MM-dd"),
+        groupBy = mode,
+        periods,
+        total = periods.Sum(p => p.revenue),
+    });
+}).RequireAuthorization();
+
+// ─── Gym POS / Checkout: sales ──────────────────────────────────────────────────
+
+static object GymSaleDto(GymSale s, bool withItems = false) => new
+{
+    s.Id, s.Number, s.CustomerId, s.CustomerName,
+    s.Subtotal, s.Discount, s.Total, s.Currency,
+    paymentMethod = s.PaymentMethod.ToString(),
+    s.FinanceAccountId,
+    status = s.Status.ToString(),
+    s.SoldUtc, s.RefundedUtc, s.Note, s.UserEmail,
+    itemCount = s.Items?.Count ?? 0,
+    items = withItems
+        ? s.Items.Select(i => new { i.Id, i.ProductId, i.ProductName, i.Quantity, i.UnitPrice, i.LineTotal }).ToArray()
+        : null,
+};
+
+app.MapGet("/api/gym/pos/sales", async (string? from, string? to, Guid? customerId, AppDbContext db, CancellationToken ct) =>
+{
+    var query = db.GymSales.AsNoTracking().Include(s => s.Items).AsQueryable();
+    if (customerId is { } cid) query = query.Where(s => s.CustomerId == cid);
+    if (DateOnly.TryParse(from, out var f)) query = query.Where(s => s.SoldUtc >= f.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+    if (DateOnly.TryParse(to, out var tt)) query = query.Where(s => s.SoldUtc < tt.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+    var items = await query.OrderByDescending(s => s.SoldUtc).Take(500).ToListAsync(ct);
+    return Results.Ok(items.Select(s => GymSaleDto(s)));
+}).RequireAuthorization();
+
+app.MapGet("/api/gym/pos/sales/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var s = await db.GymSales.AsNoTracking().Include(x => x.Items).FirstOrDefaultAsync(x => x.Id == id, ct);
+    return s is null ? Results.NotFound() : Results.Ok(GymSaleDto(s, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/pos/sales", async (GymSaleRequest req, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    if (req.Items is null || req.Items.Length == 0) return Results.BadRequest(new { message = "Cart is empty." });
+    if (!Enum.TryParse<GymPaymentMethod>(req.PaymentMethod, ignoreCase: true, out var method))
+        return Results.BadRequest(new { message = "Unknown payment method." });
+
+    var productIds = req.Items.Select(i => i.ProductId).Distinct().ToList();
+    var products = await db.GymProducts.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+    if (products.Count != productIds.Count) return Results.BadRequest(new { message = "One or more products not found." });
+
+    foreach (var item in req.Items)
+    {
+        if (item.Quantity <= 0 || item.UnitPrice < 0) return Results.BadRequest(new { message = "Item quantity must be > 0 and price >= 0." });
+        var prod = products[item.ProductId];
+        if (item.Quantity > prod.StockQuantity)
+            return Results.BadRequest(new { message = $"Not enough stock for \"{prod.Name}\" ({prod.StockQuantity} left)." });
+    }
+
+    GymCustomer? customer = null;
+    if (req.CustomerId is { } cid)
+    {
+        customer = await db.GymCustomers.FirstOrDefaultAsync(c => c.Id == cid, ct);
+        if (customer is null) return Results.BadRequest(new { message = "Customer not found." });
+    }
+
+    GymFinanceAccount? account = null;
+    if (req.FinanceAccountId is { } aid)
+    {
+        account = await db.GymFinanceAccounts.FirstOrDefaultAsync(a => a.Id == aid, ct);
+        if (account is null) return Results.BadRequest(new { message = "Finance account not found." });
+    }
+    if (req.FinanceCategoryId is { } fcid && !await db.GymFinanceCategories.AnyAsync(c => c.Id == fcid, ct))
+        return Results.BadRequest(new { message = "Finance category not found." });
+
+    var subtotal = req.Items.Sum(i => i.Quantity * i.UnitPrice);
+    var discount = Math.Max(0, req.Discount);
+    var total = Math.Max(0, subtotal - discount);
+    var currency = account?.Currency ?? products[req.Items[0].ProductId].Currency;
+    var email = GymUserEmail(user);
+
+    string number;
+    do { number = GymGenSeq("SALE"); }
+    while (await db.GymSales.AnyAsync(s => s.Number == number, ct));
+
+    var sale = new GymSale
+    {
+        Number = number,
+        CustomerId = customer?.Id,
+        CustomerName = customer is null ? null : string.Join(' ', new[] { customer.FirstName, customer.LastName }.Where(x => !string.IsNullOrWhiteSpace(x))),
+        Subtotal = subtotal,
+        Discount = discount,
+        Total = total,
+        Currency = currency,
+        PaymentMethod = method,
+        FinanceAccountId = account?.Id,
+        Status = GymSaleStatus.Completed,
+        SoldUtc = DateTime.UtcNow,
+        Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
+        UserEmail = email,
+    };
+    foreach (var item in req.Items)
+    {
+        var prod = products[item.ProductId];
+        sale.Items.Add(new GymSaleItem
+        {
+            ProductId = prod.Id, ProductName = prod.Name,
+            Quantity = item.Quantity, UnitPrice = item.UnitPrice, LineTotal = item.Quantity * item.UnitPrice,
+        });
+        // Decrement stock with a Sale ledger movement.
+        ApplyGymStock(db, prod, GymStockMovementType.Sale, -item.Quantity, prod.Cost, null, number, null, email);
+    }
+    db.GymSales.Add(sale);
+
+    // Book the income into the chosen finance account (skip if no account or zero total).
+    if (account is not null && total > 0)
+    {
+        var txn = ApplyGymFinanceTxn(db, account, GymFinanceDirection.Income, total, req.FinanceCategoryId,
+            DateOnly.FromDateTime(DateTime.UtcNow), $"POS {number}", number, sale.CustomerName, method.ToString(), false, email);
+        sale.FinanceTransactionId = txn.Id;
+    }
+
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymSaleDto(sale, withItems: true));
+}).RequireAuthorization();
+
+app.MapPost("/api/gym/pos/sales/{id:guid}/refund", async (Guid id, ClaimsPrincipal user, AppDbContext db, CancellationToken ct) =>
+{
+    var sale = await db.GymSales.Include(s => s.Items).FirstOrDefaultAsync(s => s.Id == id, ct);
+    if (sale is null) return Results.NotFound();
+    if (sale.Status == GymSaleStatus.Refunded) return Results.BadRequest(new { message = "Sale is already refunded." });
+
+    var email = GymUserEmail(user);
+    var productIds = sale.Items.Where(i => i.ProductId != null).Select(i => i.ProductId!.Value).Distinct().ToList();
+    var products = await db.GymProducts.Where(p => productIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id, ct);
+    foreach (var item in sale.Items)
+    {
+        if (item.ProductId is { } pid && products.TryGetValue(pid, out var prod))
+            ApplyGymStock(db, prod, GymStockMovementType.Receipt, item.Quantity, prod.Cost, "Refund", sale.Number, null, email);
+    }
+
+    // Reverse the income with an offsetting expense on the same account.
+    if (sale.FinanceAccountId is { } aid && sale.Total > 0)
+    {
+        var account = await db.GymFinanceAccounts.FirstOrDefaultAsync(a => a.Id == aid, ct);
+        if (account is not null)
+            ApplyGymFinanceTxn(db, account, GymFinanceDirection.Expense, sale.Total, null,
+                DateOnly.FromDateTime(DateTime.UtcNow), $"Refund {sale.Number}", sale.Number, sale.CustomerName, sale.PaymentMethod.ToString(), false, email);
+    }
+
+    sale.Status = GymSaleStatus.Refunded;
+    sale.RefundedUtc = DateTime.UtcNow;
+    sale.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(GymSaleDto(sale, withItems: true));
+}).RequireAuthorization();
+
+// ─── Parking Management module ──────────────────────────────────────────────────
+// Иерархия: Зона → Этаж → Ряд → Место. Места типизированы (обычные/VIP/инвалиды/
+// электромобили/мотоциклы). Эндпоинт схемы отдаёт всё дерево зоны для визуализации.
+
+static object ParkingZoneDto(ParkingZone z, int floorCount = 0, int spaceCount = 0) => new
+{
+    z.Id,
+    z.Name,
+    z.Code,
+    z.Description,
+    z.IsActive,
+    z.SortOrder,
+    floorCount,
+    spaceCount,
+    z.CreatedUtc,
+    z.UpdatedUtc,
+};
+
+static object ParkingFloorDto(ParkingFloor f, int rowCount = 0, int spaceCount = 0) => new
+{
+    f.Id,
+    f.ZoneId,
+    f.Name,
+    f.Level,
+    f.IsActive,
+    f.SortOrder,
+    rowCount,
+    spaceCount,
+    f.CreatedUtc,
+    f.UpdatedUtc,
+};
+
+static object ParkingRowDto(ParkingRow r, int spaceCount = 0) => new
+{
+    r.Id,
+    r.FloorId,
+    r.Name,
+    r.SortOrder,
+    spaceCount,
+    r.CreatedUtc,
+    r.UpdatedUtc,
+};
+
+static object ParkingSpaceDto(ParkingSpace s) => new
+{
+    s.Id,
+    s.RowId,
+    s.Code,
+    type = s.Type.ToString(),
+    s.IsActive,
+    s.SortOrder,
+    s.Notes,
+    s.CreatedUtc,
+    s.UpdatedUtc,
+};
+
+// ─── Zones ───
+app.MapGet("/api/parking/zones", async (AppDbContext db, CancellationToken ct) =>
+{
+    var zones = await db.ParkingZones.AsNoTracking().OrderBy(z => z.SortOrder).ThenBy(z => z.Name).ToListAsync(ct);
+    var floorCounts = await db.ParkingFloors.AsNoTracking()
+        .GroupBy(f => f.ZoneId).Select(g => new { ZoneId = g.Key, Count = g.Count() }).ToListAsync(ct);
+    var spaceCounts = await db.ParkingSpaces.AsNoTracking()
+        .GroupBy(s => s.Row!.Floor!.ZoneId).Select(g => new { ZoneId = g.Key, Count = g.Count() }).ToListAsync(ct);
+    return Results.Ok(zones.Select(z => ParkingZoneDto(
+        z,
+        floorCounts.FirstOrDefault(c => c.ZoneId == z.Id)?.Count ?? 0,
+        spaceCounts.FirstOrDefault(c => c.ZoneId == z.Id)?.Count ?? 0)));
+}).RequireAuthorization();
+
+app.MapPost("/api/parking/zones", async (ParkingZoneRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    var z = new ParkingZone
+    {
+        Name = req.Name.Trim(),
+        Code = string.IsNullOrWhiteSpace(req.Code) ? null : req.Code.Trim(),
+        Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
+        IsActive = req.IsActive,
+        SortOrder = req.SortOrder,
+    };
+    db.ParkingZones.Add(z);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingZoneDto(z));
+}).RequireAuthorization();
+
+app.MapPut("/api/parking/zones/{id:guid}", async (Guid id, ParkingZoneRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var z = await db.ParkingZones.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (z is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    z.Name = req.Name.Trim();
+    z.Code = string.IsNullOrWhiteSpace(req.Code) ? null : req.Code.Trim();
+    z.Description = string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim();
+    z.IsActive = req.IsActive;
+    z.SortOrder = req.SortOrder;
+    z.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingZoneDto(z));
+}).RequireAuthorization();
+
+app.MapDelete("/api/parking/zones/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var z = await db.ParkingZones.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (z is null) return Results.NotFound();
+    db.ParkingZones.Remove(z); // cascade removes floors → rows → spaces
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Floors ───
+app.MapGet("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingZones.AnyAsync(z => z.Id == zoneId, ct)) return Results.NotFound();
+    var floors = await db.ParkingFloors.AsNoTracking()
+        .Where(f => f.ZoneId == zoneId).OrderBy(f => f.SortOrder).ThenBy(f => f.Level).ToListAsync(ct);
+    var rowCounts = await db.ParkingRows.AsNoTracking().Where(r => r.Floor!.ZoneId == zoneId)
+        .GroupBy(r => r.FloorId).Select(g => new { FloorId = g.Key, Count = g.Count() }).ToListAsync(ct);
+    var spaceCounts = await db.ParkingSpaces.AsNoTracking().Where(s => s.Row!.Floor!.ZoneId == zoneId)
+        .GroupBy(s => s.Row!.FloorId).Select(g => new { FloorId = g.Key, Count = g.Count() }).ToListAsync(ct);
+    return Results.Ok(floors.Select(f => ParkingFloorDto(
+        f,
+        rowCounts.FirstOrDefault(c => c.FloorId == f.Id)?.Count ?? 0,
+        spaceCounts.FirstOrDefault(c => c.FloorId == f.Id)?.Count ?? 0)));
+}).RequireAuthorization();
+
+app.MapPost("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, ParkingFloorRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingZones.AnyAsync(z => z.Id == zoneId, ct)) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    var f = new ParkingFloor
+    {
+        ZoneId = zoneId,
+        Name = req.Name.Trim(),
+        Level = req.Level,
+        IsActive = req.IsActive,
+        SortOrder = req.SortOrder,
+    };
+    db.ParkingFloors.Add(f);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingFloorDto(f));
+}).RequireAuthorization();
+
+app.MapPut("/api/parking/floors/{id:guid}", async (Guid id, ParkingFloorRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var f = await db.ParkingFloors.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (f is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    f.Name = req.Name.Trim();
+    f.Level = req.Level;
+    f.IsActive = req.IsActive;
+    f.SortOrder = req.SortOrder;
+    f.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingFloorDto(f));
+}).RequireAuthorization();
+
+app.MapDelete("/api/parking/floors/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var f = await db.ParkingFloors.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (f is null) return Results.NotFound();
+    db.ParkingFloors.Remove(f);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Rows ───
+app.MapGet("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingFloors.AnyAsync(f => f.Id == floorId, ct)) return Results.NotFound();
+    var rows = await db.ParkingRows.AsNoTracking()
+        .Where(r => r.FloorId == floorId).OrderBy(r => r.SortOrder).ThenBy(r => r.Name).ToListAsync(ct);
+    var spaceCounts = await db.ParkingSpaces.AsNoTracking().Where(s => s.Row!.FloorId == floorId)
+        .GroupBy(s => s.RowId).Select(g => new { RowId = g.Key, Count = g.Count() }).ToListAsync(ct);
+    return Results.Ok(rows.Select(r => ParkingRowDto(r, spaceCounts.FirstOrDefault(c => c.RowId == r.Id)?.Count ?? 0)));
+}).RequireAuthorization();
+
+app.MapPost("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, ParkingRowRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingFloors.AnyAsync(f => f.Id == floorId, ct)) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    var r = new ParkingRow { FloorId = floorId, Name = req.Name.Trim(), SortOrder = req.SortOrder };
+    db.ParkingRows.Add(r);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingRowDto(r));
+}).RequireAuthorization();
+
+app.MapPut("/api/parking/rows/{id:guid}", async (Guid id, ParkingRowRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var r = await db.ParkingRows.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (r is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
+    r.Name = req.Name.Trim();
+    r.SortOrder = req.SortOrder;
+    r.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingRowDto(r));
+}).RequireAuthorization();
+
+app.MapDelete("/api/parking/rows/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var r = await db.ParkingRows.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (r is null) return Results.NotFound();
+    db.ParkingRows.Remove(r);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Spaces ───
+app.MapGet("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingRows.AnyAsync(r => r.Id == rowId, ct)) return Results.NotFound();
+    var spaces = await db.ParkingSpaces.AsNoTracking()
+        .Where(s => s.RowId == rowId).OrderBy(s => s.SortOrder).ThenBy(s => s.Code).ToListAsync(ct);
+    return Results.Ok(spaces.Select(ParkingSpaceDto));
+}).RequireAuthorization();
+
+app.MapPost("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, ParkingSpaceRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingRows.AnyAsync(r => r.Id == rowId, ct)) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { message = "Code is required." });
+    if (!Enum.TryParse<ParkingSpaceType>(req.Type, ignoreCase: true, out var type)) return Results.BadRequest(new { message = "Unknown space type." });
+    var s = new ParkingSpace
+    {
+        RowId = rowId,
+        Code = req.Code.Trim(),
+        Type = type,
+        IsActive = req.IsActive,
+        SortOrder = req.SortOrder,
+        Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
+    };
+    db.ParkingSpaces.Add(s);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingSpaceDto(s));
+}).RequireAuthorization();
+
+// Массовая генерация мест в ряду: префикс + диапазон номеров (например A-01 … A-20).
+app.MapPost("/api/parking/rows/{rowId:guid}/spaces/bulk", async (Guid rowId, ParkingSpaceBulkRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    if (!await db.ParkingRows.AnyAsync(r => r.Id == rowId, ct)) return Results.NotFound();
+    if (req.Count is < 1 or > 500) return Results.BadRequest(new { message = "Count must be between 1 and 500." });
+    if (!Enum.TryParse<ParkingSpaceType>(req.Type, ignoreCase: true, out var type)) return Results.BadRequest(new { message = "Unknown space type." });
+    var start = req.StartNumber < 0 ? 0 : req.StartNumber;
+    var pad = req.Pad is >= 1 and <= 6 ? req.Pad : 2;
+    var prefix = (req.Prefix ?? string.Empty).Trim();
+    var existingMax = await db.ParkingSpaces.Where(s => s.RowId == rowId).Select(s => (int?)s.SortOrder).MaxAsync(ct) ?? 0;
+    var created = new List<ParkingSpace>(req.Count);
+    for (var i = 0; i < req.Count; i++)
+    {
+        var n = start + i;
+        created.Add(new ParkingSpace
+        {
+            RowId = rowId,
+            Code = prefix + n.ToString().PadLeft(pad, '0'),
+            Type = type,
+            IsActive = true,
+            SortOrder = existingMax + i + 1,
+        });
+    }
+    db.ParkingSpaces.AddRange(created);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(created.Select(ParkingSpaceDto));
+}).RequireAuthorization();
+
+app.MapPut("/api/parking/spaces/{id:guid}", async (Guid id, ParkingSpaceRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var s = await db.ParkingSpaces.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (s is null) return Results.NotFound();
+    if (string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { message = "Code is required." });
+    if (!Enum.TryParse<ParkingSpaceType>(req.Type, ignoreCase: true, out var type)) return Results.BadRequest(new { message = "Unknown space type." });
+    s.Code = req.Code.Trim();
+    s.Type = type;
+    s.IsActive = req.IsActive;
+    s.SortOrder = req.SortOrder;
+    s.Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
+    s.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(ParkingSpaceDto(s));
+}).RequireAuthorization();
+
+app.MapDelete("/api/parking/spaces/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var s = await db.ParkingSpaces.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (s is null) return Results.NotFound();
+    db.ParkingSpaces.Remove(s);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization();
+
+// ─── Scheme / layout: всё дерево одной зоны для визуализации ───
+app.MapGet("/api/parking/zones/{zoneId:guid}/scheme", async (Guid zoneId, AppDbContext db, CancellationToken ct) =>
+{
+    var zone = await db.ParkingZones.AsNoTracking().FirstOrDefaultAsync(z => z.Id == zoneId, ct);
+    if (zone is null) return Results.NotFound();
+
+    var floors = await db.ParkingFloors.AsNoTracking()
+        .Where(f => f.ZoneId == zoneId).OrderBy(f => f.SortOrder).ThenBy(f => f.Level).ToListAsync(ct);
+    var floorIds = floors.Select(f => f.Id).ToList();
+    var rows = await db.ParkingRows.AsNoTracking()
+        .Where(r => floorIds.Contains(r.FloorId)).OrderBy(r => r.SortOrder).ThenBy(r => r.Name).ToListAsync(ct);
+    var rowIds = rows.Select(r => r.Id).ToList();
+    var spaces = await db.ParkingSpaces.AsNoTracking()
+        .Where(s => rowIds.Contains(s.RowId)).OrderBy(s => s.SortOrder).ThenBy(s => s.Code).ToListAsync(ct);
+
+    return Results.Ok(new
+    {
+        zone.Id,
+        zone.Name,
+        zone.Code,
+        zone.IsActive,
+        floors = floors.Select(f => new
+        {
+            f.Id,
+            f.Name,
+            f.Level,
+            f.IsActive,
+            rows = rows.Where(r => r.FloorId == f.Id).Select(r => new
+            {
+                r.Id,
+                r.Name,
+                spaces = spaces.Where(s => s.RowId == r.Id).Select(ParkingSpaceDto),
+            }),
+        }),
+    });
 }).RequireAuthorization();
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
@@ -7099,6 +8802,38 @@ public sealed record TransferMembershipRequest(Guid CustomerId);
 public sealed record IssueGiftCertificateRequest(Guid TariffId, string? ValidUntil, string? RecipientName);
 public sealed record RedeemGiftCertificateRequest(Guid CustomerId, string? StartDate);
 public sealed record GymAccessRequest(Guid[] DeviceIds);
+public sealed record GymCaptureRequest(Guid DeviceId, int? FingerIndex);
+public sealed record GymAddCardRequest(string CardNo, string? CardNumber, Guid[]? DeviceIds);
+public sealed record GymPaymentRequest(Guid? MembershipId, decimal Amount, string? Currency, string Method, string? Note);
+
+// ─── Parking Management ───
+public sealed record ParkingZoneRequest(string Name, string? Code, string? Description, bool IsActive, int SortOrder);
+public sealed record ParkingFloorRequest(string Name, int Level, bool IsActive, int SortOrder);
+public sealed record ParkingRowRequest(string Name, int SortOrder);
+public sealed record ParkingSpaceRequest(string Code, string Type, bool IsActive, int SortOrder, string? Notes);
+public sealed record ParkingSpaceBulkRequest(string? Prefix, int StartNumber, int Count, int Pad, string Type);
+
+// Gym Inventory / Warehouse
+public sealed record GymSupplierRequest(string Name, string? ContactName, string? Phone, string? Email, string? Address, string? Notes, bool IsActive);
+public sealed record GymProductRequest(string Name, string? Sku, string? Barcode, string? Category, string? Unit, decimal SalePrice, decimal Cost, string? Currency, decimal MinStock, decimal? OpeningStock, Guid? SupplierId, bool IsActive);
+public sealed record GymReceiptRequest(Guid ProductId, decimal Quantity, decimal? UnitCost, Guid? SupplierId, string? Note);
+public sealed record GymWriteOffRequest(Guid ProductId, decimal Quantity, string? Reason);
+public sealed record GymPurchaseOrderItemRequest(Guid ProductId, decimal Quantity, decimal UnitCost);
+public sealed record GymPurchaseOrderRequest(Guid? SupplierId, string? ExpectedDate, string? Notes, GymPurchaseOrderItemRequest[] Items);
+public sealed record GymStocktakeRequest(string? Notes, bool SeedAllProducts);
+public sealed record GymStocktakeCountItem(Guid ItemId, decimal CountedQuantity);
+public sealed record GymStocktakeCountsRequest(GymStocktakeCountItem[] Items);
+
+// Gym Finance
+public sealed record GymFinanceAccountRequest(string Name, string Type, string? Currency, decimal OpeningBalance, string? BankName, string? AccountNumber, bool IsActive);
+public sealed record GymFinanceCategoryRequest(string Name, string Direction, string? Color, bool IsActive);
+public sealed record GymFinanceTxnRequest(string Direction, Guid AccountId, decimal Amount, Guid? CategoryId, string? OccurredOn, string? Description, string? CounterpartyName, string? Method);
+public sealed record GymFinanceTransferRequest(Guid FromAccountId, Guid ToAccountId, decimal Amount, string? OccurredOn, string? Description);
+
+// Gym POS / Checkout
+public sealed record GymSaleItemRequest(Guid ProductId, decimal Quantity, decimal UnitPrice);
+public sealed record GymSaleRequest(Guid? CustomerId, GymSaleItemRequest[] Items, decimal Discount, string PaymentMethod, Guid? FinanceAccountId, Guid? FinanceCategoryId, string? Note);
+
 public sealed record ReviewAttendanceRequestBody(string? Comment);
 public sealed record SelfServiceLoginRequest(string Email, string Password);
 public sealed record SelfServiceChangePasswordRequest(string CurrentPassword, string NewPassword);

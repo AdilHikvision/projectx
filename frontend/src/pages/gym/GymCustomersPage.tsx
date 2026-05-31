@@ -5,6 +5,8 @@ import { Button, Input } from '../../components/atoms'
 import { PageHeader, Modal } from '../../components/organisms'
 import { apiRequest } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
+import { NewCustomerWizard } from './NewCustomerWizard'
+import { FaceThumbnail } from '../../components/FaceThumbnail'
 
 type Gender = 'Male' | 'Female' | ''
 
@@ -18,6 +20,8 @@ interface Customer {
     birthDate: string | null
     notes: string | null
     isActive: boolean
+    visitCount: number
+    primaryFaceId: string | null
 }
 
 interface FormState {
@@ -68,6 +72,12 @@ interface GymDevice {
     deviceType: string
 }
 
+interface Creds {
+    cards: { id: string; cardNo: string }[]
+    faces: { id: string }[]
+    fingerprints: { id: string; fingerIndex: number }[]
+}
+
 const STATUS_STYLE: Record<MembershipStatus, string> = {
     Active: 'bg-green-50 text-green-600',
     Frozen: 'bg-sky-50 text-sky-600',
@@ -93,6 +103,7 @@ export function GymCustomersPage() {
     const [form, setForm] = useState<FormState>(emptyForm)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [wizardOpen, setWizardOpen] = useState(false)
 
     // Memberships sub-modal
     const [membershipsFor, setMembershipsFor] = useState<Customer | null>(null)
@@ -112,6 +123,15 @@ export function GymCustomersPage() {
     const [accessSel, setAccessSel] = useState<Set<string>>(new Set())
     const [accessBusy, setAccessBusy] = useState(false)
     const [accessResults, setAccessResults] = useState<Record<string, 'granted' | 'revoked' | 'failed'>>({})
+    // Credentials modal
+    const [credsFor, setCredsFor] = useState<Customer | null>(null)
+    const [creds, setCreds] = useState<Creds>({ cards: [], faces: [], fingerprints: [] })
+    const [credDevice, setCredDevice] = useState('')
+    const [credBusy, setCredBusy] = useState(false)
+    const [newCardNo, setNewCardNo] = useState('')
+    const [faceFile, setFaceFile] = useState<File | null>(null)
+    const [credCapturing, setCredCapturing] = useState<string | null>(null)
+    const [credMsg, setCredMsg] = useState<string | null>(null)
 
     const load = async () => {
         if (!token) return
@@ -132,7 +152,6 @@ export function GymCustomersPage() {
 
     const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((p) => ({ ...p, [k]: v }))
 
-    const openCreate = () => { setEditing(null); setForm(emptyForm); setError(null); setModal('create') }
     const openEdit = (c: Customer) => {
         setEditing(c)
         setForm({
@@ -277,6 +296,82 @@ export function GymCustomersPage() {
         finally { setAccessBusy(false) }
     }
 
+    const openCreds = async (c: Customer) => {
+        if (!token) return
+        setCredsFor(c); setNewCardNo(''); setFaceFile(null); setCredMsg(null); setCredCapturing(null)
+        setCreds({ cards: [], faces: [], fingerprints: [] })
+        try {
+            const [cr, ds] = await Promise.all([
+                apiRequest<Creds>(`/api/gym/customers/${c.id}/credentials`, { token }),
+                apiRequest<GymDevice[]>('/api/gym/devices', { token }),
+            ])
+            setCreds(cr); setDevices(ds); setCredDevice((prev) => prev || ds[0]?.id || '')
+        } catch { /* ignore */ }
+    }
+
+    const reloadCreds = async (customerId: string) => {
+        if (!token) return
+        setCreds(await apiRequest<Creds>(`/api/gym/customers/${customerId}/credentials`, { token }))
+    }
+
+    const addCard = async () => {
+        if (!token || !credsFor || !newCardNo.trim()) return
+        setCredBusy(true); setCredMsg(null)
+        try {
+            await apiRequest(`/api/gym/customers/${credsFor.id}/cards`, {
+                method: 'POST', token,
+                body: JSON.stringify({ cardNo: newCardNo.trim(), deviceIds: credDevice ? [credDevice] : [] }),
+            })
+            setNewCardNo(''); await reloadCreds(credsFor.id)
+        } catch (e) { setCredMsg(e instanceof Error ? e.message : 'Failed') }
+        finally { setCredBusy(false) }
+    }
+
+    const uploadFace = async () => {
+        if (!token || !credsFor || !faceFile) return
+        setCredBusy(true); setCredMsg(null)
+        try {
+            const fd = new FormData()
+            fd.append('Image', faceFile)
+            if (credDevice) fd.append('DeviceIds', credDevice)
+            await apiRequest(`/api/gym/customers/${credsFor.id}/faces`, { method: 'POST', token, body: fd })
+            setFaceFile(null); await reloadCreds(credsFor.id)
+        } catch (e) { setCredMsg(e instanceof Error ? e.message : 'Failed') }
+        finally { setCredBusy(false) }
+    }
+
+    const captureCred = async (kind: 'face' | 'card' | 'fingerprint') => {
+        if (!token || !credsFor || !credDevice) return
+        setCredCapturing(kind); setCredMsg(t('gym.creds.capturing'))
+        try {
+            const before = await apiRequest<Creds>(`/api/gym/customers/${credsFor.id}/credentials`, { token })
+            const n = (c: Creds) => kind === 'face' ? c.faces.length : kind === 'card' ? c.cards.length : c.fingerprints.length
+            await apiRequest(`/api/gym/customers/${credsFor.id}/capture/${kind}`, {
+                method: 'POST', token, body: JSON.stringify({ deviceId: credDevice, fingerIndex: 1 }),
+            })
+            let done = false
+            for (let i = 0; i < 40 && !done; i++) {
+                await new Promise((r) => setTimeout(r, 1500))
+                const p = await apiRequest<{ status: string; message?: string }>(`/api/gym/customers/capture/${kind}/progress?deviceId=${credDevice}`, { token })
+                const cur = await apiRequest<Creds>(`/api/gym/customers/${credsFor.id}/credentials`, { token })
+                if (n(cur) > n(before)) { setCreds(cur); setCredMsg(t('gym.creds.captured')); done = true }
+                else if (/fail|error|timeout/i.test(p.status)) { setCredMsg(p.message || t('gym.creds.failed')); done = true }
+            }
+            if (!done) setCredMsg(t('gym.creds.failed'))
+        } catch (e) { setCredMsg(e instanceof Error ? e.message : 'Failed') }
+        finally {
+            setCredCapturing(null)
+            // Always reflect DB truth — whatever the device actually saved shows up.
+            try { if (credsFor) await reloadCreds(credsFor.id) } catch { /* ignore */ }
+        }
+    }
+
+    const deleteCred = async (kind: 'cards' | 'faces' | 'fingerprints', credId: string) => {
+        if (!token || !credsFor) return
+        await apiRequest(`/api/gym/customers/${credsFor.id}/${kind}/${credId}`, { method: 'DELETE', token })
+        await reloadCreds(credsFor.id)
+    }
+
     return (
         <AppLayout>
             <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
@@ -287,7 +382,7 @@ export function GymCustomersPage() {
                             title={t('gym.customers.title')}
                             description={t('gym.customers.subtitle')}
                         />
-                        <Button icon="person_add" onClick={openCreate}>{t('gym.customers.new')}</Button>
+                        <Button icon="person_add" onClick={() => setWizardOpen(true)}>{t('gym.customers.new')}</Button>
                     </div>
 
                     <div className="max-w-md">
@@ -316,6 +411,7 @@ export function GymCustomersPage() {
                                             <th className="px-5 py-3 text-left">{t('gym.customers.columns.name')}</th>
                                             <th className="px-5 py-3 text-left">{t('gym.customers.columns.contact')}</th>
                                             <th className="px-5 py-3 text-left">{t('gym.customers.columns.gender')}</th>
+                                            <th className="px-5 py-3 text-left">{t('gym.customers.columns.visits')}</th>
                                             <th className="px-5 py-3 text-left">{t('gym.customers.columns.status')}</th>
                                             <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                                         </tr>
@@ -325,7 +421,11 @@ export function GymCustomersPage() {
                                             <tr key={c.id} className="border-b border-border-light last:border-none hover:bg-background-light transition-colors">
                                                 <td className="px-5 py-3">
                                                     <div className="flex items-center gap-3">
-                                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-700">{initials(c)}</span>
+                                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-emerald-100 text-xs font-black text-emerald-700">
+                                                            {c.primaryFaceId
+                                                                ? <FaceThumbnail faceId={c.primaryFaceId} token={token} className="h-full w-full object-cover" />
+                                                                : initials(c)}
+                                                        </span>
                                                         <span className="font-bold text-text-dark">{fullName(c)}</span>
                                                     </div>
                                                 </td>
@@ -338,12 +438,14 @@ export function GymCustomersPage() {
                                                         : <span className="text-text-light">{t('gym.customers.noContact')}</span>}
                                                 </td>
                                                 <td className="px-5 py-3 text-text-muted">{c.gender ? t(`gym.customers.genders.${c.gender}`) : '—'}</td>
+                                                <td className="px-5 py-3 font-mono text-text-dark">{c.visitCount}</td>
                                                 <td className="px-5 py-3">
                                                     {c.isActive
                                                         ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-green-600">{t('common.active')}</span>
                                                         : <span className="rounded-full bg-background-light px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-text-light">{t('gym.customers.inactive')}</span>}
                                                 </td>
                                                 <td className="px-5 py-3 text-right whitespace-nowrap">
+                                                    <button onClick={() => openCreds(c)} className="mr-3 text-[10px] font-black uppercase tracking-widest text-fuchsia-600 hover:underline">{t('gym.creds.manage')}</button>
                                                     <button onClick={() => openAccess(c)} className="mr-3 text-[10px] font-black uppercase tracking-widest text-sky-600 hover:underline">{t('gym.access.manage')}</button>
                                                     <button onClick={() => openMemberships(c)} className="mr-3 text-[10px] font-black uppercase tracking-widest text-emerald-600 hover:underline">{t('gym.memberships.manage')}</button>
                                                     <button onClick={() => openEdit(c)} className="mr-3 text-[10px] font-black uppercase tracking-widest text-primary hover:underline">{t('common.edit')}</button>
@@ -557,6 +659,75 @@ export function GymCustomersPage() {
                     )}
                 </div>
             </Modal>
+
+            {/* ─── Credentials modal ─── */}
+            <Modal isOpen={!!credsFor} onClose={() => setCredsFor(null)} title={credsFor ? t('gym.creds.title', { name: fullName(credsFor) }) : ''}>
+                <div className="space-y-4 pt-2">
+                    <Field label={t('gym.creds.device')}>
+                        {devices.length === 0 ? <p className="text-sm text-text-muted">{t('gym.creds.noDevices')}</p> : (
+                            <select value={credDevice} onChange={(e) => setCredDevice(e.target.value)}
+                                className="h-9 w-full rounded-md border border-border-base bg-slate-75 px-3 text-xs text-text-base outline-none focus:border-primary/30 focus:ring-2 focus:ring-primary/20">
+                                {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.ipAddress})</option>)}
+                            </select>
+                        )}
+                    </Field>
+
+                    {/* Add card by number */}
+                    <Field label={t('gym.creds.cardNo')}>
+                        <div className="flex gap-2">
+                            <Input value={newCardNo} onChange={(e) => setNewCardNo(e.target.value)} containerClassName="flex-1" />
+                            <Button isLoading={credBusy} disabled={!newCardNo.trim()} onClick={addCard}>{t('gym.creds.addCard')}</Button>
+                        </div>
+                    </Field>
+
+                    {/* Upload face photo */}
+                    <Field label={t('gym.creds.facePhoto')}>
+                        <div className="flex items-center gap-2">
+                            <input type="file" accept="image/*" onChange={(e) => setFaceFile(e.target.files?.[0] ?? null)}
+                                className="flex-1 text-xs text-text-muted file:mr-2 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold" />
+                            <Button isLoading={credBusy} disabled={!faceFile} onClick={uploadFace}>{t('gym.creds.uploadFace')}</Button>
+                        </div>
+                    </Field>
+
+                    {/* Capture from device */}
+                    <Field label={t('gym.creds.capture')}>
+                        <div className="grid grid-cols-3 gap-2">
+                            {(['face', 'card', 'fingerprint'] as const).map((kind) => (
+                                <Button key={kind} variant="outline" isLoading={credCapturing === kind} disabled={!!credCapturing || !credDevice} onClick={() => captureCred(kind)}>
+                                    {t(`gym.creds.capture${kind.charAt(0).toUpperCase() + kind.slice(1)}`)}
+                                </Button>
+                            ))}
+                        </div>
+                    </Field>
+
+                    {credMsg && <p className="text-xs text-text-muted">{credMsg}</p>}
+
+                    {/* Current credentials */}
+                    <div className="space-y-2 border-t border-border-light pt-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{t('gym.creds.current')}</p>
+                        {creds.faces.length + creds.cards.length + creds.fingerprints.length === 0 ? (
+                            <p className="text-sm text-text-light">{t('gym.creds.none')}</p>
+                        ) : (
+                            <div className="space-y-1.5">
+                                {creds.faces.map((f) => (
+                                    <CredRow key={f.id} icon="face" label={t('gym.creds.faces')} onDelete={() => deleteCred('faces', f.id)} />
+                                ))}
+                                {creds.cards.map((c) => (
+                                    <CredRow key={c.id} icon="badge" label={`${t('gym.creds.cards')} · ${c.cardNo}`} onDelete={() => deleteCred('cards', c.id)} />
+                                ))}
+                                {creds.fingerprints.map((fp) => (
+                                    <CredRow key={fp.id} icon="fingerprint" label={`${t('gym.creds.finger')}${fp.fingerIndex}`} onDelete={() => deleteCred('fingerprints', fp.id)} />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <Button variant="outline" fullWidth onClick={() => setCredsFor(null)}>{t('common.close')}</Button>
+                </div>
+            </Modal>
+
+            {/* ─── New customer wizard ─── */}
+            <NewCustomerWizard open={wizardOpen} onClose={() => setWizardOpen(false)} onDone={() => { setWizardOpen(false); void load() }} />
         </AppLayout>
     )
 }
@@ -564,6 +735,18 @@ export function GymCustomersPage() {
 function ActionBtn({ label, color, onClick }: { label: string; color: string; onClick: () => void }) {
     return (
         <button onClick={onClick} className={`text-[10px] font-black uppercase tracking-widest hover:underline ${color}`}>{label}</button>
+    )
+}
+
+function CredRow({ icon, label, onDelete }: { icon: string; label: string; onDelete: () => void }) {
+    return (
+        <div className="flex items-center gap-2 rounded-lg border border-border-light px-3 py-1.5">
+            <span className="material-symbols-outlined text-[18px] text-text-light">{icon}</span>
+            <span className="flex-1 truncate text-sm text-text-dark">{label}</span>
+            <button onClick={onDelete} aria-label="delete" className="text-text-light hover:text-error-text">
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+            </button>
+        </div>
     )
 }
 

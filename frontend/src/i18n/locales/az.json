@@ -92,8 +92,88 @@
     "parking": "Parking Management",
     "housing": "Housing & Utility Management"
   },
+  "parking": {
+    "subtitle": "Zonalar, mərtəbələr, sıralar və parklanma yerləri",
+    "sortOrder": "Sıralama",
+    "legend": "Yer növləri",
+    "deleteTitle": "Silmə",
+    "deletePrefix": "Silinsin",
+    "deleteCascade": "Bütün daxili elementlər silinəcək.",
+    "nav": { "management": "Parklanma idarəetməsi" },
+    "tabs": { "manage": "İdarəetmə", "scheme": "Parklanma sxemi" },
+    "zones": {
+      "title": "Zonalar",
+      "new": "Yeni zona",
+      "edit": "Zonanı redaktə et",
+      "empty": "Hələ parklanma zonası yoxdur",
+      "spaceCount_one": "{{count}} yer",
+      "spaceCount_other": "{{count}} yer",
+      "fields": { "name": "Ad", "code": "Kod", "description": "Təsvir", "active": "Aktiv" }
+    },
+    "floors": {
+      "title": "Mərtəbələr",
+      "new": "Yeni mərtəbə",
+      "edit": "Mərtəbəni redaktə et",
+      "empty": "Bu zonada mərtəbə yoxdur",
+      "selectZone": "Mərtəbələri görmək üçün zona seçin",
+      "level": "Səviyyə",
+      "fields": { "name": "Ad", "level": "Səviyyə", "active": "Aktiv" }
+    },
+    "rows": {
+      "title": "Sıralar və yerlər",
+      "new": "Yeni sıra",
+      "edit": "Sıranı redaktə et",
+      "empty": "Bu mərtəbədə sıra yoxdur",
+      "selectFloor": "Sıraları görmək üçün mərtəbə seçin",
+      "fields": { "name": "Ad" }
+    },
+    "spaces": {
+      "new": "Yer əlavə et",
+      "edit": "Yeri redaktə et",
+      "empty": "Yer yoxdur",
+      "bulk": "Kütləvi",
+      "bulkTitle": "Kütləvi yer yaratma",
+      "bulkCreate": "Yerləri yarat",
+      "bulkPreview": "Nümunə",
+      "fields": { "code": "Yer nömrəsi", "type": "Növ", "notes": "Qeydlər", "active": "Aktiv" },
+      "bulkFields": { "prefix": "Prefiks", "count": "Say", "startNumber": "Başlanğıc nömrə", "pad": "Rəqəm sayı" }
+    },
+    "types": {
+      "Regular": "Adi",
+      "Vip": "VIP",
+      "Disabled": "Əlillər üçün",
+      "Electric": "Elektromobil",
+      "Motorcycle": "Motosiklet"
+    },
+    "scheme": { "empty": "Hələ göstəriləcək bir şey yoxdur" }
+  },
   "gym": {
     "underDevelopment": "Bu bölmə hazırlanır və tezliklə əlçatan olacaq.",
+    "analytics": {
+      "title": "Analitika və hesabatlar",
+      "subtitle": "Zal biznesinin icmalı — müştərilər, abunəliklər, gəlir və ziyarətlər",
+      "from": "-dan",
+      "to": "-dək",
+      "groupBy": { "day": "Gün", "month": "Ay", "year": "İl" },
+      "kpi": {
+        "revenue": "Gəlir",
+        "payments": "Ödəniş: {{count}}",
+        "newCustomers": "Yeni müştərilər",
+        "activeMemberships": "Aktiv abunəliklər",
+        "expiringSoon": "≤ 7 gündə bitir",
+        "totalCustomers": "Ümumi müştərilər",
+        "activeCustomers": "aktiv: {{count}}",
+        "giftRedeemed": "Aktivləşdirilmiş sertifikatlar",
+        "giftIssued": "verilib: {{count}}",
+        "lifetimeVisits": "Ümumi ziyarətlər",
+        "frozen": "Dondurulmuş"
+      },
+      "revenueTrend": "Gəlir dinamikası",
+      "byTariff": "Tariflər üzrə aktiv abunəliklər",
+      "byMethod": "Ödəniş üsuluna görə gəlir",
+      "methods": { "Cash": "Nağd", "Card": "Kart", "Transfer": "Köçürmə" },
+      "noData": "Seçilmiş dövr üçün məlumat yoxdur."
+    },
     "nav": {
       "customers": "Müştərilər",
       "subscriptions": "Abunəliklər",
@@ -127,7 +207,72 @@
         "active": "Aktiv"
       },
       "genders": { "Male": "Kişi", "Female": "Qadın", "unset": "Qeyd edilməyib" },
-      "columns": { "name": "Ad", "contact": "Əlaqə", "gender": "Cins", "status": "Status", "memberships": "Abunəliklər" }
+      "columns": { "name": "Ad", "contact": "Əlaqə", "gender": "Cins", "status": "Status", "memberships": "Abunəliklər", "visits": "Ziyarətlər" }
+    },
+    "wizard": {
+      "title": "Yeni müştəri",
+      "next": "İrəli",
+      "back": "Geri",
+      "finish": "Bitir",
+      "skip": "Keç",
+      "creating": "Yaradılır…",
+      "steps": { "info": "Məlumat", "subscription": "Abunəlik", "credentials": "Biometriya və kart", "payment": "Ödəniş", "access": "Giriş" },
+      "subscription": {
+        "select": "Tarif seçin",
+        "none": "Aktiv tarif yoxdur. Keçib sonra əlavə edə bilərsiniz.",
+        "skipNote": "İstəyə görə — sonra əlavə edilə bilər."
+      },
+      "credentials": {
+        "device": "Tutma cihazı",
+        "noDevices": "Əlçatan cihaz yoxdur.",
+        "face": "Üz tut",
+        "card": "Kart oxu",
+        "fingerprint": "Barmaq izi tut",
+        "capturing": "Tutulur… cihazdakı təlimata əməl edin",
+        "captured": "Tutuldu",
+        "failed": "Tutma alınmadı",
+        "current": "Əlavə olunmuş məlumatlar",
+        "faces": "Üzlər",
+        "cards": "Kartlar",
+        "fingerprints": "Barmaq izləri",
+        "skipNote": "İstəyə görə — biometriyanı sonra əlavə edə bilərsiniz."
+      },
+      "payment": {
+        "method": "Ödəniş üsulu",
+        "amount": "Məbləğ",
+        "note": "Qeyd",
+        "skipNote": "İstəyə görə — ödəniş yoxdursa keçin.",
+        "methods": { "Cash": "Nağd", "Card": "Kart", "Transfer": "Köçürmə" }
+      },
+      "accessStep": {
+        "select": "Cihazlarda giriş ver",
+        "noDevices": "Əlçatan cihaz yoxdur.",
+        "skipNote": "İstəyə görə — girişi indi və ya sonra verin."
+      },
+      "done": "Müştəri yaradıldı"
+    },
+    "creds": {
+      "manage": "Biometriya",
+      "title": "Biometriya və kart — {{name}}",
+      "device": "Cihaz (sinx / tutma üçün)",
+      "noDevices": "Əlçatan cihaz yoxdur.",
+      "current": "Əlavə olunub",
+      "none": "Hələ məlumat yoxdur.",
+      "faces": "Üzlər",
+      "cards": "Kartlar",
+      "fingerprints": "Barmaq izləri",
+      "cardNo": "Kart nömrəsi",
+      "addCard": "Kart əlavə et",
+      "facePhoto": "Üz şəkli",
+      "uploadFace": "Üz yüklə",
+      "capture": "Cihazdan tutma",
+      "captureFace": "Üz",
+      "captureCard": "Kart",
+      "captureFingerprint": "Barmaq izi",
+      "capturing": "Tutulur… cihazdakı təlimata əməl edin",
+      "captured": "Tutuldu",
+      "failed": "Tutma alınmadı",
+      "finger": "Barmaq №"
     },
     "access": {
       "manage": "Giriş",
@@ -171,6 +316,197 @@
       "transferSelf": "Cari sahib",
       "noOtherCustomers": "Köçürmək üçün başqa müştəri yoxdur.",
       "statuses": { "Active": "Aktiv", "Frozen": "Dondurulub", "Expired": "Bitib", "Cancelled": "Ləğv edilib" }
+    },
+    "inventory": {
+      "title": "Anbar",
+      "subtitle": "Qalıqlar, mədaxil, silinmə, inventarizasiya, təchizatçılar və satınalmalar",
+      "tabs": {
+        "stock": "Mal qalıqları",
+        "receipts": "Malın mədaxili",
+        "writeoffs": "Silinmə",
+        "stocktakes": "İnventarizasiya",
+        "lowStock": "Minimal qalıqlar",
+        "suppliers": "Təchizatçılar",
+        "purchases": "Satınalmalar"
+      },
+      "common": {
+        "product": "Mal",
+        "quantity": "Say",
+        "unitCost": "Vahid qiymət",
+        "supplier": "Təchizatçı",
+        "note": "Qeyd",
+        "reason": "Səbəb",
+        "date": "Tarix",
+        "total": "Cəmi",
+        "selectProduct": "Mal seçin…",
+        "none": "—",
+        "noResults": "Heç nə tapılmadı."
+      },
+      "products": {
+        "new": "Yeni mal",
+        "edit": "Malı redaktə et",
+        "empty": "Hələ mal yoxdur — ilkini əlavə edin.",
+        "search": "Ad, artikul, barkod və ya kateqoriya üzrə axtarış",
+        "count_one": "{{count}} mal",
+        "count_other": "{{count}} mal",
+        "deleteTitle": "Malı sil",
+        "deletePrefix": "Malı sil",
+        "lowBadge": "Az",
+        "inactive": "Qeyri-aktiv",
+        "movements": "Tarixçə",
+        "receipt": "Mədaxil",
+        "writeoff": "Silinmə",
+        "columns": { "name": "Ad", "sku": "Artikul", "category": "Kateqoriya", "stock": "Qalıq", "min": "Min", "price": "Qiymət", "supplier": "Təchizatçı" },
+        "fields": {
+          "name": "Ad", "sku": "Artikul", "barcode": "Barkod", "category": "Kateqoriya", "unit": "Ölçü vahidi",
+          "salePrice": "Satış qiyməti", "cost": "Maya dəyəri", "currency": "Valyuta", "minStock": "Min. qalıq",
+          "openingStock": "İlkin qalıq", "supplier": "Təchizatçı", "active": "Aktiv"
+        }
+      },
+      "receipts": {
+        "title": "Malın mədaxili",
+        "subtitle": "Anbara mal əlavə edin",
+        "new": "Yeni mədaxil",
+        "submit": "Mədaxil et",
+        "empty": "Hələ mədaxil yoxdur."
+      },
+      "writeoffs": {
+        "title": "Silinmə",
+        "subtitle": "Malı sil (zədə, müddət, itki)",
+        "new": "Yeni silinmə",
+        "submit": "Sil",
+        "empty": "Hələ silinmə yoxdur.",
+        "reasonPlaceholder": "Səbəb (zədə, müddət…)"
+      },
+      "movements": {
+        "for": "Anbar tarixçəsi — {{name}}",
+        "empty": "Hələ hərəkət yoxdur.",
+        "balanceAfter": "Qalıq",
+        "types": { "Receipt": "Mədaxil", "WriteOff": "Silinmə", "Stocktake": "İnventarizasiya", "Purchase": "Satınalma", "Sale": "Satış" }
+      },
+      "lowStock": {
+        "title": "Minimal qalıqlar",
+        "subtitle": "Minimal səviyyədə və ya aşağı olan mallar",
+        "empty": "Bütün mallar minimal səviyyədən yuxarıdır.",
+        "needed": "Sifariş"
+      },
+      "suppliers": {
+        "new": "Yeni təchizatçı",
+        "edit": "Təchizatçını redaktə et",
+        "empty": "Hələ təchizatçı yoxdur — ilkini əlavə edin.",
+        "deleteTitle": "Təchizatçını sil",
+        "deletePrefix": "Təchizatçını sil",
+        "inactive": "Qeyri-aktiv",
+        "columns": { "name": "Ad", "contact": "Əlaqə", "phone": "Telefon", "email": "Email" },
+        "fields": { "name": "Ad", "contactName": "Əlaqə şəxsi", "phone": "Telefon", "email": "Email", "address": "Ünvan", "notes": "Qeydlər", "active": "Aktiv" }
+      },
+      "purchases": {
+        "new": "Yeni satınalma",
+        "view": "Satınalma {{number}}",
+        "empty": "Hələ satınalma yoxdur.",
+        "supplier": "Təchizatçı",
+        "expectedDate": "Gözlənilən tarix",
+        "addItem": "Sətir əlavə et",
+        "items": "Sətirlər",
+        "noItems": "Ən azı bir sətir əlavə edin.",
+        "create": "Satınalma yarat",
+        "receive": "Mədaxil et",
+        "receiveConfirm": "Satınalmanı mədaxil edib malları anbara əlavə etmək?",
+        "cancel": "Ləğv et",
+        "cancelConfirm": "Satınalmanı ləğv etmək?",
+        "deleteConfirm": "Satınalmanı silmək?",
+        "columns": { "number": "Nömrə", "supplier": "Təchizatçı", "items": "Sətirlər", "total": "Cəmi", "status": "Status", "date": "Tarix" },
+        "statuses": { "Draft": "Qaralama", "Ordered": "Sifariş edilib", "Received": "Mədaxil edilib", "Cancelled": "Ləğv edilib" }
+      },
+      "stocktakes": {
+        "new": "Yeni inventarizasiya",
+        "view": "İnventarizasiya {{number}}",
+        "empty": "Hələ inventarizasiya yoxdur.",
+        "seedAll": "Bütün aktiv malları əlavə et",
+        "create": "Yarat",
+        "expected": "Uçot",
+        "counted": "Fakt",
+        "difference": "Fərq",
+        "saveCounts": "Yadda saxla",
+        "complete": "Tamamla",
+        "completeConfirm": "İnventarizasiyanı tamamlamaq? Qalıqlar fakta uyğun düzəldiləcək.",
+        "cancel": "Ləğv et",
+        "cancelConfirm": "İnventarizasiyanı ləğv etmək?",
+        "deleteConfirm": "İnventarizasiyanı silmək?",
+        "columns": { "number": "Nömrə", "items": "Sətirlər", "status": "Status", "date": "Tarix" },
+        "statuses": { "Draft": "Qaralama", "Completed": "Tamamlanıb", "Cancelled": "Ləğv edilib" }
+      }
+    },
+    "finance": {
+      "title": "Maliyyə",
+      "subtitle": "Gəlirlər, xərclər, mənfəət, kassalar, bank hesabları və hesabatlar",
+      "tabs": {
+        "income": "Gəlirlər",
+        "expense": "Xərclər",
+        "profit": "Mənfəət",
+        "cash": "Kassalar",
+        "bank": "Bank hesabları",
+        "reports": "Dövr hesabatları",
+        "analytics": "Analitika"
+      },
+      "common": {
+        "date": "Tarix", "category": "Kateqoriya", "account": "Hesab", "counterparty": "Qarşı tərəf",
+        "amount": "Məbləğ", "from": "Başlanğıc", "to": "Son", "total": "Cəmi",
+        "uncategorized": "Kateqoriyasız", "noData": "Bu dövr üçün məlumat yoxdur."
+      },
+      "kpi": {
+        "income": "Gəlirlər", "expense": "Xərclər", "profit": "Mənfəət", "balance": "Ümumi balans",
+        "cashBalance": "Kassa balansı", "bankBalance": "Bank balansı",
+        "incomeByCategory": "Kateqoriya üzrə gəlir", "expenseByCategory": "Kateqoriya üzrə xərc"
+      },
+      "fields": {
+        "amount": "Məbləğ", "date": "Tarix", "account": "Hesab", "selectAccount": "Hesab seçin…",
+        "category": "Kateqoriya", "counterparty": "Qarşı tərəf", "description": "Təsvir",
+        "name": "Ad", "currency": "Valyuta", "openingBalance": "İlkin balans",
+        "bankName": "Bank", "accountNumber": "Hesab nömrəsi", "active": "Aktiv"
+      },
+      "inactive": "Qeyri-aktiv",
+      "deletePrefix": "Sil",
+      "deleteConfirm": "Əməliyyatı silmək?",
+      "income": { "title": "Gəlirlər", "subtitle": "Daxil olan pul", "new": "Yeni gəlir", "edit": "Gəliri redaktə et", "empty": "Hələ gəlir yoxdur." },
+      "expense": { "title": "Xərclər", "subtitle": "Çıxan pul", "new": "Yeni xərc", "edit": "Xərci redaktə et", "empty": "Hələ xərc yoxdur." },
+      "cash": { "title": "Kassalar", "subtitle": "Kassadakı nağd", "new": "Yeni kassa", "edit": "Kassanı redaktə et", "deleteTitle": "Kassanı sil", "empty": "Hələ kassa yoxdur — ilkini əlavə edin." },
+      "bank": { "title": "Bank hesabları", "subtitle": "Bankdakı vəsait", "new": "Yeni hesab", "edit": "Hesabı redaktə et", "deleteTitle": "Hesabı sil", "empty": "Hələ hesab yoxdur — ilkini əlavə edin." },
+      "transfer": { "action": "Köçürmə", "title": "Hesablar arası köçürmə", "from": "Hesabdan", "to": "Hesaba", "sameAccount": "İki fərqli hesab seçin." },
+      "categories": { "manage": "Kateqoriyalar", "title": "Gəlir və xərc kateqoriyaları", "namePlaceholder": "Kateqoriya adı", "empty": "Hələ kateqoriya yoxdur." },
+      "reports": { "groupBy": "Qruplaşdırma", "day": "Gün", "month": "Ay", "year": "İl", "period": "Dövr" },
+      "analytics": { "income12m": "Gəlir (12 ay)", "expense12m": "Xərc (12 ay)", "profit12m": "Mənfəət (12 ay)", "trend": "Gəlir və xərclər" }
+    },
+    "pos": {
+      "title": "POS / Kassa",
+      "subtitle": "Mal satışı, ödəniş qəbulu və anbardan silinmə",
+      "tabs": { "checkout": "Kassa", "history": "Satış tarixçəsi" },
+      "searchProducts": "Ad, artikul və ya kateqoriya üzrə mal axtarışı",
+      "noProducts": "Anbarda hələ mal yoxdur.",
+      "notFound": "Heç nə tapılmadı.",
+      "inStock": "Mövcuddur",
+      "outOfStock": "Stokda yoxdur",
+      "cart": "Səbət",
+      "clear": "Təmizlə",
+      "cartEmpty": "Səbət boşdur — əlavə etmək üçün mala toxunun.",
+      "subtotal": "Ara cəm",
+      "discount": "Endirim",
+      "total": "Cəmi",
+      "paymentMethod": "Ödəniş üsulu",
+      "methods": { "Cash": "Nağd", "Card": "Kart", "Transfer": "Köçürmə" },
+      "account": "Hesaba köçür",
+      "noAccount": "Gəliri qeyd etmə",
+      "customer": "Müştəri",
+      "walkIn": "Müştərisiz",
+      "note": "Qeyd",
+      "charge": "Ödə {{total}}",
+      "saleDone": "Satış {{number}} tamamlandı",
+      "noSales": "Hələ satış yoxdur.",
+      "receipt": "Çek {{number}}",
+      "refund": "Geri qaytarma",
+      "refundConfirm": "Satışı geri qaytarmaq? Mal anbara qayıdacaq, gəlir storno olunacaq.",
+      "columns": { "number": "Nömrə", "date": "Tarix", "customer": "Müştəri", "items": "Sətirlər", "method": "Ödəniş", "total": "Cəmi", "status": "Status" },
+      "statuses": { "Completed": "Tamamlanıb", "Refunded": "Qaytarılıb" }
     },
     "tabs": { "tariffs": "Tariflər", "gifts": "Sertifikatlar" },
     "gifts": {

@@ -15,6 +15,7 @@ public sealed class EventListenerService(
     IDeviceConnectionManager connectionManager,
     IServiceScopeFactory scopeFactory,
     IDeviceActivityBroadcaster activityBroadcaster,
+    Backend.Infrastructure.Gym.GymVisitService gymVisitService,
     ILogger<EventListenerService> logger) : BackgroundService, IEventListenerService
 {
     private readonly ConcurrentQueue<DeviceEvent> _buffer = new();
@@ -95,6 +96,11 @@ public sealed class EventListenerService(
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             mapped = await DeviceEventPersonEnricher.EnrichAsync(mapped, db, cancellationToken);
+
+            // Gym Management: программный лимит посещений. На успешный проход считаем визит
+            // и при исчерпании лимита снимаем клиента с устройств (железо лимит не умеет).
+            if (mapped.EventType == DeviceEventType.AccessGranted && !string.IsNullOrWhiteSpace(mapped.EmployeeNo))
+                await gymVisitService.HandleAccessGrantedAsync(mapped.EmployeeNo!, cancellationToken);
             // Persist'а в attendance в realtime больше нет: T&A собирает только Log Sync
             // (manual или авто-расписание), пишет в device_auth_logs. Это нужно чтобы
             // повторный sync не дублировал и пользователь явно контролировал что попадает в отчёт.

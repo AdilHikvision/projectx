@@ -92,8 +92,90 @@
     "parking": "Parking Management",
     "housing": "Housing & Utility Management"
   },
+  "parking": {
+    "subtitle": "Зоны, этажи, ряды и парковочные места",
+    "sortOrder": "Порядок",
+    "legend": "Типы мест",
+    "deleteTitle": "Удаление",
+    "deletePrefix": "Удалить",
+    "deleteCascade": "Все вложенные элементы будут удалены.",
+    "nav": { "management": "Управление парковкой" },
+    "tabs": { "manage": "Управление", "scheme": "Схема парковки" },
+    "zones": {
+      "title": "Зоны",
+      "new": "Новая зона",
+      "edit": "Редактировать зону",
+      "empty": "Парковочных зон пока нет",
+      "spaceCount_one": "{{count}} место",
+      "spaceCount_few": "{{count}} места",
+      "spaceCount_many": "{{count}} мест",
+      "spaceCount_other": "{{count}} мест",
+      "fields": { "name": "Название", "code": "Код", "description": "Описание", "active": "Активна" }
+    },
+    "floors": {
+      "title": "Этажи",
+      "new": "Новый этаж",
+      "edit": "Редактировать этаж",
+      "empty": "В этой зоне нет этажей",
+      "selectZone": "Выберите зону, чтобы увидеть этажи",
+      "level": "Уровень",
+      "fields": { "name": "Название", "level": "Уровень", "active": "Активен" }
+    },
+    "rows": {
+      "title": "Ряды и места",
+      "new": "Новый ряд",
+      "edit": "Редактировать ряд",
+      "empty": "На этом этаже нет рядов",
+      "selectFloor": "Выберите этаж, чтобы увидеть ряды",
+      "fields": { "name": "Название" }
+    },
+    "spaces": {
+      "new": "Добавить место",
+      "edit": "Редактировать место",
+      "empty": "Нет мест",
+      "bulk": "Массово",
+      "bulkTitle": "Массовое создание мест",
+      "bulkCreate": "Создать места",
+      "bulkPreview": "Пример",
+      "fields": { "code": "Номер места", "type": "Тип", "notes": "Заметки", "active": "Активно" },
+      "bulkFields": { "prefix": "Префикс", "count": "Количество", "startNumber": "Начальный номер", "pad": "Число знаков" }
+    },
+    "types": {
+      "Regular": "Обычное",
+      "Vip": "VIP",
+      "Disabled": "Для инвалидов",
+      "Electric": "Электромобиль",
+      "Motorcycle": "Мотоцикл"
+    },
+    "scheme": { "empty": "Пока нечего показать" }
+  },
   "gym": {
     "underDevelopment": "Этот раздел в разработке и скоро будет доступен.",
+    "analytics": {
+      "title": "Аналитика и отчёты",
+      "subtitle": "Обзор бизнеса зала — клиенты, абонементы, выручка и посещения",
+      "from": "С",
+      "to": "По",
+      "groupBy": { "day": "День", "month": "Месяц", "year": "Год" },
+      "kpi": {
+        "revenue": "Выручка",
+        "payments": "Платежей: {{count}}",
+        "newCustomers": "Новые клиенты",
+        "activeMemberships": "Активные абонементы",
+        "expiringSoon": "Истекают ≤ 7 дней",
+        "totalCustomers": "Всего клиентов",
+        "activeCustomers": "активных: {{count}}",
+        "giftRedeemed": "Сертификаты активированы",
+        "giftIssued": "выпущено: {{count}}",
+        "lifetimeVisits": "Всего посещений",
+        "frozen": "Заморожены"
+      },
+      "revenueTrend": "Динамика выручки",
+      "byTariff": "Активные абонементы по тарифам",
+      "byMethod": "Выручка по способам оплаты",
+      "methods": { "Cash": "Наличные", "Card": "Карта", "Transfer": "Перевод" },
+      "noData": "Нет данных за выбранный период."
+    },
     "nav": {
       "customers": "Клиенты",
       "subscriptions": "Абонементы",
@@ -128,7 +210,72 @@
         "active": "Активен"
       },
       "genders": { "Male": "Мужской", "Female": "Женский", "unset": "Не указан" },
-      "columns": { "name": "Имя", "contact": "Контакты", "gender": "Пол", "status": "Статус", "memberships": "Абонементы" }
+      "columns": { "name": "Имя", "contact": "Контакты", "gender": "Пол", "status": "Статус", "memberships": "Абонементы", "visits": "Посещения" }
+    },
+    "wizard": {
+      "title": "Новый клиент",
+      "next": "Далее",
+      "back": "Назад",
+      "finish": "Завершить",
+      "skip": "Пропустить",
+      "creating": "Создание…",
+      "steps": { "info": "Данные", "subscription": "Абонемент", "credentials": "Биометрия и карта", "payment": "Оплата", "access": "Доступ" },
+      "subscription": {
+        "select": "Выберите тариф",
+        "none": "Нет активных тарифов. Можно пропустить и добавить абонемент позже.",
+        "skipNote": "Необязательно — можно добавить позже."
+      },
+      "credentials": {
+        "device": "Устройство захвата",
+        "noDevices": "Нет доступных устройств.",
+        "face": "Снять лицо",
+        "card": "Считать карту",
+        "fingerprint": "Снять отпечаток",
+        "capturing": "Захват… следуйте подсказке на устройстве",
+        "captured": "Снято",
+        "failed": "Ошибка захвата",
+        "current": "Добавленные данные",
+        "faces": "Лица",
+        "cards": "Карты",
+        "fingerprints": "Отпечатки",
+        "skipNote": "Необязательно — биометрию можно добавить позже."
+      },
+      "payment": {
+        "method": "Способ оплаты",
+        "amount": "Сумма",
+        "note": "Примечание",
+        "skipNote": "Необязательно — пропустите, если оплаты нет.",
+        "methods": { "Cash": "Наличные", "Card": "Карта", "Transfer": "Перевод" }
+      },
+      "accessStep": {
+        "select": "Дать доступ на устройствах",
+        "noDevices": "Нет доступных устройств.",
+        "skipNote": "Необязательно — доступ можно выдать сейчас или позже."
+      },
+      "done": "Клиент создан"
+    },
+    "creds": {
+      "manage": "Биометрия",
+      "title": "Биометрия и карта — {{name}}",
+      "device": "Устройство (для синхр. / захвата)",
+      "noDevices": "Нет доступных устройств.",
+      "current": "Добавлено",
+      "none": "Учётных данных пока нет.",
+      "faces": "Лица",
+      "cards": "Карты",
+      "fingerprints": "Отпечатки",
+      "cardNo": "Номер карты",
+      "addCard": "Добавить карту",
+      "facePhoto": "Фото лица",
+      "uploadFace": "Загрузить лицо",
+      "capture": "Захват с устройства",
+      "captureFace": "Лицо",
+      "captureCard": "Карта",
+      "captureFingerprint": "Отпечаток",
+      "capturing": "Захват… следуйте подсказке на устройстве",
+      "captured": "Снято",
+      "failed": "Ошибка захвата",
+      "finger": "Палец №"
     },
     "access": {
       "manage": "Доступ",
@@ -172,6 +319,198 @@
       "transferSelf": "Текущий владелец",
       "noOtherCustomers": "Нет других клиентов для переноса.",
       "statuses": { "Active": "Активен", "Frozen": "Заморожен", "Expired": "Истёк", "Cancelled": "Отменён" }
+    },
+    "inventory": {
+      "title": "Склад",
+      "subtitle": "Остатки, приход, списание, инвентаризация, поставщики и закупки",
+      "tabs": {
+        "stock": "Остатки товаров",
+        "receipts": "Приход товара",
+        "writeoffs": "Списание",
+        "stocktakes": "Инвентаризация",
+        "lowStock": "Минимальные остатки",
+        "suppliers": "Поставщики",
+        "purchases": "Закупки"
+      },
+      "common": {
+        "product": "Товар",
+        "quantity": "Кол-во",
+        "unitCost": "Цена за ед.",
+        "supplier": "Поставщик",
+        "note": "Примечание",
+        "reason": "Причина",
+        "date": "Дата",
+        "total": "Итого",
+        "selectProduct": "Выберите товар…",
+        "none": "—",
+        "noResults": "Ничего не найдено."
+      },
+      "products": {
+        "new": "Новый товар",
+        "edit": "Редактировать товар",
+        "empty": "Товаров пока нет — добавьте первый.",
+        "search": "Поиск по названию, артикулу, штрихкоду или категории",
+        "count_one": "{{count}} товар",
+        "count_few": "{{count}} товара",
+        "count_many": "{{count}} товаров",
+        "deleteTitle": "Удалить товар",
+        "deletePrefix": "Удалить товар",
+        "lowBadge": "Мало",
+        "inactive": "Неактивен",
+        "movements": "История",
+        "receipt": "Приход",
+        "writeoff": "Списание",
+        "columns": { "name": "Название", "sku": "Артикул", "category": "Категория", "stock": "Остаток", "min": "Мин", "price": "Цена", "supplier": "Поставщик" },
+        "fields": {
+          "name": "Название", "sku": "Артикул", "barcode": "Штрихкод", "category": "Категория", "unit": "Ед. изм.",
+          "salePrice": "Цена продажи", "cost": "Себестоимость", "currency": "Валюта", "minStock": "Мин. остаток",
+          "openingStock": "Начальный остаток", "supplier": "Поставщик", "active": "Активен"
+        }
+      },
+      "receipts": {
+        "title": "Приход товара",
+        "subtitle": "Добавить товар на склад",
+        "new": "Новый приход",
+        "submit": "Оприходовать",
+        "empty": "Приходов пока нет."
+      },
+      "writeoffs": {
+        "title": "Списание",
+        "subtitle": "Списать товар (брак, срок, потеря)",
+        "new": "Новое списание",
+        "submit": "Списать",
+        "empty": "Списаний пока нет.",
+        "reasonPlaceholder": "Причина (брак, срок…)"
+      },
+      "movements": {
+        "for": "История склада — {{name}}",
+        "empty": "Движений пока нет.",
+        "balanceAfter": "Остаток",
+        "types": { "Receipt": "Приход", "WriteOff": "Списание", "Stocktake": "Инвентаризация", "Purchase": "Закупка", "Sale": "Продажа" }
+      },
+      "lowStock": {
+        "title": "Минимальные остатки",
+        "subtitle": "Товары на минимальном уровне или ниже",
+        "empty": "Все товары выше минимального уровня.",
+        "needed": "Дозаказ"
+      },
+      "suppliers": {
+        "new": "Новый поставщик",
+        "edit": "Редактировать поставщика",
+        "empty": "Поставщиков пока нет — добавьте первого.",
+        "deleteTitle": "Удалить поставщика",
+        "deletePrefix": "Удалить поставщика",
+        "inactive": "Неактивен",
+        "columns": { "name": "Название", "contact": "Контакт", "phone": "Телефон", "email": "Email" },
+        "fields": { "name": "Название", "contactName": "Контактное лицо", "phone": "Телефон", "email": "Email", "address": "Адрес", "notes": "Заметки", "active": "Активен" }
+      },
+      "purchases": {
+        "new": "Новая закупка",
+        "view": "Закупка {{number}}",
+        "empty": "Закупок пока нет.",
+        "supplier": "Поставщик",
+        "expectedDate": "Ожидаемая дата",
+        "addItem": "Добавить позицию",
+        "items": "Позиции",
+        "noItems": "Добавьте хотя бы одну позицию.",
+        "create": "Создать закупку",
+        "receive": "Оприходовать",
+        "receiveConfirm": "Оприходовать закупку и добавить позиции на склад?",
+        "cancel": "Отменить",
+        "cancelConfirm": "Отменить закупку?",
+        "deleteConfirm": "Удалить закупку?",
+        "columns": { "number": "Номер", "supplier": "Поставщик", "items": "Позиции", "total": "Итого", "status": "Статус", "date": "Дата" },
+        "statuses": { "Draft": "Черновик", "Ordered": "Заказан", "Received": "Оприходован", "Cancelled": "Отменён" }
+      },
+      "stocktakes": {
+        "new": "Новая инвентаризация",
+        "view": "Инвентаризация {{number}}",
+        "empty": "Инвентаризаций пока нет.",
+        "seedAll": "Добавить все активные товары",
+        "create": "Создать",
+        "expected": "Учётный",
+        "counted": "Факт",
+        "difference": "Разн.",
+        "saveCounts": "Сохранить",
+        "complete": "Завершить",
+        "completeConfirm": "Завершить инвентаризацию? Остатки будут скорректированы по факту.",
+        "cancel": "Отменить",
+        "cancelConfirm": "Отменить инвентаризацию?",
+        "deleteConfirm": "Удалить инвентаризацию?",
+        "columns": { "number": "Номер", "items": "Позиции", "status": "Статус", "date": "Дата" },
+        "statuses": { "Draft": "Черновик", "Completed": "Завершена", "Cancelled": "Отменена" }
+      }
+    },
+    "finance": {
+      "title": "Финансы",
+      "subtitle": "Доходы, расходы, прибыль, кассы, банковские счета и отчёты",
+      "tabs": {
+        "income": "Доходы",
+        "expense": "Расходы",
+        "profit": "Прибыль",
+        "cash": "Кассы",
+        "bank": "Банковские счета",
+        "reports": "Отчёты по периодам",
+        "analytics": "Аналитика"
+      },
+      "common": {
+        "date": "Дата", "category": "Категория", "account": "Счёт", "counterparty": "Контрагент",
+        "amount": "Сумма", "from": "С", "to": "По", "total": "Итого",
+        "uncategorized": "Без категории", "noData": "Нет данных за период."
+      },
+      "kpi": {
+        "income": "Доходы", "expense": "Расходы", "profit": "Прибыль", "balance": "Общий баланс",
+        "cashBalance": "Баланс касс", "bankBalance": "Баланс банков",
+        "incomeByCategory": "Доходы по категориям", "expenseByCategory": "Расходы по категориям"
+      },
+      "fields": {
+        "amount": "Сумма", "date": "Дата", "account": "Счёт", "selectAccount": "Выберите счёт…",
+        "category": "Категория", "counterparty": "Контрагент", "description": "Описание",
+        "name": "Название", "currency": "Валюта", "openingBalance": "Начальный баланс",
+        "bankName": "Банк", "accountNumber": "Номер счёта", "active": "Активен"
+      },
+      "inactive": "Неактивен",
+      "deletePrefix": "Удалить",
+      "deleteConfirm": "Удалить операцию?",
+      "income": { "title": "Доходы", "subtitle": "Поступления денег", "new": "Новый доход", "edit": "Редактировать доход", "empty": "Доходов пока нет." },
+      "expense": { "title": "Расходы", "subtitle": "Списания денег", "new": "Новый расход", "edit": "Редактировать расход", "empty": "Расходов пока нет." },
+      "cash": { "title": "Кассы", "subtitle": "Наличные в кассах", "new": "Новая касса", "edit": "Редактировать кассу", "deleteTitle": "Удалить кассу", "empty": "Касс пока нет — добавьте первую." },
+      "bank": { "title": "Банковские счета", "subtitle": "Средства в банке", "new": "Новый счёт", "edit": "Редактировать счёт", "deleteTitle": "Удалить счёт", "empty": "Счетов пока нет — добавьте первый." },
+      "transfer": { "action": "Перевод", "title": "Перевод между счетами", "from": "Со счёта", "to": "На счёт", "sameAccount": "Выберите два разных счёта." },
+      "categories": { "manage": "Категории", "title": "Категории доходов и расходов", "namePlaceholder": "Название категории", "empty": "Категорий пока нет." },
+      "reports": { "groupBy": "Группировка", "day": "День", "month": "Месяц", "year": "Год", "period": "Период" },
+      "analytics": { "income12m": "Доход (12 мес)", "expense12m": "Расход (12 мес)", "profit12m": "Прибыль (12 мес)", "trend": "Доходы и расходы" }
+    },
+    "pos": {
+      "title": "POS / Касса",
+      "subtitle": "Продажа товаров, приём оплаты и списание со склада",
+      "tabs": { "checkout": "Касса", "history": "История продаж" },
+      "searchProducts": "Поиск товаров по названию, артикулу или категории",
+      "noProducts": "На складе пока нет товаров.",
+      "notFound": "Ничего не найдено.",
+      "inStock": "В наличии",
+      "outOfStock": "Нет в наличии",
+      "cart": "Корзина",
+      "clear": "Очистить",
+      "cartEmpty": "Корзина пуста — нажмите на товар, чтобы добавить.",
+      "subtotal": "Подытог",
+      "discount": "Скидка",
+      "total": "Итого",
+      "paymentMethod": "Способ оплаты",
+      "methods": { "Cash": "Наличные", "Card": "Карта", "Transfer": "Перевод" },
+      "account": "Зачислить на счёт",
+      "noAccount": "Не учитывать доход",
+      "customer": "Клиент",
+      "walkIn": "Без клиента",
+      "note": "Примечание",
+      "charge": "Оплатить {{total}}",
+      "saleDone": "Продажа {{number}} проведена",
+      "noSales": "Продаж пока нет.",
+      "receipt": "Чек {{number}}",
+      "refund": "Возврат",
+      "refundConfirm": "Оформить возврат? Товар вернётся на склад, доход будет сторнирован.",
+      "columns": { "number": "Номер", "date": "Дата", "customer": "Клиент", "items": "Позиции", "method": "Оплата", "total": "Итого", "status": "Статус" },
+      "statuses": { "Completed": "Завершена", "Refunded": "Возврат" }
     },
     "tabs": { "tariffs": "Тарифы", "gifts": "Сертификаты" },
     "gifts": {

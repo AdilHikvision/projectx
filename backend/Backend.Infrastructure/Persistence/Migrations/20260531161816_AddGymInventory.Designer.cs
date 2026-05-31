@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260531161816_AddGymInventory")]
+    partial class AddGymInventory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -995,176 +998,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("gym_customers", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymFinanceAccount", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("AccountNumber")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<decimal>("Balance")
-                        .HasPrecision(16, 2)
-                        .HasColumnType("numeric(16,2)");
-
-                    b.Property<string>("BankName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasDefaultValue("AZN");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<decimal>("OpeningBalance")
-                        .HasPrecision(16, 2)
-                        .HasColumnType("numeric(16,2)");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsActive");
-
-                    b.HasIndex("Type");
-
-                    b.ToTable("gym_finance_accounts", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.GymFinanceCategory", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Color")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(7)
-                        .HasColumnType("character varying(7)")
-                        .HasDefaultValue("#6366f1");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Direction")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Direction");
-
-                    b.ToTable("gym_finance_categories", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.GymFinanceTransaction", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("AccountId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(16, 2)
-                        .HasColumnType("numeric(16,2)");
-
-                    b.Property<decimal>("BalanceAfter")
-                        .HasPrecision(16, 2)
-                        .HasColumnType("numeric(16,2)");
-
-                    b.Property<Guid?>("CategoryId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CounterpartyName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasDefaultValue("AZN");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int>("Direction")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsTransfer")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Method")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<DateOnly>("OccurredOn")
-                        .HasColumnType("date");
-
-                    b.Property<string>("Reference")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UserEmail")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AccountId");
-
-                    b.HasIndex("CategoryId");
-
-                    b.HasIndex("OccurredOn");
-
-                    b.HasIndex("Direction", "OccurredOn");
-
-                    b.ToTable("gym_finance_transactions", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymGiftCertificate", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1547,134 +1380,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("gym_purchase_order_items", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymSale", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)")
-                        .HasDefaultValue("AZN");
-
-                    b.Property<Guid?>("CustomerId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("CustomerName")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<decimal>("Discount")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<Guid?>("FinanceAccountId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("FinanceTransactionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Note")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Number")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<int>("PaymentMethod")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("RefundedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("SoldUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("Subtotal")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<decimal>("Total")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("UserEmail")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<Guid?>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CustomerId");
-
-                    b.HasIndex("Number")
-                        .IsUnique();
-
-                    b.HasIndex("SoldUtc");
-
-                    b.ToTable("gym_sales", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.GymSaleItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("LineTotal")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<Guid?>("ProductId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ProductName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<decimal>("Quantity")
-                        .HasPrecision(18, 3)
-                        .HasColumnType("numeric(18,3)");
-
-                    b.Property<Guid>("SaleId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("UnitPrice")
-                        .HasPrecision(14, 2)
-                        .HasColumnType("numeric(14,2)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProductId");
-
-                    b.HasIndex("SaleId");
-
-                    b.ToTable("gym_sale_items", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymStockMovement", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2031,152 +1736,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasKey("NotificationId", "UserId");
 
                     b.ToTable("notification_reads", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("Level")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("ZoneId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ZoneId");
-
-                    b.ToTable("parking_floors", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("FloorId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("FloorId");
-
-                    b.ToTable("parking_rows", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingSpace", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("RowId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RowId");
-
-                    b.HasIndex("Type");
-
-                    b.ToTable("parking_spaces", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsActive");
-
-                    b.ToTable("parking_zones", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>
@@ -3073,24 +2632,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Visitor");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymFinanceTransaction", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.GymFinanceAccount", "Account")
-                        .WithMany()
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Backend.Domain.Entities.GymFinanceCategory", "Category")
-                        .WithMany()
-                        .HasForeignKey("CategoryId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Account");
-
-                    b.Navigation("Category");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymGiftCertificate", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.GymTariff", "Tariff")
@@ -3176,34 +2717,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("PurchaseOrder");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymSale", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.GymCustomer", "Customer")
-                        .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Customer");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.GymSaleItem", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.GymProduct", "Product")
-                        .WithMany()
-                        .HasForeignKey("ProductId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Backend.Domain.Entities.GymSale", "Sale")
-                        .WithMany("Items")
-                        .HasForeignKey("SaleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Product");
-
-                    b.Navigation("Sale");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymStockMovement", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.GymProduct", "Product")
@@ -3258,39 +2771,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasForeignKey("NotificationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingZone", "Zone")
-                        .WithMany("Floors")
-                        .HasForeignKey("ZoneId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Zone");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingFloor", "Floor")
-                        .WithMany("Rows")
-                        .HasForeignKey("FloorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Floor");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingSpace", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingRow", "Row")
-                        .WithMany("Spaces")
-                        .HasForeignKey("RowId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Row");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>
@@ -3478,29 +2958,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Items");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.GymSale", b =>
-                {
-                    b.Navigation("Items");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.GymStocktake", b =>
                 {
                     b.Navigation("Items");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.Navigation("Rows");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.Navigation("Spaces");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>
-                {
-                    b.Navigation("Floors");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>

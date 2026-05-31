@@ -170,6 +170,7 @@ public sealed class DevicePersonSyncService(
         var card = await dbContext.Cards
             .Include(c => c.Employee)
             .Include(c => c.Visitor)
+            .Include(c => c.GymCustomer)
             .FirstOrDefaultAsync(c => c.Id == cardId, cancellationToken);
         if (card is null)
             return new DeviceSyncResult(false, "Карта не найдена.");
@@ -178,13 +179,17 @@ public sealed class DevicePersonSyncService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var employeeNo = card.Employee != null
-            ? TruncateEmployeeNo(GetEmployeeNo(card.Employee))
-            : GetEmployeeNo(card.Visitor!);
+        var employeeNo = card.GymCustomer != null
+            ? GymCustomerEmployeeNo(card.GymCustomer)
+            : card.Employee != null
+                ? TruncateEmployeeNo(GetEmployeeNo(card.Employee))
+                : GetEmployeeNo(card.Visitor!);
 
-        var syncPerson = card.Employee != null
-            ? await SyncEmployeeAsync(card.EmployeeId!.Value, deviceId, cancellationToken)
-            : await SyncVisitorAsync(card.VisitorId!.Value, deviceId, cancellationToken);
+        var syncPerson = card.GymCustomerId != null
+            ? await SyncGymCustomerAsync(card.GymCustomerId.Value, deviceId, cancellationToken)
+            : card.Employee != null
+                ? await SyncEmployeeAsync(card.EmployeeId!.Value, deviceId, cancellationToken)
+                : await SyncVisitorAsync(card.VisitorId!.Value, deviceId, cancellationToken);
         if (!syncPerson.Success)
             return syncPerson;
 
@@ -252,6 +257,7 @@ public sealed class DevicePersonSyncService(
         var face = await dbContext.Faces
             .Include(f => f.Employee)
             .Include(f => f.Visitor)
+            .Include(f => f.GymCustomer)
             .FirstOrDefaultAsync(f => f.Id == faceId, cancellationToken);
         if (face is null)
             return new DeviceSyncResult(false, "Лицо не найдено.");
@@ -266,13 +272,17 @@ public sealed class DevicePersonSyncService(
             return new DeviceSyncResult(true, null);
         }
 
-        var employeeNo = face.Employee != null
-            ? TruncateEmployeeNo(GetEmployeeNo(face.Employee))
-            : GetEmployeeNo(face.Visitor!);
+        var employeeNo = face.GymCustomer != null
+            ? GymCustomerEmployeeNo(face.GymCustomer)
+            : face.Employee != null
+                ? TruncateEmployeeNo(GetEmployeeNo(face.Employee))
+                : GetEmployeeNo(face.Visitor!);
 
-        var syncPerson = face.Employee != null
-            ? await SyncEmployeeAsync(face.EmployeeId!.Value, deviceId, cancellationToken)
-            : await SyncVisitorAsync(face.VisitorId!.Value, deviceId, cancellationToken);
+        var syncPerson = face.GymCustomerId != null
+            ? await SyncGymCustomerAsync(face.GymCustomerId.Value, deviceId, cancellationToken)
+            : face.Employee != null
+                ? await SyncEmployeeAsync(face.EmployeeId!.Value, deviceId, cancellationToken)
+                : await SyncVisitorAsync(face.VisitorId!.Value, deviceId, cancellationToken);
         if (!syncPerson.Success)
             return syncPerson;
 
@@ -299,7 +309,9 @@ public sealed class DevicePersonSyncService(
         // Ensure FDLib exists on the device (required before adding faces)
         await EnsureFDLibExistsAsync(client, cancellationToken);
 
-        var personName = face.Employee != null ? $"{face.Employee.FirstName} {face.Employee.LastName}".Trim() : employeeNo;
+        var personName = face.GymCustomer != null
+            ? string.Join(" ", new[] { face.GymCustomer.FirstName, face.GymCustomer.LastName }.Where(s => !string.IsNullOrWhiteSpace(s)))
+            : face.Employee != null ? $"{face.Employee.FirstName} {face.Employee.LastName}".Trim() : employeeNo;
 
         // Strategy 1 (Primary): PUT FDLib/FDSetUp — apply face (add or update)
         {
@@ -369,6 +381,7 @@ public sealed class DevicePersonSyncService(
         var fp = await dbContext.Fingerprints
             .Include(f => f.Employee)
             .Include(f => f.Visitor)
+            .Include(f => f.GymCustomer)
             .FirstOrDefaultAsync(f => f.Id == fingerprintId, cancellationToken);
         if (fp is null)
             return new DeviceSyncResult(false, "Отпечаток не найден.");
@@ -383,13 +396,17 @@ public sealed class DevicePersonSyncService(
             return new DeviceSyncResult(true, null);
         }
 
-        var employeeNo = fp.Employee != null
-            ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
-            : GetEmployeeNo(fp.Visitor!);
+        var employeeNo = fp.GymCustomer != null
+            ? GymCustomerEmployeeNo(fp.GymCustomer)
+            : fp.Employee != null
+                ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
+                : GetEmployeeNo(fp.Visitor!);
 
-        var syncPerson = fp.Employee != null
-            ? await SyncEmployeeAsync(fp.EmployeeId!.Value, deviceId, cancellationToken)
-            : await SyncVisitorAsync(fp.VisitorId!.Value, deviceId, cancellationToken);
+        var syncPerson = fp.GymCustomerId != null
+            ? await SyncGymCustomerAsync(fp.GymCustomerId.Value, deviceId, cancellationToken)
+            : fp.Employee != null
+                ? await SyncEmployeeAsync(fp.EmployeeId!.Value, deviceId, cancellationToken)
+                : await SyncVisitorAsync(fp.VisitorId!.Value, deviceId, cancellationToken);
         if (!syncPerson.Success)
             return syncPerson;
 
@@ -448,6 +465,7 @@ public sealed class DevicePersonSyncService(
         var face = await dbContext.Faces
             .Include(f => f.Employee)
             .Include(f => f.Visitor)
+            .Include(f => f.GymCustomer)
             .FirstOrDefaultAsync(f => f.Id == faceId, cancellationToken);
         if (face is null)
             return new DeviceSyncResult(false, "Лицо не найдено.");

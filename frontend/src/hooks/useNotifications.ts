@@ -45,35 +45,36 @@ export function useNotifications() {
     if (!token || !isAuthenticated) return
     let cancelled = false
 
-    void (async () => {
-      const hub = new HubConnectionBuilder()
-        .withUrl(`${getHubUrl()}/hubs/devices`, {
-          accessTokenFactory: () => token,
-          skipNegotiation: true,
-          transport: HttpTransportType.WebSockets,
-        })
-        .withAutomaticReconnect({ nextRetryDelayInMilliseconds: ctx => Math.min(1000 * 2 ** ctx.previousRetryCount, 30000) })
-        .configureLogging(LogLevel.Error)
-        .build()
-
-      hubRef.current = hub
-
-      hub.on('ReceiveNotification', (notif: AppNotification) => {
-        if (cancelled) return
-        setNotifications(prev => {
-          const next = [notif, ...prev.filter(n => n.id !== notif.id)]
-          recalcUnread(next)
-          return next
-        })
+    const hub = new HubConnectionBuilder()
+      .withUrl(`${getHubUrl()}/hubs/devices`, {
+        accessTokenFactory: () => token,
+        skipNegotiation: true,
+        transport: HttpTransportType.WebSockets,
       })
+      .withAutomaticReconnect({ nextRetryDelayInMilliseconds: ctx => Math.min(1000 * 2 ** ctx.previousRetryCount, 30000) })
+      .configureLogging(LogLevel.Error)
+      .build()
 
-      try { await hub.start() } catch { /* ignore */ }
-    })()
+    hubRef.current = hub
+
+    hub.on('ReceiveNotification', (notif: AppNotification) => {
+      if (cancelled) return
+      setNotifications(prev => {
+        const next = [notif, ...prev.filter(n => n.id !== notif.id)]
+        recalcUnread(next)
+        return next
+      })
+    })
+
+    // Keep the start promise so cleanup can stop ONLY after start settles —
+    // calling stop() mid-start throws "Failed to start the HttpConnection before stop() was called"
+    // (common under React StrictMode's mount→unmount→remount in dev).
+    const startPromise = hub.start().catch(() => { /* start aborted/failed — ignore */ })
 
     return () => {
       cancelled = true
-      hubRef.current?.stop().catch(() => {})
       hubRef.current = null
+      void startPromise.finally(() => { hub.stop().catch(() => {}) })
     }
   }, [token, isAuthenticated, recalcUnread])
 

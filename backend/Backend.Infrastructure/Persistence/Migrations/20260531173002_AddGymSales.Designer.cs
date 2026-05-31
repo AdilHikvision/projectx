@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260531173002_AddGymSales")]
+    partial class AddGymSales
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2033,152 +2036,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("notification_reads", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("Level")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("ZoneId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ZoneId");
-
-                    b.ToTable("parking_floors", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("FloorId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("FloorId");
-
-                    b.ToTable("parking_rows", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingSpace", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("RowId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RowId");
-
-                    b.HasIndex("Type");
-
-                    b.ToTable("parking_spaces", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Code")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsActive");
-
-                    b.ToTable("parking_zones", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3260,39 +3117,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingZone", "Zone")
-                        .WithMany("Floors")
-                        .HasForeignKey("ZoneId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Zone");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingFloor", "Floor")
-                        .WithMany("Rows")
-                        .HasForeignKey("FloorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Floor");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingSpace", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingRow", "Row")
-                        .WithMany("Spaces")
-                        .HasForeignKey("RowId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Row");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.Employee", "Employee")
@@ -3486,21 +3310,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Backend.Domain.Entities.GymStocktake", b =>
                 {
                     b.Navigation("Items");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
-                {
-                    b.Navigation("Rows");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
-                {
-                    b.Navigation("Spaces");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>
-                {
-                    b.Navigation("Floors");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollComponent", b =>

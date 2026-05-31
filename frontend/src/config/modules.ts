@@ -42,7 +42,7 @@ export const MODULE_LIST: ModuleDef[] = [
         image: '/modules/parking.svg',
         icon: 'local_parking',
         gradient: 'from-amber-500 to-orange-600',
-        available: false,
+        available: true,
     },
     {
         key: 'housing',

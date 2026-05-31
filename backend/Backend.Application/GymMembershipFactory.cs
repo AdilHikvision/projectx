@@ -39,6 +39,22 @@ public static class GymMembershipFactory
         Status = GymMembershipStatus.Active,
     };
 
+    /// <summary>
+    /// Лимит визитов исчерпан: абонемент закрывается (дата окончания — «вчера», статус Cancelled),
+    /// клиент помечается неактивным. Вызывающий после этого снимает клиента с устройства.
+    /// </summary>
+    public static void ApplyVisitLimitReached(GymMembership m, GymCustomer? customer, DateOnly today)
+    {
+        m.EndDate = today.AddDays(-1);
+        m.Status = GymMembershipStatus.Cancelled;
+        m.UpdatedUtc = DateTime.UtcNow;
+        if (customer != null)
+        {
+            customer.IsActive = false;
+            customer.UpdatedUtc = DateTime.UtcNow;
+        }
+    }
+
     public static string EffectiveStatus(GymMembership m, DateOnly today) =>
         m.Status == GymMembershipStatus.Cancelled ? "Cancelled"
         : (m.FrozenUntil != null && m.FrozenUntil > today) ? "Frozen"

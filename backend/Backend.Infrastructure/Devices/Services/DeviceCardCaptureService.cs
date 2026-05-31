@@ -52,6 +52,17 @@ public sealed class DeviceCardCaptureService(
                 if (!syncRes.Success) return syncRes;
             }
         }
+        else if (personType == "gymcustomer")
+        {
+            var c = await dbContext.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == personId, cancellationToken);
+            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.");
+            employeeNo = c.Id.ToString("N")[..32];
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncGymCustomerAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
+        }
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
@@ -202,6 +213,7 @@ public sealed class DeviceCardCaptureService(
                     Id = Guid.NewGuid(),
                     EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
                     VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
+                    GymCustomerId = session.PersonType == "gymcustomer" ? session.PersonId : null,
                     CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
                 };
                 dbContext.Cards.Add(card);
@@ -270,6 +282,7 @@ public sealed class DeviceCardCaptureService(
             Id = Guid.NewGuid(),
             EmployeeId = personType == "employee" ? personId : null,
             VisitorId = personType == "visitor" ? personId : null,
+            GymCustomerId = personType == "gymcustomer" ? personId : null,
             CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
         };
         dbContext.Cards.Add(card);

@@ -29,6 +29,7 @@ import {
   GymAnalyticsPage,
   GymPosPage,
 } from './pages/gym'
+import { ParkingManagementPage } from './pages/parking'
 import './App.css'
 
 import { useAuth } from './auth/AuthContext'
@@ -75,6 +76,9 @@ function App() {
           <Route path="/gym/finance" element={<GymFinancePage />} />
           <Route path="/gym/analytics" element={<GymAnalyticsPage />} />
           <Route path="/gym/pos" element={<GymPosPage />} />
+
+          {/* ─── Parking Management module ─── */}
+          <Route path="/parking/management" element={<ParkingManagementPage />} />
 
           <Route path="/settings" element={<SystemSettingsPage />} />
           <Route path="/status" element={<SystemStatusPage />} />

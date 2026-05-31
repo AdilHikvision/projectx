@@ -36,6 +36,9 @@ const ROUTE_META: Record<string, RouteMeta> = {
     '/gym/finance': { titleKey: 'gym.nav.finance', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/gym/analytics': { titleKey: 'gym.nav.analytics', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/gym/pos': { titleKey: 'gym.nav.pos', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+
+    // ─── Parking Management module ───
+    '/parking/management': { titleKey: 'parking.nav.management', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
 };
 
 export function AppLayout({ children, onAction }: AppLayoutProps) {

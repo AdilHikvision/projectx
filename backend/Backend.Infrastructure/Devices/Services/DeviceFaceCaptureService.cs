@@ -50,6 +50,17 @@ public sealed class DeviceFaceCaptureService(
                 if (!syncRes.Success) return syncRes;
             }
         }
+        else if (personType == "gymcustomer")
+        {
+            var c = await dbContext.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == personId, cancellationToken);
+            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.");
+            employeeNo = c.Id.ToString("N")[..32];
+            if (!isEnroller)
+            {
+                var syncRes = await syncService.SyncGymCustomerAsync(personId, deviceId, cancellationToken);
+                if (!syncRes.Success) return syncRes;
+            }
+        }
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
@@ -249,7 +260,9 @@ public sealed class DeviceFaceCaptureService(
                     // Remove old faces for this person (keep only one)
                     var oldFaces = session.PersonType == "employee"
                         ? await dbContext.Faces.Where(f => f.EmployeeId == session.PersonId).ToListAsync(cancellationToken)
-                        : await dbContext.Faces.Where(f => f.VisitorId == session.PersonId).ToListAsync(cancellationToken);
+                        : session.PersonType == "gymcustomer"
+                            ? await dbContext.Faces.Where(f => f.GymCustomerId == session.PersonId).ToListAsync(cancellationToken)
+                            : await dbContext.Faces.Where(f => f.VisitorId == session.PersonId).ToListAsync(cancellationToken);
                     if (oldFaces.Count > 0)
                     {
                         dbContext.Faces.RemoveRange(oldFaces);
@@ -270,6 +283,7 @@ public sealed class DeviceFaceCaptureService(
                         Id = Guid.NewGuid(),
                         EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
                         VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
+                        GymCustomerId = session.PersonType == "gymcustomer" ? session.PersonId : null,
                         FilePath = fileName, FDID = 1, CreatedUtc = DateTime.UtcNow
                     };
                     dbContext.Faces.Add(face);
@@ -536,6 +550,14 @@ public sealed class DeviceFaceCaptureService(
                 d["dataType"] = dataTypeValue;
             return d;
         }
+
+        // Exact format per device /CaptureFaceData/capabilities: the CaptureFaceDataCond accepts
+        // ONLY captureInfrared + dataType (no employeeNo / FDID / readerID). Extra nodes → badXmlFormat.
+        await TryXml("XML exact Cond url",
+            """<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><captureInfrared>false</captureInfrared><dataType>url</dataType></CaptureFaceDataCond>""");
+        await TryXml("XML exact Cond binary",
+            """<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><captureInfrared>false</captureInfrared><dataType>binary</dataType></CaptureFaceDataCond>""");
+        await TryJson("JSON exact Cond url", new Dictionary<string, object> { ["CaptureFaceDataCond"] = new Dictionary<string, object> { ["captureInfrared"] = false, ["dataType"] = "url" } });
 
         await TryJson("JSON CaptureFaceData+person url", new Dictionary<string, object> { ["CaptureFaceData"] = PersonFields("url") });
         await TryJson("JSON CaptureFaceDataCond+person url", new Dictionary<string, object> { ["CaptureFaceDataCond"] = PersonFields("url") });

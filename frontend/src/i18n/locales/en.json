@@ -92,8 +92,88 @@
     "parking": "Parking Management",
     "housing": "Housing & Utility Management"
   },
+  "parking": {
+    "subtitle": "Zones, floors, rows and parking spaces",
+    "sortOrder": "Sort order",
+    "legend": "Space types",
+    "deleteTitle": "Delete",
+    "deletePrefix": "Delete",
+    "deleteCascade": "All nested items will be removed.",
+    "nav": { "management": "Parking management" },
+    "tabs": { "manage": "Management", "scheme": "Parking scheme" },
+    "zones": {
+      "title": "Zones",
+      "new": "New zone",
+      "edit": "Edit zone",
+      "empty": "No parking zones yet",
+      "spaceCount_one": "{{count}} space",
+      "spaceCount_other": "{{count}} spaces",
+      "fields": { "name": "Name", "code": "Code", "description": "Description", "active": "Active" }
+    },
+    "floors": {
+      "title": "Floors",
+      "new": "New floor",
+      "edit": "Edit floor",
+      "empty": "No floors in this zone",
+      "selectZone": "Select a zone to see its floors",
+      "level": "Level",
+      "fields": { "name": "Name", "level": "Level", "active": "Active" }
+    },
+    "rows": {
+      "title": "Rows & spaces",
+      "new": "New row",
+      "edit": "Edit row",
+      "empty": "No rows on this floor",
+      "selectFloor": "Select a floor to see its rows",
+      "fields": { "name": "Name" }
+    },
+    "spaces": {
+      "new": "Add space",
+      "edit": "Edit space",
+      "empty": "No spaces",
+      "bulk": "Bulk add",
+      "bulkTitle": "Bulk add spaces",
+      "bulkCreate": "Create spaces",
+      "bulkPreview": "Preview",
+      "fields": { "code": "Space number", "type": "Type", "notes": "Notes", "active": "Active" },
+      "bulkFields": { "prefix": "Prefix", "count": "Count", "startNumber": "Start number", "pad": "Number padding" }
+    },
+    "types": {
+      "Regular": "Regular",
+      "Vip": "VIP",
+      "Disabled": "Accessible",
+      "Electric": "Electric vehicle",
+      "Motorcycle": "Motorcycle"
+    },
+    "scheme": { "empty": "Nothing to display yet" }
+  },
   "gym": {
     "underDevelopment": "This section is under development and will be available soon.",
+    "analytics": {
+      "title": "Analytics & Reports",
+      "subtitle": "Gym business overview — members, subscriptions, revenue and visits",
+      "from": "From",
+      "to": "To",
+      "groupBy": { "day": "Day", "month": "Month", "year": "Year" },
+      "kpi": {
+        "revenue": "Revenue",
+        "payments": "{{count}} payments",
+        "newCustomers": "New customers",
+        "activeMemberships": "Active memberships",
+        "expiringSoon": "Expiring ≤ 7 days",
+        "totalCustomers": "Total customers",
+        "activeCustomers": "{{count}} active",
+        "giftRedeemed": "Gift certs redeemed",
+        "giftIssued": "{{count}} issued",
+        "lifetimeVisits": "Total visits",
+        "frozen": "Frozen"
+      },
+      "revenueTrend": "Revenue trend",
+      "byTariff": "Active memberships by tariff",
+      "byMethod": "Revenue by payment method",
+      "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" },
+      "noData": "No data for the selected period."
+    },
     "nav": {
       "customers": "Customers",
       "subscriptions": "Subscriptions",
@@ -127,7 +207,72 @@
         "active": "Active"
       },
       "genders": { "Male": "Male", "Female": "Female", "unset": "Not set" },
-      "columns": { "name": "Name", "contact": "Contact", "gender": "Gender", "status": "Status", "memberships": "Memberships" }
+      "columns": { "name": "Name", "contact": "Contact", "gender": "Gender", "status": "Status", "memberships": "Memberships", "visits": "Visits" }
+    },
+    "wizard": {
+      "title": "New customer",
+      "next": "Next",
+      "back": "Back",
+      "finish": "Finish",
+      "skip": "Skip",
+      "creating": "Creating…",
+      "steps": { "info": "Details", "subscription": "Subscription", "credentials": "Biometrics & card", "payment": "Payment", "access": "Access" },
+      "subscription": {
+        "select": "Choose a tariff",
+        "none": "No active tariffs. You can skip and add a subscription later.",
+        "skipNote": "Optional — skip to add later."
+      },
+      "credentials": {
+        "device": "Capture device",
+        "noDevices": "No devices available.",
+        "face": "Capture face",
+        "card": "Capture card",
+        "fingerprint": "Capture fingerprint",
+        "capturing": "Capturing… follow the device prompt",
+        "captured": "Captured",
+        "failed": "Capture failed",
+        "current": "Captured credentials",
+        "faces": "Faces",
+        "cards": "Cards",
+        "fingerprints": "Fingerprints",
+        "skipNote": "Optional — you can add biometrics later."
+      },
+      "payment": {
+        "method": "Payment method",
+        "amount": "Amount",
+        "note": "Note",
+        "skipNote": "Optional — skip if not paying now.",
+        "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" }
+      },
+      "accessStep": {
+        "select": "Grant access on devices",
+        "noDevices": "No devices available.",
+        "skipNote": "Optional — grant device access now or later."
+      },
+      "done": "Customer created"
+    },
+    "creds": {
+      "manage": "Biometrics",
+      "title": "Biometrics & card — {{name}}",
+      "device": "Device (for sync / capture)",
+      "noDevices": "No devices available.",
+      "current": "Added",
+      "none": "No credentials yet.",
+      "faces": "Faces",
+      "cards": "Cards",
+      "fingerprints": "Fingerprints",
+      "cardNo": "Card number",
+      "addCard": "Add card",
+      "facePhoto": "Face photo",
+      "uploadFace": "Upload face",
+      "capture": "Capture from device",
+      "captureFace": "Face",
+      "captureCard": "Card",
+      "captureFingerprint": "Fingerprint",
+      "capturing": "Capturing… follow the device prompt",
+      "captured": "Captured",
+      "failed": "Capture failed",
+      "finger": "Finger #"
     },
     "access": {
       "manage": "Access",
@@ -171,6 +316,197 @@
       "transferSelf": "Current owner",
       "noOtherCustomers": "No other customers to transfer to.",
       "statuses": { "Active": "Active", "Frozen": "Frozen", "Expired": "Expired", "Cancelled": "Cancelled" }
+    },
+    "inventory": {
+      "title": "Warehouse",
+      "subtitle": "Stock, receipts, write-offs, stocktakes, suppliers and purchases",
+      "tabs": {
+        "stock": "Stock",
+        "receipts": "Goods receipt",
+        "writeoffs": "Write-offs",
+        "stocktakes": "Stocktake",
+        "lowStock": "Low stock",
+        "suppliers": "Suppliers",
+        "purchases": "Purchases"
+      },
+      "common": {
+        "product": "Product",
+        "quantity": "Qty",
+        "unitCost": "Unit cost",
+        "supplier": "Supplier",
+        "note": "Note",
+        "reason": "Reason",
+        "date": "Date",
+        "total": "Total",
+        "selectProduct": "Select product…",
+        "none": "—",
+        "noResults": "Nothing found."
+      },
+      "products": {
+        "new": "New product",
+        "edit": "Edit product",
+        "empty": "No products yet — add your first one.",
+        "search": "Search by name, SKU, barcode or category",
+        "count_one": "{{count}} product",
+        "count_other": "{{count}} products",
+        "deleteTitle": "Delete product",
+        "deletePrefix": "Delete product",
+        "lowBadge": "Low",
+        "inactive": "Inactive",
+        "movements": "History",
+        "receipt": "Receipt",
+        "writeoff": "Write-off",
+        "columns": { "name": "Name", "sku": "SKU", "category": "Category", "stock": "Stock", "min": "Min", "price": "Price", "supplier": "Supplier" },
+        "fields": {
+          "name": "Name", "sku": "SKU", "barcode": "Barcode", "category": "Category", "unit": "Unit",
+          "salePrice": "Sale price", "cost": "Cost", "currency": "Currency", "minStock": "Min stock",
+          "openingStock": "Opening stock", "supplier": "Supplier", "active": "Active"
+        }
+      },
+      "receipts": {
+        "title": "Goods receipt",
+        "subtitle": "Add stock for a product",
+        "new": "New receipt",
+        "submit": "Receive",
+        "empty": "No receipts yet."
+      },
+      "writeoffs": {
+        "title": "Write-offs",
+        "subtitle": "Remove stock (damage, expiry, loss)",
+        "new": "New write-off",
+        "submit": "Write off",
+        "empty": "No write-offs yet.",
+        "reasonPlaceholder": "Reason (damage, expiry…)"
+      },
+      "movements": {
+        "for": "Stock history — {{name}}",
+        "empty": "No movements yet.",
+        "balanceAfter": "Balance",
+        "types": { "Receipt": "Receipt", "WriteOff": "Write-off", "Stocktake": "Stocktake", "Purchase": "Purchase", "Sale": "Sale" }
+      },
+      "lowStock": {
+        "title": "Low stock",
+        "subtitle": "Products at or below their minimum level",
+        "empty": "All products are above their minimum levels.",
+        "needed": "Reorder"
+      },
+      "suppliers": {
+        "new": "New supplier",
+        "edit": "Edit supplier",
+        "empty": "No suppliers yet — add your first one.",
+        "deleteTitle": "Delete supplier",
+        "deletePrefix": "Delete supplier",
+        "inactive": "Inactive",
+        "columns": { "name": "Name", "contact": "Contact", "phone": "Phone", "email": "Email" },
+        "fields": { "name": "Name", "contactName": "Contact person", "phone": "Phone", "email": "Email", "address": "Address", "notes": "Notes", "active": "Active" }
+      },
+      "purchases": {
+        "new": "New purchase",
+        "view": "Purchase {{number}}",
+        "empty": "No purchases yet.",
+        "supplier": "Supplier",
+        "expectedDate": "Expected date",
+        "addItem": "Add item",
+        "items": "Items",
+        "noItems": "Add at least one item.",
+        "create": "Create purchase",
+        "receive": "Receive",
+        "receiveConfirm": "Receive this purchase and add the items to stock?",
+        "cancel": "Cancel",
+        "cancelConfirm": "Cancel this purchase?",
+        "deleteConfirm": "Delete this purchase?",
+        "columns": { "number": "Number", "supplier": "Supplier", "items": "Items", "total": "Total", "status": "Status", "date": "Date" },
+        "statuses": { "Draft": "Draft", "Ordered": "Ordered", "Received": "Received", "Cancelled": "Cancelled" }
+      },
+      "stocktakes": {
+        "new": "New stocktake",
+        "view": "Stocktake {{number}}",
+        "empty": "No stocktakes yet.",
+        "seedAll": "Add all active products",
+        "create": "Create",
+        "expected": "Expected",
+        "counted": "Counted",
+        "difference": "Diff",
+        "saveCounts": "Save counts",
+        "complete": "Complete",
+        "completeConfirm": "Complete this stocktake? Stock will be adjusted to the counted values.",
+        "cancel": "Cancel",
+        "cancelConfirm": "Cancel this stocktake?",
+        "deleteConfirm": "Delete this stocktake?",
+        "columns": { "number": "Number", "items": "Items", "status": "Status", "date": "Date" },
+        "statuses": { "Draft": "Draft", "Completed": "Completed", "Cancelled": "Cancelled" }
+      }
+    },
+    "finance": {
+      "title": "Finance",
+      "subtitle": "Income, expenses, profit, cash registers, bank accounts and reports",
+      "tabs": {
+        "income": "Income",
+        "expense": "Expenses",
+        "profit": "Profit",
+        "cash": "Cash registers",
+        "bank": "Bank accounts",
+        "reports": "Period reports",
+        "analytics": "Analytics"
+      },
+      "common": {
+        "date": "Date", "category": "Category", "account": "Account", "counterparty": "Counterparty",
+        "amount": "Amount", "from": "From", "to": "To", "total": "Total",
+        "uncategorized": "Uncategorized", "noData": "No data for this period."
+      },
+      "kpi": {
+        "income": "Income", "expense": "Expenses", "profit": "Profit", "balance": "Total balance",
+        "cashBalance": "Cash balance", "bankBalance": "Bank balance",
+        "incomeByCategory": "Income by category", "expenseByCategory": "Expenses by category"
+      },
+      "fields": {
+        "amount": "Amount", "date": "Date", "account": "Account", "selectAccount": "Select account…",
+        "category": "Category", "counterparty": "Counterparty", "description": "Description",
+        "name": "Name", "currency": "Currency", "openingBalance": "Opening balance",
+        "bankName": "Bank", "accountNumber": "Account number", "active": "Active"
+      },
+      "inactive": "Inactive",
+      "deletePrefix": "Delete",
+      "deleteConfirm": "Delete this transaction?",
+      "income": { "title": "Income", "subtitle": "Money coming in", "new": "New income", "edit": "Edit income", "empty": "No income recorded yet." },
+      "expense": { "title": "Expenses", "subtitle": "Money going out", "new": "New expense", "edit": "Edit expense", "empty": "No expenses recorded yet." },
+      "cash": { "title": "Cash registers", "subtitle": "Cash on hand", "new": "New cash register", "edit": "Edit cash register", "deleteTitle": "Delete cash register", "empty": "No cash registers yet — add your first one." },
+      "bank": { "title": "Bank accounts", "subtitle": "Money in the bank", "new": "New bank account", "edit": "Edit bank account", "deleteTitle": "Delete bank account", "empty": "No bank accounts yet — add your first one." },
+      "transfer": { "action": "Transfer", "title": "Transfer between accounts", "from": "From account", "to": "To account", "sameAccount": "Choose two different accounts." },
+      "categories": { "manage": "Categories", "title": "Income & expense categories", "namePlaceholder": "Category name", "empty": "No categories yet." },
+      "reports": { "groupBy": "Group by", "day": "Day", "month": "Month", "year": "Year", "period": "Period" },
+      "analytics": { "income12m": "Income (12m)", "expense12m": "Expenses (12m)", "profit12m": "Profit (12m)", "trend": "Income vs expenses" }
+    },
+    "pos": {
+      "title": "POS / Checkout",
+      "subtitle": "Sell products, take payment and update stock",
+      "tabs": { "checkout": "Checkout", "history": "Sales history" },
+      "searchProducts": "Search products by name, SKU or category",
+      "noProducts": "No products in the warehouse yet.",
+      "notFound": "Nothing found.",
+      "inStock": "In stock",
+      "outOfStock": "Out of stock",
+      "cart": "Cart",
+      "clear": "Clear",
+      "cartEmpty": "Cart is empty — tap a product to add it.",
+      "subtotal": "Subtotal",
+      "discount": "Discount",
+      "total": "Total",
+      "paymentMethod": "Payment method",
+      "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" },
+      "account": "Deposit to account",
+      "noAccount": "Don't record income",
+      "customer": "Customer",
+      "walkIn": "Walk-in",
+      "note": "Note",
+      "charge": "Charge {{total}}",
+      "saleDone": "Sale {{number}} completed",
+      "noSales": "No sales yet.",
+      "receipt": "Receipt {{number}}",
+      "refund": "Refund",
+      "refundConfirm": "Refund this sale? Stock and income will be reversed.",
+      "columns": { "number": "Number", "date": "Date", "customer": "Customer", "items": "Items", "method": "Method", "total": "Total", "status": "Status" },
+      "statuses": { "Completed": "Completed", "Refunded": "Refunded" }
     },
     "tabs": { "tariffs": "Tariffs", "gifts": "Gift certificates" },
     "gifts": {

@@ -177,6 +177,9 @@ public sealed class Card : BaseEntity
     public Guid? VisitorId { get; set; }
     public Visitor? Visitor { get; set; }
 
+    public Guid? GymCustomerId { get; set; }
+    public GymCustomer? GymCustomer { get; set; }
+
     /// <summary>Номер карты (уникальный в системе).</summary>
     public string CardNo { get; set; } = string.Empty;
     /// <summary>Сырой номер карты (Wiegand и т.п.), опционально.</summary>
@@ -194,6 +197,9 @@ public sealed class Face : BaseEntity
     public Guid? VisitorId { get; set; }
     public Visitor? Visitor { get; set; }
 
+    public Guid? GymCustomerId { get; set; }
+    public GymCustomer? GymCustomer { get; set; }
+
     /// <summary>Относительный путь к файлу изображения.</summary>
     public string FilePath { get; set; } = string.Empty;
     /// <summary>FDID: 1 — видимый свет, 2 — инфракрасный.</summary>
@@ -208,6 +214,9 @@ public sealed class Fingerprint : BaseEntity
 
     public Guid? VisitorId { get; set; }
     public Visitor? Visitor { get; set; }
+
+    public Guid? GymCustomerId { get; set; }
+    public GymCustomer? GymCustomer { get; set; }
 
     /// <summary>Шаблон отпечатка (бинарные данные).</summary>
     public byte[] TemplateData { get; set; } = Array.Empty<byte>();
@@ -648,6 +657,8 @@ public sealed class GymCustomer : BaseEntity
     public DateOnly? BirthDate { get; set; }
     public string? Notes { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Счётчик посещений: +1 на каждый проход; сравнивается с лимитом активного абонемента. Сбрасывается при выдаче нового абонемента.</summary>
+    public int VisitCount { get; set; }
 }
 
 public enum GymMembershipStatus
@@ -730,6 +741,343 @@ public sealed class GymGiftCertificate : BaseEntity
     public Guid? RedeemedByCustomerId { get; set; }
     public Guid? RedeemedMembershipId { get; set; }
     public DateTime? RedeemedUtc { get; set; }
+}
+
+public enum GymPaymentMethod
+{
+    Cash = 1,
+    Card = 2,
+    Transfer = 3
+}
+
+/// <summary>Платёж клиента зала (за абонемент и т.п.).</summary>
+public sealed class GymPayment : BaseEntity
+{
+    public Guid CustomerId { get; set; }
+    public GymCustomer? Customer { get; set; }
+
+    /// <summary>Абонемент, за который платёж (опционально).</summary>
+    public Guid? MembershipId { get; set; }
+    public GymMembership? Membership { get; set; }
+
+    public decimal Amount { get; set; }
+    public string Currency { get; set; } = "AZN";
+    public GymPaymentMethod Method { get; set; } = GymPaymentMethod.Cash;
+    public string? Note { get; set; }
+    public DateTime PaidUtc { get; set; } = DateTime.UtcNow;
+}
+
+// ─── Gym Inventory / Warehouse module ─────────────────────────────────────────
+
+/// <summary>Поставщик товаров для склада зала.</summary>
+public sealed class GymSupplier : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? ContactName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Address { get; set; }
+    public string? Notes { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// Товар (номенклатура) склада. Текущий остаток <see cref="StockQuantity"/> денормализован
+/// для быстрого отображения и пересчитывается из движений (<see cref="GymStockMovement"/>).
+/// </summary>
+public sealed class GymProduct : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Артикул.</summary>
+    public string? Sku { get; set; }
+    public string? Barcode { get; set; }
+    public string? Category { get; set; }
+    /// <summary>Единица измерения (шт, кг, л …).</summary>
+    public string Unit { get; set; } = "pcs";
+    /// <summary>Цена продажи.</summary>
+    public decimal SalePrice { get; set; }
+    /// <summary>Последняя себестоимость (закупочная цена).</summary>
+    public decimal Cost { get; set; }
+    public string Currency { get; set; } = "AZN";
+    /// <summary>Текущий остаток на складе (денормализованный).</summary>
+    public decimal StockQuantity { get; set; }
+    /// <summary>Минимальный остаток — порог для предупреждения о низком остатке.</summary>
+    public decimal MinStock { get; set; }
+    public Guid? SupplierId { get; set; }
+    public GymSupplier? Supplier { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public enum GymStockMovementType
+{
+    /// <summary>Приход товара (ручной).</summary>
+    Receipt = 1,
+    /// <summary>Списание.</summary>
+    WriteOff = 2,
+    /// <summary>Корректировка по инвентаризации.</summary>
+    Stocktake = 3,
+    /// <summary>Оприходование по закупке.</summary>
+    Purchase = 4,
+    /// <summary>Продажа (расход через кассу).</summary>
+    Sale = 5
+}
+
+/// <summary>Движение склада (журнал). Quantity со знаком: +приход / −расход.</summary>
+public sealed class GymStockMovement : BaseEntity
+{
+    public Guid ProductId { get; set; }
+    public GymProduct? Product { get; set; }
+    public GymStockMovementType Type { get; set; }
+    /// <summary>Изменение остатка со знаком (+/−).</summary>
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+    /// <summary>Остаток товара после применения движения (снимок).</summary>
+    public decimal BalanceAfter { get; set; }
+    /// <summary>Причина / комментарий (для списания и т.п.).</summary>
+    public string? Reason { get; set; }
+    /// <summary>Ссылка на источник: номер закупки, id инвентаризации и т.п.</summary>
+    public string? Reference { get; set; }
+    public Guid? SupplierId { get; set; }
+    public Guid? UserId { get; set; }
+    public string? UserEmail { get; set; }
+}
+
+public enum GymPurchaseOrderStatus
+{
+    Draft = 1,
+    Ordered = 2,
+    Received = 3,
+    Cancelled = 4
+}
+
+/// <summary>Закупка (заказ поставщику).</summary>
+public sealed class GymPurchaseOrder : BaseEntity
+{
+    public string Number { get; set; } = string.Empty;
+    public Guid? SupplierId { get; set; }
+    public GymSupplier? Supplier { get; set; }
+    /// <summary>Снимок имени поставщика на момент создания.</summary>
+    public string SupplierName { get; set; } = string.Empty;
+    public GymPurchaseOrderStatus Status { get; set; } = GymPurchaseOrderStatus.Draft;
+    public DateOnly? ExpectedDate { get; set; }
+    public DateTime? ReceivedUtc { get; set; }
+    public string Currency { get; set; } = "AZN";
+    public decimal Total { get; set; }
+    public string? Notes { get; set; }
+    public ICollection<GymPurchaseOrderItem> Items { get; set; } = new List<GymPurchaseOrderItem>();
+}
+
+public sealed class GymPurchaseOrderItem : BaseEntity
+{
+    public Guid PurchaseOrderId { get; set; }
+    public GymPurchaseOrder? PurchaseOrder { get; set; }
+    public Guid ProductId { get; set; }
+    public GymProduct? Product { get; set; }
+    /// <summary>Снимок имени товара на момент создания закупки.</summary>
+    public string ProductName { get; set; } = string.Empty;
+    public decimal Quantity { get; set; }
+    public decimal UnitCost { get; set; }
+}
+
+public enum GymStocktakeStatus
+{
+    Draft = 1,
+    Completed = 2,
+    Cancelled = 3
+}
+
+/// <summary>Инвентаризация (сверка фактических остатков с системными).</summary>
+public sealed class GymStocktake : BaseEntity
+{
+    public string Number { get; set; } = string.Empty;
+    public GymStocktakeStatus Status { get; set; } = GymStocktakeStatus.Draft;
+    public DateTime? CompletedUtc { get; set; }
+    public string? Notes { get; set; }
+    public ICollection<GymStocktakeItem> Items { get; set; } = new List<GymStocktakeItem>();
+}
+
+public sealed class GymStocktakeItem : BaseEntity
+{
+    public Guid StocktakeId { get; set; }
+    public GymStocktake? Stocktake { get; set; }
+    public Guid ProductId { get; set; }
+    public GymProduct? Product { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    /// <summary>Системный остаток на момент добавления в инвентаризацию.</summary>
+    public decimal ExpectedQuantity { get; set; }
+    /// <summary>Фактически подсчитанный остаток.</summary>
+    public decimal CountedQuantity { get; set; }
+}
+
+// ─── Gym Finance module ────────────────────────────────────────────────────────
+
+public enum GymFinanceAccountType { Cash = 1, Bank = 2 }
+public enum GymFinanceDirection { Income = 1, Expense = 2 }
+
+/// <summary>Финансовый счёт: касса (Cash) или банковский счёт (Bank).</summary>
+public sealed class GymFinanceAccount : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public GymFinanceAccountType Type { get; set; } = GymFinanceAccountType.Cash;
+    public string Currency { get; set; } = "AZN";
+    public decimal OpeningBalance { get; set; }
+    /// <summary>Текущий баланс (денормализован): OpeningBalance + сумма движений со знаком.</summary>
+    public decimal Balance { get; set; }
+    public string? BankName { get; set; }
+    public string? AccountNumber { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>Категория доходов/расходов.</summary>
+public sealed class GymFinanceCategory : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public GymFinanceDirection Direction { get; set; }
+    public string Color { get; set; } = "#6366f1";
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>Финансовая операция (доход или расход) по счёту.</summary>
+public sealed class GymFinanceTransaction : BaseEntity
+{
+    public Guid AccountId { get; set; }
+    public GymFinanceAccount? Account { get; set; }
+    public GymFinanceDirection Direction { get; set; }
+    public decimal Amount { get; set; }
+    public string Currency { get; set; } = "AZN";
+    public Guid? CategoryId { get; set; }
+    public GymFinanceCategory? Category { get; set; }
+    /// <summary>Дата операции (для группировки по периодам).</summary>
+    public DateOnly OccurredOn { get; set; }
+    public string? Description { get; set; }
+    /// <summary>Ссылка на источник (id перевода, абонемент, закупка …).</summary>
+    public string? Reference { get; set; }
+    public string? CounterpartyName { get; set; }
+    /// <summary>Способ: Cash / Card / Transfer (опционально).</summary>
+    public string? Method { get; set; }
+    /// <summary>Нога перевода между счетами — исключается из P&amp;L (доход/расход/прибыль).</summary>
+    public bool IsTransfer { get; set; }
+    /// <summary>Баланс счёта после операции (снимок).</summary>
+    public decimal BalanceAfter { get; set; }
+    public Guid? UserId { get; set; }
+    public string? UserEmail { get; set; }
+}
+
+// ─── Gym POS / Checkout module ─────────────────────────────────────────────────
+
+public enum GymSaleStatus { Completed = 1, Refunded = 2 }
+
+/// <summary>Продажа на кассе (чек). Списывает товары со склада и заводит доход в кассу/на счёт.</summary>
+public sealed class GymSale : BaseEntity
+{
+    public string Number { get; set; } = string.Empty;
+    public Guid? CustomerId { get; set; }
+    public GymCustomer? Customer { get; set; }
+    /// <summary>Снимок имени клиента на момент продажи.</summary>
+    public string? CustomerName { get; set; }
+    public decimal Subtotal { get; set; }
+    public decimal Discount { get; set; }
+    public decimal Total { get; set; }
+    public string Currency { get; set; } = "AZN";
+    public GymPaymentMethod PaymentMethod { get; set; } = GymPaymentMethod.Cash;
+    /// <summary>Финансовый счёт, на который зачислен доход (касса/банк).</summary>
+    public Guid? FinanceAccountId { get; set; }
+    /// <summary>Связанная финансовая операция-доход.</summary>
+    public Guid? FinanceTransactionId { get; set; }
+    public GymSaleStatus Status { get; set; } = GymSaleStatus.Completed;
+    public DateTime SoldUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? RefundedUtc { get; set; }
+    public string? Note { get; set; }
+    public Guid? UserId { get; set; }
+    public string? UserEmail { get; set; }
+    public ICollection<GymSaleItem> Items { get; set; } = new List<GymSaleItem>();
+}
+
+public sealed class GymSaleItem : BaseEntity
+{
+    public Guid SaleId { get; set; }
+    public GymSale? Sale { get; set; }
+    public Guid? ProductId { get; set; }
+    public GymProduct? Product { get; set; }
+    /// <summary>Снимок имени товара на момент продажи.</summary>
+    public string ProductName { get; set; } = string.Empty;
+    public decimal Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal LineTotal { get; set; }
+}
+
+// ─── Parking Management module ───────────────────────────────────────────────
+
+/// <summary>Тип парковочного места.</summary>
+public enum ParkingSpaceType
+{
+    /// <summary>Обычное место.</summary>
+    Regular = 1,
+    /// <summary>VIP-место.</summary>
+    Vip = 2,
+    /// <summary>Место для людей с инвалидностью.</summary>
+    Disabled = 3,
+    /// <summary>Место для электромобилей (с зарядкой).</summary>
+    Electric = 4,
+    /// <summary>Место для мотоциклов.</summary>
+    Motorcycle = 5
+}
+
+/// <summary>
+/// Парковочная зона — верхний уровень иерархии модуля парковки
+/// (Зона → Этаж → Ряд → Место).
+/// </summary>
+public sealed class ParkingZone : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Короткий код зоны (например "A", "P1").</summary>
+    public string? Code { get; set; }
+    public string? Description { get; set; }
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+
+    public ICollection<ParkingFloor> Floors { get; set; } = new List<ParkingFloor>();
+}
+
+/// <summary>Этаж парковочной зоны.</summary>
+public sealed class ParkingFloor : BaseEntity
+{
+    public Guid ZoneId { get; set; }
+    public ParkingZone? Zone { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+    /// <summary>Номер уровня; может быть отрицательным для подземных этажей (-1, -2 …).</summary>
+    public int Level { get; set; }
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+
+    public ICollection<ParkingRow> Rows { get; set; } = new List<ParkingRow>();
+}
+
+/// <summary>Ряд на этаже парковки.</summary>
+public sealed class ParkingRow : BaseEntity
+{
+    public Guid FloorId { get; set; }
+    public ParkingFloor? Floor { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+    public int SortOrder { get; set; }
+
+    public ICollection<ParkingSpace> Spaces { get; set; } = new List<ParkingSpace>();
+}
+
+/// <summary>Парковочное место — нижний уровень иерархии.</summary>
+public sealed class ParkingSpace : BaseEntity
+{
+    public Guid RowId { get; set; }
+    public ParkingRow? Row { get; set; }
+
+    /// <summary>Номер/код места (например "A-01").</summary>
+    public string Code { get; set; } = string.Empty;
+    public ParkingSpaceType Type { get; set; } = ParkingSpaceType.Regular;
+    public bool IsActive { get; set; } = true;
+    public int SortOrder { get; set; }
+    public string? Notes { get; set; }
 }
 
 /// <summary>Системный аудит-лог. Кто, что, когда сделал. Пишется middleware-ом + точечными вызовами.</summary>

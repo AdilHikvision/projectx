@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.AddSingleton<IHikvisionSdkClient>(provider => provider.GetRequiredService<HikvisionSdkClient>());
         services.AddSingleton<IDeviceConnectionManager, DeviceConnectionManager>();
         services.AddSingleton<IDeviceDiscoveryService, DeviceDiscoveryService>();
+        services.AddSingleton<Gym.GymVisitService>();
         services.AddSingleton<EventListenerService>();
         services.AddSingleton<IEventListenerService>(provider => provider.GetRequiredService<EventListenerService>());
         services.AddHostedService(provider => provider.GetRequiredService<EventListenerService>());
@@ -99,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<IDeviceLocalizationService, DeviceLocalizationService>();
         services.AddHostedService<TimeSyncSchedulerService>();
         services.AddHostedService<Gym.GymAutoRenewService>();
+        services.AddHostedService<Gym.GymVisitReconcileService>();
         services.AddSingleton<IServiceControlManager>(provider =>
         {
             var monitorOptions = provider.GetRequiredService<IOptions<SystemMonitorOptions>>();

@@ -34,6 +34,9 @@ const PRIMARY_NAV: NavConfig[] = [
     { to: '/gym/finance', icon: 'account_balance_wallet', labelKey: 'gym.nav.finance', modules: ['gym'] },
     { to: '/gym/analytics', icon: 'analytics', labelKey: 'gym.nav.analytics', modules: ['gym'] },
     { to: '/gym/pos', icon: 'point_of_sale', labelKey: 'gym.nav.pos', modules: ['gym'] },
+
+    // ─── Parking Management ───
+    { to: '/parking/management', icon: 'local_parking', labelKey: 'parking.nav.management', modules: ['parking'] },
 ];
 
 // System section — admin / settings pages.

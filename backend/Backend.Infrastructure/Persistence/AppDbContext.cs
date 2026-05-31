@@ -53,6 +53,25 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<GymCustomer> GymCustomers => Set<GymCustomer>();
     public DbSet<GymMembership> GymMemberships => Set<GymMembership>();
     public DbSet<GymGiftCertificate> GymGiftCertificates => Set<GymGiftCertificate>();
+    public DbSet<GymPayment> GymPayments => Set<GymPayment>();
+    public DbSet<GymSupplier> GymSuppliers => Set<GymSupplier>();
+    public DbSet<GymProduct> GymProducts => Set<GymProduct>();
+    public DbSet<GymStockMovement> GymStockMovements => Set<GymStockMovement>();
+    public DbSet<GymPurchaseOrder> GymPurchaseOrders => Set<GymPurchaseOrder>();
+    public DbSet<GymPurchaseOrderItem> GymPurchaseOrderItems => Set<GymPurchaseOrderItem>();
+    public DbSet<GymStocktake> GymStocktakes => Set<GymStocktake>();
+    public DbSet<GymStocktakeItem> GymStocktakeItems => Set<GymStocktakeItem>();
+    public DbSet<GymFinanceAccount> GymFinanceAccounts => Set<GymFinanceAccount>();
+    public DbSet<GymFinanceCategory> GymFinanceCategories => Set<GymFinanceCategory>();
+    public DbSet<GymFinanceTransaction> GymFinanceTransactions => Set<GymFinanceTransaction>();
+    public DbSet<GymSale> GymSales => Set<GymSale>();
+    public DbSet<GymSaleItem> GymSaleItems => Set<GymSaleItem>();
+
+    // ─── Parking Management ───
+    public DbSet<ParkingZone> ParkingZones => Set<ParkingZone>();
+    public DbSet<ParkingFloor> ParkingFloors => Set<ParkingFloor>();
+    public DbSet<ParkingRow> ParkingRows => Set<ParkingRow>();
+    public DbSet<ParkingSpace> ParkingSpaces => Set<ParkingSpace>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -185,8 +204,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.CardType).HasMaxLength(32);
             entity.HasOne(x => x.Employee).WithMany(x => x.Cards).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Cards).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.GymCustomer).WithMany().HasForeignKey(x => x.GymCustomerId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => x.CardNo).IsUnique();
-            entity.HasCheckConstraint("CK_Cards_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+            entity.HasCheckConstraint("CK_Cards_Owner", "(\"EmployeeId\" IS NOT NULL)::int + (\"VisitorId\" IS NOT NULL)::int + (\"GymCustomerId\" IS NOT NULL)::int = 1");
         });
 
         builder.Entity<Face>(entity =>
@@ -196,7 +216,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.FilePath).HasMaxLength(500).IsRequired();
             entity.HasOne(x => x.Employee).WithMany(x => x.Faces).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Faces).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasCheckConstraint("CK_Faces_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+            entity.HasOne(x => x.GymCustomer).WithMany().HasForeignKey(x => x.GymCustomerId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasCheckConstraint("CK_Faces_Owner", "(\"EmployeeId\" IS NOT NULL)::int + (\"VisitorId\" IS NOT NULL)::int + (\"GymCustomerId\" IS NOT NULL)::int = 1");
         });
 
         builder.Entity<Fingerprint>(entity =>
@@ -206,7 +227,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.TemplateData).IsRequired();
             entity.HasOne(x => x.Employee).WithMany(x => x.Fingerprints).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Visitor).WithMany(x => x.Fingerprints).HasForeignKey(x => x.VisitorId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasCheckConstraint("CK_Fingerprints_Owner", "(EmployeeId IS NOT NULL AND VisitorId IS NULL) OR (EmployeeId IS NULL AND VisitorId IS NOT NULL)");
+            entity.HasOne(x => x.GymCustomer).WithMany().HasForeignKey(x => x.GymCustomerId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasCheckConstraint("CK_Fingerprints_Owner", "(\"EmployeeId\" IS NOT NULL)::int + (\"VisitorId\" IS NOT NULL)::int + (\"GymCustomerId\" IS NOT NULL)::int = 1");
         });
 
         builder.Entity<Iris>(entity =>
@@ -450,6 +472,236 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Status).HasConversion<int>().IsRequired();
             entity.HasOne(x => x.Tariff).WithMany().HasForeignKey(x => x.TariffId).OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => x.Code).IsUnique();
+        });
+
+        builder.Entity<GymPayment>(entity =>
+        {
+            entity.ToTable("gym_payments");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Amount).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.Method).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Note).HasMaxLength(500);
+            entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Membership).WithMany().HasForeignKey(x => x.MembershipId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.CustomerId);
+        });
+
+        builder.Entity<GymSupplier>(entity =>
+        {
+            entity.ToTable("gym_suppliers");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.ContactName).HasMaxLength(200);
+            entity.Property(x => x.Phone).HasMaxLength(40);
+            entity.Property(x => x.Email).HasMaxLength(256);
+            entity.Property(x => x.Address).HasMaxLength(500);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.IsActive);
+        });
+
+        builder.Entity<GymProduct>(entity =>
+        {
+            entity.ToTable("gym_products");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Sku).HasMaxLength(64);
+            entity.Property(x => x.Barcode).HasMaxLength(64);
+            entity.Property(x => x.Category).HasMaxLength(120);
+            entity.Property(x => x.Unit).HasMaxLength(16).HasDefaultValue("pcs");
+            entity.Property(x => x.SalePrice).HasPrecision(14, 2);
+            entity.Property(x => x.Cost).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.StockQuantity).HasPrecision(18, 3);
+            entity.Property(x => x.MinStock).HasPrecision(18, 3);
+            entity.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.IsActive);
+            entity.HasIndex(x => x.Sku);
+        });
+
+        builder.Entity<GymStockMovement>(entity =>
+        {
+            entity.ToTable("gym_stock_movements");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Quantity).HasPrecision(18, 3);
+            entity.Property(x => x.UnitCost).HasPrecision(14, 2);
+            entity.Property(x => x.BalanceAfter).HasPrecision(18, 3);
+            entity.Property(x => x.Reason).HasMaxLength(500);
+            entity.Property(x => x.Reference).HasMaxLength(120);
+            entity.Property(x => x.UserEmail).HasMaxLength(256);
+            entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.ProductId, x.CreatedUtc });
+            entity.HasIndex(x => x.Type);
+        });
+
+        builder.Entity<GymPurchaseOrder>(entity =>
+        {
+            entity.ToTable("gym_purchase_orders");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.SupplierName).HasMaxLength(200);
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.Total).HasPrecision(14, 2);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.Number).IsUnique();
+            entity.HasIndex(x => x.Status);
+        });
+
+        builder.Entity<GymPurchaseOrderItem>(entity =>
+        {
+            entity.ToTable("gym_purchase_order_items");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProductName).HasMaxLength(200);
+            entity.Property(x => x.Quantity).HasPrecision(18, 3);
+            entity.Property(x => x.UnitCost).HasPrecision(14, 2);
+            entity.HasOne(x => x.PurchaseOrder).WithMany(x => x.Items).HasForeignKey(x => x.PurchaseOrderId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => x.PurchaseOrderId);
+        });
+
+        builder.Entity<GymStocktake>(entity =>
+        {
+            entity.ToTable("gym_stocktakes");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.Number).IsUnique();
+            entity.HasIndex(x => x.Status);
+        });
+
+        builder.Entity<GymStocktakeItem>(entity =>
+        {
+            entity.ToTable("gym_stocktake_items");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProductName).HasMaxLength(200);
+            entity.Property(x => x.ExpectedQuantity).HasPrecision(18, 3);
+            entity.Property(x => x.CountedQuantity).HasPrecision(18, 3);
+            entity.HasOne(x => x.Stocktake).WithMany(x => x.Items).HasForeignKey(x => x.StocktakeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => x.StocktakeId);
+        });
+
+        builder.Entity<GymFinanceAccount>(entity =>
+        {
+            entity.ToTable("gym_finance_accounts");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Type).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.OpeningBalance).HasPrecision(16, 2);
+            entity.Property(x => x.Balance).HasPrecision(16, 2);
+            entity.Property(x => x.BankName).HasMaxLength(200);
+            entity.Property(x => x.AccountNumber).HasMaxLength(64);
+            entity.HasIndex(x => x.Type);
+            entity.HasIndex(x => x.IsActive);
+        });
+
+        builder.Entity<GymFinanceCategory>(entity =>
+        {
+            entity.ToTable("gym_finance_categories");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Direction).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Color).HasMaxLength(7).HasDefaultValue("#6366f1");
+            entity.HasIndex(x => x.Direction);
+        });
+
+        builder.Entity<GymFinanceTransaction>(entity =>
+        {
+            entity.ToTable("gym_finance_transactions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Direction).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Amount).HasPrecision(16, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.Description).HasMaxLength(500);
+            entity.Property(x => x.Reference).HasMaxLength(120);
+            entity.Property(x => x.CounterpartyName).HasMaxLength(200);
+            entity.Property(x => x.Method).HasMaxLength(32);
+            entity.Property(x => x.BalanceAfter).HasPrecision(16, 2);
+            entity.Property(x => x.UserEmail).HasMaxLength(256);
+            entity.HasOne(x => x.Account).WithMany().HasForeignKey(x => x.AccountId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Category).WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.Direction, x.OccurredOn });
+            entity.HasIndex(x => x.AccountId);
+            entity.HasIndex(x => x.OccurredOn);
+        });
+
+        builder.Entity<GymSale>(entity =>
+        {
+            entity.ToTable("gym_sales");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Number).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.CustomerName).HasMaxLength(255);
+            entity.Property(x => x.Subtotal).HasPrecision(14, 2);
+            entity.Property(x => x.Discount).HasPrecision(14, 2);
+            entity.Property(x => x.Total).HasPrecision(14, 2);
+            entity.Property(x => x.Currency).HasMaxLength(8).HasDefaultValue("AZN");
+            entity.Property(x => x.PaymentMethod).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Note).HasMaxLength(500);
+            entity.Property(x => x.UserEmail).HasMaxLength(256);
+            entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.Number).IsUnique();
+            entity.HasIndex(x => x.SoldUtc);
+            entity.HasIndex(x => x.CustomerId);
+        });
+
+        builder.Entity<GymSaleItem>(entity =>
+        {
+            entity.ToTable("gym_sale_items");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.ProductName).HasMaxLength(200);
+            entity.Property(x => x.Quantity).HasPrecision(18, 3);
+            entity.Property(x => x.UnitPrice).HasPrecision(14, 2);
+            entity.Property(x => x.LineTotal).HasPrecision(14, 2);
+            entity.HasOne(x => x.Sale).WithMany(x => x.Items).HasForeignKey(x => x.SaleId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.SaleId);
+        });
+
+        // ─── Parking Management ───────────────────────────────────────────────
+        builder.Entity<ParkingZone>(entity =>
+        {
+            entity.ToTable("parking_zones");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Code).HasMaxLength(32);
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.HasIndex(x => x.IsActive);
+        });
+
+        builder.Entity<ParkingFloor>(entity =>
+        {
+            entity.ToTable("parking_floors");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            entity.HasOne(x => x.Zone).WithMany(x => x.Floors).HasForeignKey(x => x.ZoneId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.ZoneId);
+        });
+
+        builder.Entity<ParkingRow>(entity =>
+        {
+            entity.ToTable("parking_rows");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            entity.HasOne(x => x.Floor).WithMany(x => x.Rows).HasForeignKey(x => x.FloorId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.FloorId);
+        });
+
+        builder.Entity<ParkingSpace>(entity =>
+        {
+            entity.ToTable("parking_spaces");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Code).HasMaxLength(60).IsRequired();
+            entity.Property(x => x.Type).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasOne(x => x.Row).WithMany(x => x.Spaces).HasForeignKey(x => x.RowId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => x.RowId);
+            entity.HasIndex(x => x.Type);
         });
 
         builder.Entity<AuditLogEntry>(entity =>
