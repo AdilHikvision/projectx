@@ -138,6 +138,8 @@ interface WorkScheduleRow {
   shifts?: WorkScheduleShiftRow[]
   countEarlyArrival?: boolean
   overtimeDailyThresholdMinutes?: number
+  lunchBreakDeductionEnabled?: boolean
+  lunchBreakMinutes?: number
 }
 
 
@@ -257,6 +259,8 @@ export function WorkHoursTrackingPage() {
     color: '#6366f1',
     countEarlyArrival: true,
     overtimeDailyThresholdMinutes: '0',
+    lunchBreakDeductionEnabled: false,
+    lunchBreakMinutes: '30',
   })
   const [scheduleShifts, setScheduleShifts] = useState<WorkScheduleShiftRow[]>([])
   const [scheduleSaving, setScheduleSaving] = useState(false)
@@ -490,6 +494,8 @@ useEffect(() => {
       color: s.color || '#6366f1',
       countEarlyArrival: s.countEarlyArrival ?? true,
       overtimeDailyThresholdMinutes: String(s.overtimeDailyThresholdMinutes ?? 0),
+      lunchBreakDeductionEnabled: s.lunchBreakDeductionEnabled ?? false,
+      lunchBreakMinutes: String(s.lunchBreakMinutes ?? 30),
     })
     // Load sub-shifts for Multi schedules
     setScheduleShifts(s.shifts?.map(sh => ({
@@ -529,6 +535,8 @@ useEffect(() => {
         color: scheduleForm.color,
         countEarlyArrival: scheduleForm.countEarlyArrival,
         overtimeDailyThresholdMinutes: Math.max(0, parseInt(scheduleForm.overtimeDailyThresholdMinutes, 10) || 0),
+        lunchBreakDeductionEnabled: scheduleForm.lunchBreakDeductionEnabled,
+        lunchBreakMinutes: Math.max(0, parseInt(scheduleForm.lunchBreakMinutes, 10) || 30),
       }
       if (isMulti) {
         body.shifts = scheduleShifts.map((sh, idx) => ({
@@ -1487,6 +1495,31 @@ useEffect(() => {
                 step={1}
               />
               <p className="text-[10px] text-text-muted">{t('workHours.overtimeDailyThresholdDesc')}</p>
+            </div>
+          )}
+          <label className="flex items-start gap-2.5 rounded-xl bg-background-light px-4 py-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 rounded accent-primary"
+              checked={scheduleForm.lunchBreakDeductionEnabled}
+              onChange={(e) => setScheduleForm((p) => ({ ...p, lunchBreakDeductionEnabled: e.target.checked }))}
+            />
+            <div className="text-xs leading-relaxed">
+              <div className="font-black text-text-dark">{t('workHours.lunchBreakDeduction')}</div>
+              <div className="text-text-muted">{t('workHours.lunchBreakDeductionDesc')}</div>
+            </div>
+          </label>
+          {scheduleForm.lunchBreakDeductionEnabled && (
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.lunchBreakMinutes')}</label>
+              <Input
+                type="number"
+                value={scheduleForm.lunchBreakMinutes}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, lunchBreakMinutes: e.target.value }))}
+                min={0}
+                step={5}
+              />
+              <p className="text-[10px] text-text-muted">{t('workHours.lunchBreakMinutesDesc')}</p>
             </div>
           )}
           {scheduleForm.type === 'Flexible' && (

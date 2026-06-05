@@ -1,7 +1,7 @@
 {
   "common": {
-    "appName": "UniFi Access",
-    "appSubtitle": "HQ CONSOLE",
+    "appName": "ProjectX",
+    "appSubtitle": "",
     "save": "Save",
     "saveChanges": "Save Changes",
     "cancel": "Cancel",
@@ -1754,6 +1754,10 @@
     "countEarlyArrivalDesc": "If off — when a person checks in before the shift start, total hours are counted from the shift start (early time is ignored for overtime).",
     "overtimeDailyThreshold": "Overtime daily threshold (minutes)",
     "overtimeDailyThresholdDesc": "If overtime for the day is less than this threshold — it will not be counted in Time Attendance or payroll. 0 = no threshold.",
+    "lunchBreakDeduction": "Deduct lunch break",
+    "lunchBreakDeductionDesc": "If enabled — the lunch break duration is subtracted from actual worked time.",
+    "lunchBreakMinutes": "Lunch break duration (minutes)",
+    "lunchBreakMinutesDesc": "Number of lunch break minutes deducted from actual time each working day.",
     "flexibleScheduleTitle": "Flexible schedule",
     "flexibleScheduleDesc": "late arrival, early departure and overtime will not be calculated — only total worked hours per day are tracked.",
     "offScheduleTitle": "Off schedule",

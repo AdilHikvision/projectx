@@ -69,7 +69,6 @@ export function Sidebar() {
                 </div>
                 <div>
                     <h1 className="text-sm font-bold leading-tight text-text-dark">{t('common.appName')}</h1>
-                    <p className="text-xs text-text-muted font-bold tracking-widest uppercase">{t('common.appSubtitle')}</p>
                 </div>
             </div>
 

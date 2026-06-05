@@ -3226,7 +3226,7 @@ app.MapGet("/api/work-schedules", async (AppDbContext dbContext, CancellationTok
     var result = schedules.Select(s => new WorkScheduleResponse(
         s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc,
         s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null,
-        s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes
+        s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes
     )).ToList();
     return Results.Ok(result);
 }).RequireAuthorization("Schedules.View");
@@ -3238,7 +3238,7 @@ app.MapGet("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbConte
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (s is null) return Results.NotFound();
     var shiftsDto = s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null;
-    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc, shiftsDto, s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes));
+    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc, shiftsDto, s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes));
 }).RequireAuthorization("Schedules.View");
 
 app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -3255,6 +3255,8 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
         Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : "#6366f1",
         CountEarlyArrival = request.CountEarlyArrival ?? true,
         OvertimeDailyThresholdMinutes = Math.Max(0, request.OvertimeDailyThresholdMinutes ?? 0),
+        LunchBreakDeductionEnabled = request.LunchBreakDeductionEnabled ?? false,
+        LunchBreakMinutes = Math.Max(0, request.LunchBreakMinutes ?? 30),
     };
     dbContext.WorkSchedules.Add(entity);
     if (scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 })
@@ -3278,7 +3280,7 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
     var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
         ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
         : null;
-    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes));
+    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes));
 }).RequireAuthorization("Schedules.Manage");
 
 app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -3297,6 +3299,8 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     entity.Color = !string.IsNullOrWhiteSpace(request.Color) ? request.Color.Trim() : entity.Color;
     if (request.CountEarlyArrival.HasValue) entity.CountEarlyArrival = request.CountEarlyArrival.Value;
     if (request.OvertimeDailyThresholdMinutes.HasValue) entity.OvertimeDailyThresholdMinutes = Math.Max(0, request.OvertimeDailyThresholdMinutes.Value);
+    if (request.LunchBreakDeductionEnabled.HasValue) entity.LunchBreakDeductionEnabled = request.LunchBreakDeductionEnabled.Value;
+    if (request.LunchBreakMinutes.HasValue) entity.LunchBreakMinutes = Math.Max(0, request.LunchBreakMinutes.Value);
     entity.UpdatedUtc = DateTime.UtcNow;
     // Replace shifts for Multi schedules
     dbContext.WorkScheduleShifts.RemoveRange(entity.Shifts);
@@ -3321,7 +3325,7 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
         ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
         : null;
-    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes));
+    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes));
 }).RequireAuthorization("Schedules.Manage");
 
 // Returns the current assignment state for a schedule: which employees are assigned,
@@ -3683,7 +3687,7 @@ app.MapDelete("/api/leaves/{id:guid}", async (Guid id, AppDbContext db, Cancella
     return Results.NoContent();
 }).RequireAuthorization("Leaves.Manage");
 
-app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, ClaimsPrincipal user, CancellationToken ct) =>
+app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken ct) =>
 {
     var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
     if (leave is null) return Results.NotFound();
@@ -3692,10 +3696,15 @@ app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, Cl
     if (Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var uid)) leave.ApprovedByUserId = uid;
     leave.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
+    var empUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == leave.EmployeeId, ct);
+    if (empUser is not null)
+        _ = notifService.CreateAsync(NotificationTypes.ApprovalApproved, "Отпуск одобрен",
+            $"Ваш запрос на отпуск ({leave.LeaveType}, {leave.StartDate:dd.MM} – {leave.EndDate:dd.MM}) одобрен.",
+            userId: empUser.Id, referenceId: leave.Id.ToString(), ct: CancellationToken.None);
     return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization("Leaves.Manage");
 
-app.MapPost("/api/leaves/{id:guid}/reject", async (Guid id, NoteRequest? req, AppDbContext db, CancellationToken ct) =>
+app.MapPost("/api/leaves/{id:guid}/reject", async (Guid id, NoteRequest? req, AppDbContext db, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken ct) =>
 {
     var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
     if (leave is null) return Results.NotFound();
@@ -3703,6 +3712,11 @@ app.MapPost("/api/leaves/{id:guid}/reject", async (Guid id, NoteRequest? req, Ap
     if (req?.Note is not null) leave.Notes = req.Note;
     leave.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
+    var empUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == leave.EmployeeId, ct);
+    if (empUser is not null)
+        _ = notifService.CreateAsync(NotificationTypes.ApprovalRejected, "Отпуск отклонён",
+            $"Ваш запрос на отпуск ({leave.LeaveType}, {leave.StartDate:dd.MM} – {leave.EndDate:dd.MM}) отклонён.{(string.IsNullOrWhiteSpace(req?.Note) ? "" : " Причина: " + req.Note)}",
+            userId: empUser.Id, referenceId: leave.Id.ToString(), ct: CancellationToken.None);
     return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization("Leaves.Manage");
 
@@ -3825,6 +3839,8 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
             }
         }
         var totalHoursVal = (effectiveFirst.HasValue && last.HasValue) ? Math.Round((last!.Value - effectiveFirst.Value).TotalHours, 2) : 0d;
+        if (totalHoursVal > 0 && effectiveSchedule is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
+            totalHoursVal = Math.Max(0, Math.Round(totalHoursVal - effectiveSchedule.LunchBreakMinutes / 60.0, 2));
         var normHours = (!isDayOff && effectiveSchedule is not null) ? normHoursForCalc : 0d;
         var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
         if (overtimeHours > 0 && effectiveSchedule is { OvertimeDailyThresholdMinutes: > 0 } && overtimeHours * 60.0 < effectiveSchedule.OvertimeDailyThresholdMinutes) overtimeHours = 0;
@@ -3971,6 +3987,8 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 }
             }
             var totalHoursVal = (effectiveFirstP.HasValue && last.HasValue) ? Math.Round((last!.Value - effectiveFirstP.Value).TotalHours, 2) : 0d;
+            if (totalHoursVal > 0 && effectiveSched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
+                totalHoursVal = Math.Max(0, Math.Round(totalHoursVal - effectiveSched.LunchBreakMinutes / 60.0, 2));
             var normHours = (!isDayOff && effectiveSched is not null) ? normHoursForCalcP : 0d;
             var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
             // Daily-порог: дневной OT ниже schedule.OvertimeDailyThresholdMinutes не считается.
@@ -4269,7 +4287,7 @@ app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody reque
         "Новая заявка на утверждение",
         $"{employeeName} подал(а) заявку: {reqType}.",
         referenceId: entity.Id.ToString(),
-        ct: cancellationToken);
+        ct: CancellationToken.None);
 
     return Results.Created($"/api/attendance-requests/{entity.Id}", new { entity.Id, entity.EmployeeId, entity.Type, entity.RequestedTimeUtc, entity.Status });
 }).RequireAuthorization("Attendance.Manage");
@@ -4329,7 +4347,7 @@ app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewA
             $"Ваша заявка «{entity.Type}» одобрена.",
             userId: requesterUser.Id,
             referenceId: entity.Id.ToString(),
-            ct: cancellationToken);
+            ct: CancellationToken.None);
 
     return Results.Ok(new { entity.Id, entity.Status, entity.ReviewedAtUtc });
 }).RequireAuthorization("Attendance.Manage");
@@ -4360,7 +4378,7 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
             $"Ваша заявка «{entity.Type}» отклонена.{(string.IsNullOrWhiteSpace(request?.Comment) ? "" : " Комментарий: " + request.Comment)}",
             userId: requesterUser.Id,
             referenceId: entity.Id.ToString(),
-            ct: cancellationToken);
+            ct: CancellationToken.None);
 
     return Results.Ok(new { entity.Id, entity.Status, entity.ReviewedAtUtc });
 }).RequireAuthorization("Attendance.Manage");
@@ -4426,6 +4444,9 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 lateMin = (int)Math.Max(0, Math.Round((local.TimeOfDay - ss).TotalMinutes));
             }
 
+            var reportHours = first.HasValue && last.HasValue ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d;
+            if (reportHours > 0 && sched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
+                reportHours = Math.Max(0, Math.Round(reportHours - sched.LunchBreakMinutes / 60.0, 2));
             rows.Add(new AttendancePeriodRow(
                 e.Id, name, e.Department?.Name, dayKey,
                 sched?.Name,
@@ -4433,7 +4454,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 sched?.ShiftEnd?.ToString(@"hh\:mm"),
                 first,
                 first.HasValue && last.HasValue && first != last ? last : null,
-                first.HasValue && last.HasValue ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d,
+                reportHours,
                 lateMin,
                 corrByEmpDate.ContainsKey((e.Id, day))));
         }
@@ -8756,11 +8777,11 @@ public sealed record ManagedServiceResponse(
 
 // Time Attendance records
 public sealed record WorkScheduleShiftDto(Guid? Id, string Name, TimeSpan ShiftStart, TimeSpan ShiftEnd, TimeSpan ValidEntryFrom, TimeSpan ValidEntryTo, decimal RequiredHoursPerDay, int SortOrder);
-public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc, WorkScheduleShiftDto[]? Shifts = null, bool CountEarlyArrival = true, int OvertimeDailyThresholdMinutes = 0);
+public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc, WorkScheduleShiftDto[]? Shifts = null, bool CountEarlyArrival = true, int OvertimeDailyThresholdMinutes = 0, bool LunchBreakDeductionEnabled = false, int LunchBreakMinutes = 30);
 public sealed record SchedulePlannerDayRequest(DateOnly Date, Guid? ScheduleId, bool IsDayOff, bool Reset = false);
 public sealed record BulkAssignScheduleRequest(Guid[] EmployeeIds, Guid? ScheduleId);
 public sealed record BulkSchedulePlannerRequest(Guid[] EmployeeIds, SchedulePlannerDayRequest[] Days, Guid? ReplaceScheduleId = null);
-public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null, bool? CountEarlyArrival = null, int? OvertimeDailyThresholdMinutes = null);
+public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null, bool? CountEarlyArrival = null, int? OvertimeDailyThresholdMinutes = null, bool? LunchBreakDeductionEnabled = null, int? LunchBreakMinutes = null);
 public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string EmployeeName, DateTime EventTimeUtc, string EventType, Guid? DeviceId, string Source, DateTime CreatedUtc);
 public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
@@ -8961,6 +8982,8 @@ internal static class AttendanceCalculator
 
                 var hoursWorked = (effectiveFirst.HasValue && last.HasValue) ? (last.Value - effectiveFirst.Value).TotalHours : 0d;
                 if (hoursWorked > 16) hoursWorked = normHoursForDay > 0 ? normHoursForDay : 8;
+                if (hoursWorked > 0 && effSched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
+                    hoursWorked = Math.Max(0, hoursWorked - effSched.LunchBreakMinutes / 60.0);
                 if (hoursWorked > 0)
                 {
                     workedDays++;

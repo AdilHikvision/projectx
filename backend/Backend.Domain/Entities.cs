@@ -271,6 +271,10 @@ public sealed class WorkSchedule : BaseEntity
     public bool CountEarlyArrival { get; set; } = true;
     /// <summary>Минимальный порог за день (в минутах). Дневной overtime ниже этого порога не учитывается. 0 — без порога.</summary>
     public int OvertimeDailyThresholdMinutes { get; set; } = 0;
+    /// <summary>Вычитать перерыв на обед из фактического времени.</summary>
+    public bool LunchBreakDeductionEnabled { get; set; } = false;
+    /// <summary>Длительность обеда в минутах (вычитается из фактического времени, если LunchBreakDeductionEnabled=true).</summary>
+    public int LunchBreakMinutes { get; set; } = 30;
     public ICollection<Employee> Employees { get; set; } = [];
     /// <summary>Под-смены (для Multi-расписания).</summary>
     public ICollection<WorkScheduleShift> Shifts { get; set; } = new List<WorkScheduleShift>();

@@ -1,7 +1,7 @@
 {
   "common": {
-    "appName": "UniFi Access",
-    "appSubtitle": "QƏRARGAH KONSOLU",
+    "appName": "ProjectX",
+    "appSubtitle": "",
     "save": "Yadda saxla",
     "saveChanges": "Dəyişiklikləri yadda saxla",
     "cancel": "Ləğv et",
@@ -1746,6 +1746,10 @@
     "countEarlyArrivalDesc": "Söndürülsə — şəxs növbənin başlanğıcından əvvəl daxil olduqda, ümumi saatlar növbənin başlanğıcından sayılır (erkən vaxt əlavə iş üçün nəzərə alınmır).",
     "overtimeDailyThreshold": "Günlük əlavə iş həddi (dəqiqə)",
     "overtimeDailyThresholdDesc": "Əgər bir gündə əlavə iş bu hədddən azdırsa — nə davamiyyətdə, nə də maaşda nəzərə alınmır. 0 = hədd yoxdur.",
+    "lunchBreakDeduction": "Nahar fasiləsini çıx",
+    "lunchBreakDeductionDesc": "Aktiv olduqda — nahar fasiləsinin müddəti faktiki işlənmiş vaxtdan çıxılır.",
+    "lunchBreakMinutes": "Nahar fasiləsinin müddəti (dəqiqə)",
+    "lunchBreakMinutesDesc": "Hər iş günü faktiki vaxtdan çıxılacaq nahar dəqiqələrinin sayı.",
     "flexibleScheduleTitle": "Çevik cədvəl",
     "flexibleScheduleDesc": "gecikmə, erkən çıxış və əlavə iş hesablanmayacaq — yalnız gündə ümumi işlənmiş saatlar izlənir.",
     "offScheduleTitle": "İstirahət cədvəli",

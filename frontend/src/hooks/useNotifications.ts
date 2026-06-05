@@ -35,9 +35,12 @@ export function useNotifications() {
     }
   }, [token, recalcUnread])
 
-  // Initial fetch
+  // Initial fetch + polling every 30s as SignalR fallback
   useEffect(() => {
-    if (isAuthenticated) void fetchNotifications()
+    if (!isAuthenticated) return
+    void fetchNotifications()
+    const interval = setInterval(() => void fetchNotifications(), 30_000)
+    return () => clearInterval(interval)
   }, [isAuthenticated, fetchNotifications])
 
   // SignalR subscription for real-time push

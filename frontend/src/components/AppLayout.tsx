@@ -38,8 +38,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                         <span className="material-symbols-outlined text-2xl !fill-1">person_filled</span>
                     </div>
                     <div>
-                        <h1 className="text-sm font-bold leading-tight text-text-dark">UniFi Access</h1>
-                        <p className="text-xs text-text-muted font-bold tracking-widest uppercase">HQ CONSOLE</p>
+                        <h1 className="text-sm font-bold leading-tight text-text-dark">ProjectX</h1>
                     </div>
                 </div>
 
