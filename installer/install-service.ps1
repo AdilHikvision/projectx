@@ -285,13 +285,22 @@ function Invoke-ElevatedServiceAction {
     }
 }
 
+`$iconPath = "$InstallDir\wwwroot\favicon.ico"
+`$exePath  = "$InstallDir\backend.exe"
 `$notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-`$notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
+try {
+    if (Test-Path `$iconPath) { `$notifyIcon.Icon = New-Object System.Drawing.Icon(`$iconPath) }
+    else { `$notifyIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon(`$exePath) }
+}
+catch {
+    try { `$notifyIcon.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon(`$exePath) }
+    catch { `$notifyIcon.Icon = [System.Drawing.SystemIcons]::Application }
+}
 `$notifyIcon.Visible = `$true
 `$notifyIcon.Text = "ProjectX Server: initializing"
 
 `$contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-`$openItem = `$contextMenu.Items.Add("Open Service Manager")
+`$openItem = `$contextMenu.Items.Add("Open ProjectX")
 `$openItem.add_Click({
     Start-Process `$dashboardUrl | Out-Null
 })
@@ -315,8 +324,31 @@ function Invoke-ElevatedServiceAction {
 
 `$null = `$contextMenu.Items.Add("-")
 
-`$exitItem = `$contextMenu.Items.Add("Exit")
+`$exitItem = `$contextMenu.Items.Add("Stop server and exit")
 `$exitItem.add_Click({
+    `$confirm = [System.Windows.Forms.MessageBox]::Show(
+        "Stop the ProjectX server and exit?",
+        "ProjectX",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question)
+    if (`$confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+        try {
+            Start-Process -FilePath "sc.exe" -Verb RunAs -ArgumentList @("stop", "`$serviceName") -Wait
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Failed to stop the server: `$(`$_.Exception.Message)",
+                "ProjectX Tray",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        }
+        `$notifyIcon.Visible = `$false
+        [System.Windows.Forms.Application]::Exit()
+    }
+})
+
+`$hideItem = `$contextMenu.Items.Add("Hide tray (keep server running)")
+`$hideItem.add_Click({
     `$notifyIcon.Visible = `$false
     [System.Windows.Forms.Application]::Exit()
 })
@@ -362,7 +394,10 @@ function Invoke-ElevatedServiceAction {
     $menuShortcut.WorkingDirectory = $InstallDir
     $menuShortcut.Save()
 
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$trayScriptPath`""
+    # Launch the tray now, de-elevated via explorer.exe — a NotifyIcon created by an
+    # elevated process is frequently not shown by the shell. The Startup shortcut
+    # relaunches it (non-elevated) on every login.
+    Start-Process "explorer.exe" -ArgumentList ('"' + (Join-Path $programsFolder "ProjectX Tray Monitor.lnk") + '"')
 }
 
 Write-Host "Service '$ServiceName' installed and started."
