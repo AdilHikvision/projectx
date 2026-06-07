@@ -1698,6 +1698,8 @@
     "dayOff": "İstirahət günü",
     "dayOffLower": "istirahət",
     "absent": "yoxdur",
+    "onLeave": "məzuniyyətdə",
+    "onDayOff": "icazə günü",
     "employeesCount": "{{count}} işçi",
     "present": "Mövcud",
     "absentLabel": "Yoxdur",

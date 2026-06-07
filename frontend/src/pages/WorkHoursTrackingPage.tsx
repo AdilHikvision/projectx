@@ -71,6 +71,9 @@ interface PeriodRow {
   overtimeHours: number
   isDayOff: boolean
   isAbsent: boolean
+  onLeave?: boolean
+  leaveType?: string | null
+  leaveIsPaid?: boolean | null
   lateMinutes: number | null
   earlyLeaveMinutes: number | null
   corrected: boolean
@@ -90,6 +93,9 @@ interface DailySummary {
   overtimeHours: number
   isDayOff: boolean
   isAbsent: boolean
+  onLeave?: boolean
+  leaveType?: string | null
+  leaveIsPaid?: boolean | null
   eventCount: number
   lateMinutes: number | null
   earlyLeaveMinutes: number | null
@@ -1093,6 +1099,7 @@ useEffect(() => {
                           <td className="px-5 py-3 font-mono">
                             {d.isDayOff ? <span className="text-slate-400">—</span>
                               : d.checkInUtc ? <span className="text-green-700">{formatTimeOnly(d.checkInUtc)}</span>
+                              : d.onLeave ? <span className="text-indigo-600 font-bold" title={d.leaveType ?? undefined}>{t(d.leaveType === 'DayOff' ? 'workHours.onDayOff' : 'workHours.onLeave')}</span>
                               : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                           </td>
                           <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
@@ -1201,6 +1208,7 @@ useEffect(() => {
                                   <td className="px-5 py-2 font-mono">
                                     {r.isDayOff ? <span className="text-slate-400">—</span>
                                       : r.checkInUtc ? <span className="text-green-700">{formatTimeOnly(r.checkInUtc)}</span>
+                                      : r.onLeave ? <span className="text-indigo-600 font-bold" title={r.leaveType ?? undefined}>{t(r.leaveType === 'DayOff' ? 'workHours.onDayOff' : 'workHours.onLeave')}</span>
                                       : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                                   </td>
                                   <td className="px-5 py-2 font-mono">

@@ -1702,6 +1702,8 @@
     "dayOff": "Day off",
     "dayOffLower": "day off",
     "absent": "absent",
+    "onLeave": "on leave",
+    "onDayOff": "day off",
     "employeesCount": "{{count}} employee(s)",
     "present": "Present",
     "absentLabel": "Absent",

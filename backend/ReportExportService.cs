@@ -20,7 +20,22 @@ public sealed record AttendancePeriodRow(
     DateTime? CheckOutUtc,
     double TotalHours,
     int? LateMinutes,
-    bool Corrected);
+    bool Corrected,
+    double NormHours,
+    double OvertimeHours,
+    int? EarlyLeaveMinutes,
+    bool IsDayOff,
+    bool IsAbsent,
+    bool OnLeave,
+    string? LeaveType)
+{
+    /// <summary>Human-readable day status, shared by the Excel and PDF reports.</summary>
+    public string StatusLabel =>
+        IsDayOff ? "Day off"
+        : OnLeave ? (LeaveType == "DayOff" ? "Day off (leave)" : "On leave")
+        : IsAbsent ? "Absent"
+        : CheckInUtc.HasValue ? "Present" : "";
+}
 
 public sealed record SchedulePlannerRow(
     string EmployeeName,
@@ -73,7 +88,7 @@ public static class ExcelReportBuilder
         // Headers
         int headerRow = 5;
         string[] headers = ["Employee", "Department", "Date", "Schedule", "Shift Start", "Shift End",
-            "Check In", "Check Out", "Hours", "Late (min)", "Corrected"];
+            "Check In", "Check Out", "Hours", "Overtime", "Late (min)", "Early (min)", "Status", "Corrected"];
         for (int i = 0; i < headers.Length; i++)
         {
             var cell = ws.Cell(headerRow, i + 1);
@@ -100,10 +115,16 @@ public static class ExcelReportBuilder
                 ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckOutUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "";
             ws.Cell(row, 9).Value = r.TotalHours;
             ws.Cell(row, 9).Style.NumberFormat.Format = "0.00";
-            ws.Cell(row, 10).Value = r.LateMinutes.HasValue ? (int?)r.LateMinutes : null;
-            ws.Cell(row, 11).Value = r.Corrected ? "Yes" : "";
+            ws.Cell(row, 10).Value = r.OvertimeHours > 0 ? (double?)r.OvertimeHours : null;
+            ws.Cell(row, 10).Style.NumberFormat.Format = "0.00";
+            ws.Cell(row, 11).Value = r.LateMinutes.HasValue ? (int?)r.LateMinutes : null;
             if (r.LateMinutes > 0)
-                ws.Cell(row, 10).Style.Font.FontColor = XLColor.Red;
+                ws.Cell(row, 11).Style.Font.FontColor = XLColor.Red;
+            ws.Cell(row, 12).Value = r.EarlyLeaveMinutes.HasValue ? (int?)r.EarlyLeaveMinutes : null;
+            if (r.EarlyLeaveMinutes > 0)
+                ws.Cell(row, 12).Style.Font.FontColor = XLColor.FromHtml("#ea580c");
+            ws.Cell(row, 13).Value = r.StatusLabel;
+            ws.Cell(row, 14).Value = r.Corrected ? "Yes" : "";
             row++;
         }
 
@@ -115,6 +136,9 @@ public static class ExcelReportBuilder
             ws.Cell(row, 9).Value = rows.Sum(r => r.TotalHours);
             ws.Cell(row, 9).Style.NumberFormat.Format = "0.00";
             ws.Cell(row, 9).Style.Font.Bold = true;
+            ws.Cell(row, 10).Value = rows.Sum(r => r.OvertimeHours);
+            ws.Cell(row, 10).Style.NumberFormat.Format = "0.00";
+            ws.Cell(row, 10).Style.Font.Bold = true;
             ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f0f0");
         }
 
@@ -348,20 +372,23 @@ public static class PdfReportBuilder
                     {
                         c.RelativeColumn(3); // Employee
                         c.RelativeColumn(2); // Department
-                        c.ConstantColumn(60); // Date
+                        c.ConstantColumn(52); // Date
                         c.RelativeColumn(2); // Schedule
-                        c.ConstantColumn(45); // Shift S
-                        c.ConstantColumn(45); // Shift E
-                        c.ConstantColumn(45); // In
-                        c.ConstantColumn(45); // Out
-                        c.ConstantColumn(40); // Hours
-                        c.ConstantColumn(40); // Late
+                        c.ConstantColumn(38); // Shift S
+                        c.ConstantColumn(38); // Shift E
+                        c.ConstantColumn(38); // In
+                        c.ConstantColumn(38); // Out
+                        c.ConstantColumn(36); // Hours
+                        c.ConstantColumn(36); // OT
+                        c.ConstantColumn(36); // Late
+                        c.ConstantColumn(36); // Early
+                        c.ConstantColumn(58); // Status
                     });
 
                     table.Header(h =>
                     {
                         foreach (var hdr in new[] { "Employee", "Department", "Date", "Schedule",
-                            "Shift S", "Shift E", "In", "Out", "Hours", "Late" })
+                            "Shift S", "Shift E", "In", "Out", "Hours", "OT", "Late", "Early", "Status" })
                         {
                             h.Cell().Background(PrimaryHex).Padding(3)
                                 .Text(hdr).FontColor("#ffffff").Bold().FontSize(7.5f);
@@ -390,8 +417,16 @@ public static class PdfReportBuilder
                             .FontSize(7.5f).FontColor(textColor);
                         table.Cell().Background(bg).Padding(3).Text(r.TotalHours.ToString("0.00")).FontSize(7.5f).Bold().FontColor(textColor);
                         table.Cell().Background(bg).Padding(3)
+                            .Text(r.OvertimeHours > 0 ? r.OvertimeHours.ToString("0.00") : "")
+                            .FontSize(7.5f).FontColor("#7c3aed");
+                        table.Cell().Background(bg).Padding(3)
                             .Text(r.LateMinutes.HasValue ? r.LateMinutes.ToString()! : "")
                             .FontSize(7.5f).FontColor(isLate ? "#dc2626" : textColor);
+                        table.Cell().Background(bg).Padding(3)
+                            .Text(r.EarlyLeaveMinutes.HasValue ? r.EarlyLeaveMinutes.ToString()! : "")
+                            .FontSize(7.5f).FontColor(r.EarlyLeaveMinutes > 0 ? "#ea580c" : textColor);
+                        table.Cell().Background(bg).Padding(3)
+                            .Text(r.StatusLabel).FontSize(7.5f).FontColor(textColor);
                     }
 
                     // Summary
@@ -401,7 +436,9 @@ public static class PdfReportBuilder
                             .Text("TOTAL").Bold().FontSize(7.5f);
                         table.Cell().Background("#f0f0f0").Padding(3)
                             .Text(rows.Sum(r => r.TotalHours).ToString("0.00")).Bold().FontSize(7.5f);
-                        table.Cell().Background("#f0f0f0");
+                        table.Cell().Background("#f0f0f0").Padding(3)
+                            .Text(rows.Sum(r => r.OvertimeHours).ToString("0.00")).Bold().FontSize(7.5f);
+                        table.Cell().ColumnSpan(3).Background("#f0f0f0");
                     }
                 });
 

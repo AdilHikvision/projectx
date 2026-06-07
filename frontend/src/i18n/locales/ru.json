@@ -1715,6 +1715,8 @@
     "dayOff": "Выходной",
     "dayOffLower": "выходной",
     "absent": "отсутствует",
+    "onLeave": "в отпуске",
+    "onDayOff": "отгул",
     "employeesCount": "{{count}} сотр.",
     "present": "Присутств.",
     "absentLabel": "Отсутств.",

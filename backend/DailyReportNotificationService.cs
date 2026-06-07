@@ -38,21 +38,36 @@ public sealed class DailyReportNotificationService(
         var totalEmployees = await db.Employees.AsNoTracking()
             .CountAsync(e => e.IsActive, ct);
 
-        var presentCount = await db.AttendanceRecords.AsNoTracking()
+        var presentIds = await db.AttendanceRecords.AsNoTracking()
             .Where(r => r.EventTimeUtc >= yesterday && r.EventTimeUtc < today)
             .Select(r => r.EmployeeId)
             .Distinct()
-            .CountAsync(ct);
+            .ToListAsync(ct);
+        var presentCount = presentIds.Count;
 
-        var absentCount = totalEmployees - presentCount;
+        // Employees on an approved leave that day must not be counted as absent.
+        var yesterdayDate = DateOnly.FromDateTime(yesterday);
+        var onLeaveIds = await db.EmployeeLeaves.AsNoTracking()
+            .Where(l => l.Status == LeaveStatus.Approved
+                     && l.StartDate <= yesterdayDate && l.EndDate >= yesterdayDate
+                     && l.Employee.IsActive)
+            .Select(l => l.EmployeeId)
+            .Distinct()
+            .ToListAsync(ct);
+        var presentSet = presentIds.ToHashSet();
+        var onLeaveCount = onLeaveIds.Count(id => !presentSet.Contains(id));
+
+        var absentCount = Math.Max(0, totalEmployees - presentCount - onLeaveCount);
         var date = yesterday.ToString("dd.MM.yyyy");
 
+        var leavePart = onLeaveCount > 0 ? $" В отпуске: {onLeaveCount}." : string.Empty;
         await notificationService.CreateAsync(
             NotificationTypes.DailyReport,
             $"Ежедневный отчёт — {date}",
-            $"Присутствовало: {presentCount} из {totalEmployees}. Отсутствовало: {absentCount}.",
+            $"Присутствовало: {presentCount} из {totalEmployees}. Отсутствовало: {absentCount}.{leavePart}",
             ct: ct);
 
-        logger.LogInformation("Daily report notification sent for {Date}: {Present}/{Total}", date, presentCount, totalEmployees);
+        logger.LogInformation("Daily report notification sent for {Date}: present={Present}, onLeave={OnLeave}, absent={Absent}, total={Total}",
+            date, presentCount, onLeaveCount, absentCount, totalEmployees);
     }
 }

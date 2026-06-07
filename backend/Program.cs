@@ -3652,17 +3652,22 @@ app.MapGet("/api/leaves", async (AppDbContext db, Guid? employeeId, DateOnly? fr
     }));
 }).RequireAuthorization("Leaves.View");
 
-app.MapPost("/api/leaves", async (CreateLeaveRequest req, AppDbContext db, CancellationToken ct) =>
+app.MapPost("/api/leaves", async (CreateLeaveRequest req, AppDbContext db, ClaimsPrincipal user, CancellationToken ct) =>
 {
     if (!Enum.TryParse<LeaveType>(req.LeaveType, true, out var lt))
         return Results.BadRequest(new { message = "Invalid leaveType. Use Vacation or DayOff." });
     var emp = await db.Employees.FirstOrDefaultAsync(e => e.Id == req.EmployeeId, ct);
     if (emp is null) return Results.NotFound(new { message = "Employee not found." });
     if (req.EndDate < req.StartDate) return Results.BadRequest(new { message = "EndDate must be >= StartDate." });
+    // An admin assigning a leave IS the approval, so it is granted immediately and
+    // shows up in the attendance table right away (unlike a self-service request,
+    // which stays Pending until reviewed).
+    Guid? approverId = Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var av) ? av : null;
     var leave = new EmployeeLeave {
         EmployeeId = req.EmployeeId, LeaveType = lt, IsPaid = req.IsPaid,
         StartDate = req.StartDate, EndDate = req.EndDate,
-        Reason = req.Reason, Notes = req.Notes, Status = LeaveStatus.Pending
+        Reason = req.Reason, Notes = req.Notes,
+        Status = LeaveStatus.Approved, ApprovedByUserId = approverId, ApprovedAt = DateTime.UtcNow
     };
     db.EmployeeLeaves.Add(leave);
     await db.SaveChangesAsync(ct);
@@ -3787,104 +3792,49 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
         .Where(c => c.DateUtc == dayStartUtc)
         .ToDictionaryAsync(c => c.EmployeeId, cancellationToken);
 
+    // Approved leaves covering this day: such days are "on leave", not "absent".
+    var empIdsForLeave = employees.Select(e => e.Id).ToList();
+    var leavesByEmp = (await dbContext.EmployeeLeaves.AsNoTracking()
+            .Where(l => l.Status == LeaveStatus.Approved
+                     && l.StartDate <= dayDate && l.EndDate >= dayDate
+                     && empIdsForLeave.Contains(l.EmployeeId))
+            .ToListAsync(cancellationToken))
+        .GroupBy(l => l.EmployeeId)
+        .ToDictionary(g => g.Key, g => g.First());
+
     var rows = employees.Select(e =>
     {
         byEmployee.TryGetValue(e.Id, out var stat);
-        var first = stat?.First;
-        var last = stat?.Last;
         var name = (e.FirstName + " " + e.LastName).Trim();
-
-        // Перекрываем коррекцией если есть. Поля nullable: можно фиксить только check-in,
-        // только check-out, или оба.
-        var hasCorrection = corrections.TryGetValue(e.Id, out var corr);
-        if (hasCorrection)
-        {
-            if (corr!.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
-            if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
-        }
-
-        // Определяем эффективный шедул: сначала из DayPattern на конкретную дату, иначе базовый
         var dayPattern = e.DayPatterns.FirstOrDefault(dp => dp.Date == dayDate);
-        var effectiveSchedule = (dayPattern is not null && !dayPattern.IsDayOff)
-            ? (dayPattern.WorkSchedule ?? e.WorkSchedule)
-            : e.WorkSchedule;
+        corrections.TryGetValue(e.Id, out var corr);
+        leavesByEmp.TryGetValue(e.Id, out var leave);
 
-        var isDayOff = (dayPattern?.IsDayOff ?? false) || effectiveSchedule?.Type == ScheduleType.Off;
-
-        // For Multi schedules, pick the sub-shift matching the check-in window
-        WorkScheduleShift? matchedShift = null;
-        if (effectiveSchedule?.Type == ScheduleType.Multi && first.HasValue && effectiveSchedule.Shifts.Any())
-        {
-            var checkInLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-            var checkInTime = checkInLocal.TimeOfDay;
-            var orderedShifts = effectiveSchedule.Shifts.OrderBy(s => s.SortOrder).ToList();
-            // Берём первую смену, в чьё окно попал check-in (по ValidEntryTo). Если check-in позже всех
-            // окон — назначаем последнюю смену (опоздание будет считаться от её ShiftStart).
-            matchedShift = orderedShifts.FirstOrDefault(s => checkInTime <= s.ValidEntryTo)
-                           ?? orderedShifts.LastOrDefault();
-        }
-
-        var shiftStartForCalc = matchedShift is not null ? (TimeSpan?)matchedShift.ShiftStart : effectiveSchedule?.ShiftStart;
-        var shiftEndForCalc   = matchedShift is not null ? (TimeSpan?)matchedShift.ShiftEnd   : effectiveSchedule?.ShiftEnd;
-        var normHoursForCalc  = matchedShift is not null ? (double)matchedShift.RequiredHoursPerDay
-                              : (!isDayOff && effectiveSchedule is not null ? (double)effectiveSchedule.RequiredHoursPerDay : 0d);
-        var shiftNameForCalc  = matchedShift is not null ? $"{effectiveSchedule!.Name} / {matchedShift.Name}" : effectiveSchedule?.Name;
-
-        // Если у расписания отключён учёт раннего прихода — отсчитываем total от ShiftStart, а не от фактического check-in.
-        var effectiveFirst = first;
-        if (first.HasValue && shiftStartForCalc is TimeSpan ssForClamp
-            && effectiveSchedule is { CountEarlyArrival: false })
-        {
-            var firstLocalForClamp = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-            if (firstLocalForClamp.TimeOfDay < ssForClamp)
-            {
-                var clampedLocal = firstLocalForClamp.Date + ssForClamp;
-                effectiveFirst = TimeZoneInfo.ConvertTimeToUtc(clampedLocal, TimeZoneInfo.Local);
-            }
-        }
-        var totalHoursVal = (effectiveFirst.HasValue && last.HasValue) ? Math.Round((last!.Value - effectiveFirst.Value).TotalHours, 2) : 0d;
-        if (totalHoursVal > 0 && effectiveSchedule is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
-            totalHoursVal = Math.Max(0, Math.Round(totalHoursVal - effectiveSchedule.LunchBreakMinutes / 60.0, 2));
-        var normHours = (!isDayOff && effectiveSchedule is not null) ? normHoursForCalc : 0d;
-        var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
-        if (overtimeHours > 0 && effectiveSchedule is { OvertimeDailyThresholdMinutes: > 0 } && overtimeHours * 60.0 < effectiveSchedule.OvertimeDailyThresholdMinutes) overtimeHours = 0;
-        var isAbsent = !isDayOff && effectiveSchedule is not null && !first.HasValue;
-
-        int? lateMinutes = null;
-        int? earlyLeaveMinutes = null;
-        if (!isDayOff && effectiveSchedule is not null && shiftStartForCalc is TimeSpan shiftStart && first.HasValue)
-        {
-            var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-            var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
-            lateMinutes = (int)Math.Max(0, Math.Round(diff));
-        }
-        if (!isDayOff && effectiveSchedule is not null && shiftEndForCalc is TimeSpan shiftEnd && last.HasValue)
-        {
-            var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-            var diff = (shiftEnd - lastLocal.TimeOfDay).TotalMinutes;
-            earlyLeaveMinutes = (int)Math.Max(0, Math.Round(diff));
-        }
+        var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPattern, stat?.First, stat?.Last, corr, leave);
 
         return new
         {
             employeeId = e.Id,
             employeeName = string.IsNullOrEmpty(name) ? null : name,
             date = dayStartUtc,
-            scheduleName = shiftNameForCalc,
-            shiftStart = shiftStartForCalc?.ToString(@"hh\:mm"),
-            shiftEnd = shiftEndForCalc?.ToString(@"hh\:mm"),
-            checkInUtc = first,
-            checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
-            totalHours = totalHoursVal,
-            normHours,
-            overtimeHours,
-            isDayOff,
-            isAbsent,
+            scheduleName = d.ScheduleName,
+            shiftStart = d.ShiftStart?.ToString(@"hh\:mm"),
+            shiftEnd = d.ShiftEnd?.ToString(@"hh\:mm"),
+            checkInUtc = d.CheckInUtc,
+            checkOutUtc = d.CheckOutUtc,
+            totalHours = d.TotalHours,
+            normHours = d.NormHours,
+            overtimeHours = d.OvertimeHours,
+            isDayOff = d.IsDayOff,
+            isAbsent = d.IsAbsent,
+            onLeave = d.OnLeave,
+            leaveType = d.LeaveType,
+            leaveIsPaid = d.LeaveIsPaid,
             eventCount = stat?.Count ?? 0,
-            lateMinutes,
-            earlyLeaveMinutes,
-            corrected = hasCorrection,
-            correctionComment = hasCorrection ? corr!.Comment : null
+            lateMinutes = d.LateMinutes,
+            earlyLeaveMinutes = d.EarlyLeaveMinutes,
+            corrected = d.Corrected,
+            correctionComment = corr?.Comment
         };
     }).ToList();
 
@@ -3932,6 +3882,16 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
             g => g.Key,
             g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc), Count = g.Count() });
 
+    // Approved leaves overlapping the range: covered working days are "on leave", not "absent".
+    var empIdsForLeave = employees.Select(e => e.Id).ToList();
+    var leavesByEmpList = (await dbContext.EmployeeLeaves.AsNoTracking()
+            .Where(l => l.Status == LeaveStatus.Approved
+                     && l.StartDate <= toDate && l.EndDate >= fromDate
+                     && empIdsForLeave.Contains(l.EmployeeId))
+            .ToListAsync(cancellationToken))
+        .GroupBy(l => l.EmployeeId)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
     var rows = new List<object>();
     foreach (var e in employees)
     {
@@ -3942,96 +3902,38 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
         {
             var dayKey = DateOnly.FromDateTime(day);
             patternsByDate.TryGetValue(dayKey, out var dayPat);
-            var effectiveSched = (dayPat is not null && !dayPat.IsDayOff)
-                ? (dayPat.WorkSchedule ?? e.WorkSchedule)
-                : e.WorkSchedule;
 
-            DateTime? first = null;
-            DateTime? last = null;
-            var count = 0;
-            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat))
-            {
-                first = stat.First; last = stat.Last; count = stat.Count;
-            }
-            var hasCorrection = corrByEmpDate.TryGetValue((e.Id, day), out var corr);
-            if (hasCorrection)
-            {
-                if (corr!.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
-                if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
-            }
+            DateTime? rawFirst = null, rawLast = null;
+            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { rawFirst = stat.First; rawLast = stat.Last; }
+            corrByEmpDate.TryGetValue((e.Id, day), out var corr);
 
-            var isDayOff = (dayPat?.IsDayOff ?? false) || effectiveSched?.Type == ScheduleType.Off;
+            EmployeeLeave? leave = null;
+            if (leavesByEmpList.TryGetValue(e.Id, out var empLvs))
+                leave = empLvs.FirstOrDefault(l => l.StartDate <= dayKey && l.EndDate >= dayKey);
 
-            // For Multi schedules, pick the sub-shift matching the check-in window
-            WorkScheduleShift? matchedShiftP = null;
-            if (effectiveSched?.Type == ScheduleType.Multi && first.HasValue && effectiveSched.Shifts.Any())
-            {
-                var checkInLocalP = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                var checkInTimeP = checkInLocalP.TimeOfDay;
-                var orderedShiftsP = effectiveSched.Shifts.OrderBy(s => s.SortOrder).ToList();
-                matchedShiftP = orderedShiftsP.FirstOrDefault(s => checkInTimeP <= s.ValidEntryTo)
-                                ?? orderedShiftsP.LastOrDefault();
-            }
-
-            var shiftStartForCalcP = matchedShiftP is not null ? (TimeSpan?)matchedShiftP.ShiftStart : effectiveSched?.ShiftStart;
-            var shiftEndForCalcP   = matchedShiftP is not null ? (TimeSpan?)matchedShiftP.ShiftEnd   : effectiveSched?.ShiftEnd;
-            var normHoursForCalcP  = matchedShiftP is not null ? (double)matchedShiftP.RequiredHoursPerDay
-                                  : (!isDayOff && effectiveSched is not null ? (double)effectiveSched.RequiredHoursPerDay : 0d);
-            var shiftNameForCalcP  = matchedShiftP is not null ? $"{effectiveSched!.Name} / {matchedShiftP.Name}" : effectiveSched?.Name;
-
-            var effectiveFirstP = first;
-            if (first.HasValue && shiftStartForCalcP is TimeSpan ssForClampP
-                && effectiveSched is { CountEarlyArrival: false })
-            {
-                var firstLocalForClampP = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                if (firstLocalForClampP.TimeOfDay < ssForClampP)
-                {
-                    var clampedLocalP = firstLocalForClampP.Date + ssForClampP;
-                    effectiveFirstP = TimeZoneInfo.ConvertTimeToUtc(clampedLocalP, TimeZoneInfo.Local);
-                }
-            }
-            var totalHoursVal = (effectiveFirstP.HasValue && last.HasValue) ? Math.Round((last!.Value - effectiveFirstP.Value).TotalHours, 2) : 0d;
-            if (totalHoursVal > 0 && effectiveSched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
-                totalHoursVal = Math.Max(0, Math.Round(totalHoursVal - effectiveSched.LunchBreakMinutes / 60.0, 2));
-            var normHours = (!isDayOff && effectiveSched is not null) ? normHoursForCalcP : 0d;
-            var overtimeHours = (normHours > 0 && totalHoursVal > normHours) ? Math.Round(totalHoursVal - normHours, 2) : 0d;
-            // Daily-порог: дневной OT ниже schedule.OvertimeDailyThresholdMinutes не считается.
-            if (overtimeHours > 0 && effectiveSched is { OvertimeDailyThresholdMinutes: > 0 } && overtimeHours * 60.0 < effectiveSched.OvertimeDailyThresholdMinutes) overtimeHours = 0;
-            var isAbsent = !isDayOff && effectiveSched is not null && !first.HasValue;
-
-            int? lateMinutes = null;
-            int? earlyLeaveMinutes = null;
-            if (!isDayOff && effectiveSched is not null && shiftStartForCalcP is TimeSpan shiftStart && first.HasValue)
-            {
-                var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                var diff = (firstLocal.TimeOfDay - shiftStart).TotalMinutes;
-                lateMinutes = (int)Math.Max(0, Math.Round(diff));
-            }
-            if (!isDayOff && effectiveSched is not null && shiftEndForCalcP is TimeSpan shiftEnd && last.HasValue)
-            {
-                var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                var diff = (shiftEnd - lastLocal.TimeOfDay).TotalMinutes;
-                earlyLeaveMinutes = (int)Math.Max(0, Math.Round(diff));
-            }
+            var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPat, rawFirst, rawLast, corr, leave);
 
             rows.Add(new
             {
                 employeeId = e.Id,
                 employeeName = string.IsNullOrEmpty(name) ? null : name,
                 date = day,
-                scheduleName = shiftNameForCalcP,
-                shiftStart = shiftStartForCalcP?.ToString(@"hh\:mm"),
-                shiftEnd = shiftEndForCalcP?.ToString(@"hh\:mm"),
-                checkInUtc = first,
-                checkOutUtc = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null,
-                totalHours = totalHoursVal,
-                normHours,
-                overtimeHours,
-                isDayOff,
-                isAbsent,
-                lateMinutes,
-                earlyLeaveMinutes,
-                corrected = hasCorrection
+                scheduleName = d.ScheduleName,
+                shiftStart = d.ShiftStart?.ToString(@"hh\:mm"),
+                shiftEnd = d.ShiftEnd?.ToString(@"hh\:mm"),
+                checkInUtc = d.CheckInUtc,
+                checkOutUtc = d.CheckOutUtc,
+                totalHours = d.TotalHours,
+                normHours = d.NormHours,
+                overtimeHours = d.OvertimeHours,
+                isDayOff = d.IsDayOff,
+                isAbsent = d.IsAbsent,
+                onLeave = d.OnLeave,
+                leaveType = d.LeaveType,
+                leaveIsPaid = d.LeaveIsPaid,
+                lateMinutes = d.LateMinutes,
+                earlyLeaveMinutes = d.EarlyLeaveMinutes,
+                corrected = d.Corrected
             });
         }
     }
@@ -4396,9 +4298,9 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
     var toDate = DateOnly.FromDateTime(toUtc);
 
     var empQuery = dbContext.Employees.AsNoTracking()
-        .Include(e => e.WorkSchedule)
+        .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.Department)
-        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule)
+        .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) empQuery = empQuery.Where(e => e.Id == employeeId.Value);
     var employees = await empQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(ct);
@@ -4413,6 +4315,12 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
         .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc)
         .ToListAsync(ct);
     var corrByEmpDate = corrections.ToDictionary(c => (c.EmployeeId, c.DateUtc));
+
+    var empIdsForLeave = employees.Select(e => e.Id).ToList();
+    var leavesByEmp = (await dbContext.EmployeeLeaves.AsNoTracking()
+            .Where(l => l.Status == LeaveStatus.Approved && l.StartDate <= toDate && l.EndDate >= fromDate && empIdsForLeave.Contains(l.EmployeeId))
+            .ToListAsync(ct))
+        .GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
 
     var byEmpNoDay = logs
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
@@ -4430,37 +4338,34 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
         {
             var dayKey = DateOnly.FromDateTime(day);
             patternsByDate.TryGetValue(dayKey, out var dayPat);
-            var sched = dayPat is not null && !dayPat.IsDayOff
-                ? (dayPat.WorkSchedule ?? e.WorkSchedule) : e.WorkSchedule;
 
-            DateTime? first = null, last = null;
-            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { first = stat.First; last = stat.Last; }
-            if (corrByEmpDate.TryGetValue((e.Id, day), out var corr))
-            {
-                if (corr.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
-                if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
-            }
+            DateTime? rawFirst = null, rawLast = null;
+            if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { rawFirst = stat.First; rawLast = stat.Last; }
+            corrByEmpDate.TryGetValue((e.Id, day), out var corr);
 
-            int? lateMin = null;
-            if (sched?.ShiftStart is TimeSpan ss && first.HasValue)
-            {
-                var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                lateMin = (int)Math.Max(0, Math.Round((local.TimeOfDay - ss).TotalMinutes));
-            }
+            EmployeeLeave? leave = null;
+            if (leavesByEmp.TryGetValue(e.Id, out var empLvs))
+                leave = empLvs.FirstOrDefault(l => l.StartDate <= dayKey && l.EndDate >= dayKey);
 
-            var reportHours = first.HasValue && last.HasValue ? Math.Round((last!.Value - first.Value).TotalHours, 2) : 0d;
-            if (reportHours > 0 && sched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
-                reportHours = Math.Max(0, Math.Round(reportHours - sched.LunchBreakMinutes / 60.0, 2));
+            var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPat, rawFirst, rawLast, corr, leave);
+
             rows.Add(new AttendancePeriodRow(
                 e.Id, name, e.Department?.Name, dayKey,
-                sched?.Name,
-                sched?.ShiftStart?.ToString(@"hh\:mm"),
-                sched?.ShiftEnd?.ToString(@"hh\:mm"),
-                first,
-                first.HasValue && last.HasValue && first != last ? last : null,
-                reportHours,
-                lateMin,
-                corrByEmpDate.ContainsKey((e.Id, day))));
+                d.ScheduleName,
+                d.ShiftStart?.ToString(@"hh\:mm"),
+                d.ShiftEnd?.ToString(@"hh\:mm"),
+                d.CheckInUtc,
+                d.CheckOutUtc,
+                d.TotalHours,
+                d.LateMinutes,
+                d.Corrected,
+                d.NormHours,
+                d.OvertimeHours,
+                d.EarlyLeaveMinutes,
+                d.IsDayOff,
+                d.IsAbsent,
+                d.OnLeave,
+                d.LeaveType));
         }
     }
     return (rows, employees.Count == 1 ? singleEmpName : null);
@@ -8879,6 +8784,122 @@ public sealed record EmployeeSalaryConfigRequest(
 public sealed record CreatePayrollPeriodRequest(DateOnly StartDate, DateOnly EndDate, string? Notes);
 public sealed record SendScheduleReportRequest(DateOnly From, DateOnly ToDate, string To);
 
+// ── Single source of truth for per-day attendance math ──────────────────────────
+// Every consumer (the Work Hours grid /api/attendance/daily + /period, the Excel/PDF
+// work-hours report, and payroll) calls AttendanceDayCalculator.Compute so the
+// numbers (hours, overtime, lateness, early-leave, day-off / absent / on-leave) are
+// always identical. Do NOT re-implement this logic anywhere else.
+public sealed record DayAttendance(
+    bool IsDayOff,
+    bool IsAbsent,
+    bool OnLeave,
+    string? LeaveType,
+    bool? LeaveIsPaid,
+    DateTime? CheckInUtc,
+    DateTime? CheckOutUtc,
+    string? ScheduleName,
+    TimeSpan? ShiftStart,
+    TimeSpan? ShiftEnd,
+    double TotalHours,
+    double NormHours,
+    double OvertimeHours,
+    int? LateMinutes,
+    int? EarlyLeaveMinutes,
+    bool Corrected);
+
+internal static class AttendanceDayCalculator
+{
+    /// <param name="baseSchedule">Employee's base WorkSchedule (Shifts loaded for Multi).</param>
+    /// <param name="dayPattern">EmployeeDayPattern for this date, if any (WorkSchedule+Shifts loaded).</param>
+    /// <param name="rawFirst">Earliest device event of the day (UTC), or null.</param>
+    /// <param name="rawLast">Latest device event of the day (UTC), or null.</param>
+    /// <param name="correction">Admin check-in/out override for the day, if any.</param>
+    /// <param name="approvedLeave">An approved leave covering the day (caller decides paid filter), or null.</param>
+    public static DayAttendance Compute(
+        WorkSchedule? baseSchedule,
+        EmployeeDayPattern? dayPattern,
+        DateTime? rawFirst,
+        DateTime? rawLast,
+        AttendanceCorrection? correction,
+        EmployeeLeave? approvedLeave)
+    {
+        DateTime? first = rawFirst, last = rawLast;
+        var corrected = correction is not null;
+        if (corrected)
+        {
+            if (correction!.CheckInUtc.HasValue) first = correction.CheckInUtc.Value;
+            if (correction.CheckOutUtc.HasValue) last = correction.CheckOutUtc.Value;
+        }
+        // Manual time on a day-off is an explicit override → treat the day as worked.
+        var correctionHasTime = corrected && (correction!.CheckInUtc.HasValue || correction.CheckOutUtc.HasValue);
+
+        var effectiveSchedule = (dayPattern is not null && !dayPattern.IsDayOff)
+            ? (dayPattern.WorkSchedule ?? baseSchedule)
+            : baseSchedule;
+
+        var isDayOff = ((dayPattern?.IsDayOff ?? false) || effectiveSchedule?.Type == ScheduleType.Off) && !correctionHasTime;
+
+        // Multi schedule: pick the sub-shift whose entry window matches the check-in.
+        WorkScheduleShift? matched = null;
+        if (effectiveSchedule?.Type == ScheduleType.Multi && first.HasValue && effectiveSchedule.Shifts.Any())
+        {
+            var checkInTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local).TimeOfDay;
+            var ordered = effectiveSchedule.Shifts.OrderBy(s => s.SortOrder).ToList();
+            matched = ordered.FirstOrDefault(s => checkInTime <= s.ValidEntryTo) ?? ordered.LastOrDefault();
+        }
+        var shiftStart   = matched is not null ? (TimeSpan?)matched.ShiftStart : effectiveSchedule?.ShiftStart;
+        var shiftEnd     = matched is not null ? (TimeSpan?)matched.ShiftEnd   : effectiveSchedule?.ShiftEnd;
+        var scheduleName = matched is not null ? $"{effectiveSchedule!.Name} / {matched.Name}" : effectiveSchedule?.Name;
+        var normHours    = matched is not null ? (double)matched.RequiredHoursPerDay
+                         : (!isDayOff && effectiveSchedule is not null ? (double)effectiveSchedule.RequiredHoursPerDay : 0d);
+
+        // CountEarlyArrival=false → time before ShiftStart is not counted (clamp to ShiftStart).
+        var effectiveFirst = first;
+        if (first.HasValue && shiftStart is TimeSpan ssClamp && effectiveSchedule is { CountEarlyArrival: false })
+        {
+            var fl = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            if (fl.TimeOfDay < ssClamp)
+                effectiveFirst = TimeZoneInfo.ConvertTimeToUtc(fl.Date + ssClamp, TimeZoneInfo.Local);
+        }
+
+        var totalHours = (effectiveFirst.HasValue && last.HasValue) ? Math.Round((last.Value - effectiveFirst.Value).TotalHours, 2) : 0d;
+        // Guard against corrupt spans (missed check-out etc.): cap at the day norm.
+        if (totalHours > 16) totalHours = normHours > 0 ? normHours : 8;
+        if (totalHours > 0 && effectiveSchedule is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
+            totalHours = Math.Max(0, Math.Round(totalHours - effectiveSchedule.LunchBreakMinutes / 60.0, 2));
+
+        var overtimeHours = (normHours > 0 && totalHours > normHours) ? Math.Round(totalHours - normHours, 2) : 0d;
+        if (overtimeHours > 0 && effectiveSchedule is { OvertimeDailyThresholdMinutes: > 0 }
+            && overtimeHours * 60.0 < effectiveSchedule.OvertimeDailyThresholdMinutes)
+            overtimeHours = 0;
+
+        int? lateMinutes = null, earlyLeaveMinutes = null;
+        if (!isDayOff && effectiveSchedule is not null && shiftStart is TimeSpan ssLate && first.HasValue)
+        {
+            var fl = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            lateMinutes = (int)Math.Max(0, Math.Round((fl.TimeOfDay - ssLate).TotalMinutes));
+        }
+        if (!isDayOff && effectiveSchedule is not null && shiftEnd is TimeSpan ssEnd && last.HasValue)
+        {
+            var ll = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
+            earlyLeaveMinutes = (int)Math.Max(0, Math.Round((ssEnd - ll.TimeOfDay).TotalMinutes));
+        }
+
+        // A working day with no check-in is "on leave" (covered by an approved leave) or "absent".
+        var onLeave = approvedLeave is not null && !first.HasValue && !isDayOff && effectiveSchedule is not null;
+        var isAbsent = !isDayOff && effectiveSchedule is not null && !first.HasValue && !onLeave;
+
+        var checkOut = (first.HasValue && last.HasValue && first != last) ? last : (DateTime?)null;
+
+        return new DayAttendance(
+            isDayOff, isAbsent, onLeave,
+            onLeave ? approvedLeave!.LeaveType.ToString() : null,
+            onLeave ? approvedLeave!.IsPaid : (bool?)null,
+            first, checkOut, scheduleName, shiftStart, shiftEnd,
+            totalHours, normHours, overtimeHours, lateMinutes, earlyLeaveMinutes, corrected);
+    }
+}
+
 public sealed record EmpAttendanceTotals(
     Guid EmployeeId,
     int WorkedDays,
@@ -8946,96 +8967,37 @@ internal static class AttendanceCalculator
             {
                 patternsByDate.TryGetValue(day, out var dayPat);
                 var effSched = (dayPat is not null && !dayPat.IsDayOff) ? (dayPat.WorkSchedule ?? emp.WorkSchedule) : emp.WorkSchedule;
-                var isDayOff = (dayPat?.IsDayOff ?? false) || effSched?.Type == ScheduleType.Off;
-                if (!isDayOff && effSched is not null) totalWorkingDays++;
+                var schedDayOff = (dayPat?.IsDayOff ?? false) || effSched?.Type == ScheduleType.Off;
+                if (!schedDayOff && effSched is not null) totalWorkingDays++;
 
-                DateTime? first = null;
-                DateTime? last = null;
+                DateTime? rawFirst = null, rawLast = null;
                 var dayLocal = day.ToDateTime(TimeOnly.MinValue);
                 if (!string.IsNullOrEmpty(empKeyLower) && logsByEmpDay.TryGetValue((empKeyLower, dayLocal), out var stat))
-                { first = stat.First; last = stat.Last; }
-                if (corrByEmpDay.TryGetValue((emp.Id, dayLocal), out var corr))
-                {
-                    if (corr.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
-                    if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
-                }
+                { rawFirst = stat.First; rawLast = stat.Last; }
+                corrByEmpDay.TryGetValue((emp.Id, dayLocal), out var corr);
 
-                WorkScheduleShift? matched = null;
-                if (effSched?.Type == ScheduleType.Multi && first.HasValue && effSched.Shifts.Any())
-                {
-                    var checkInLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                    var checkInTime = checkInLocal.TimeOfDay;
-                    var ordered = effSched.Shifts.OrderBy(s => s.SortOrder).ToList();
-                    matched = ordered.FirstOrDefault(s => checkInTime <= s.ValidEntryTo) ?? ordered.LastOrDefault();
-                }
-                var shiftStart = matched is not null ? (TimeSpan?)matched.ShiftStart : effSched?.ShiftStart;
-                var shiftEnd = matched is not null ? (TimeSpan?)matched.ShiftEnd : effSched?.ShiftEnd;
-                var normHoursForDay = matched is not null ? (double)matched.RequiredHoursPerDay
-                                    : (!isDayOff && effSched is not null ? (double)effSched.RequiredHoursPerDay : 0d);
+                // leavesByEmp here is already filtered to Approved + Paid (payroll only
+                // credits paid leave).
+                EmployeeLeave? leave = null;
+                if (leavesByEmp.TryGetValue(emp.Id, out var empLvs))
+                    leave = empLvs.FirstOrDefault(l => l.StartDate <= day && l.EndDate >= day);
 
-                var effectiveFirst = first;
-                if (first.HasValue && shiftStart is TimeSpan ss && effSched is { CountEarlyArrival: false })
-                {
-                    var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                    if (firstLocal.TimeOfDay < ss)
-                    {
-                        var clampedLocal = firstLocal.Date + ss;
-                        effectiveFirst = TimeZoneInfo.ConvertTimeToUtc(clampedLocal, TimeZoneInfo.Local);
-                    }
-                }
+                var d = AttendanceDayCalculator.Compute(emp.WorkSchedule, dayPat, rawFirst, rawLast, corr, leave);
 
-                var hoursWorked = (effectiveFirst.HasValue && last.HasValue) ? (last.Value - effectiveFirst.Value).TotalHours : 0d;
-                if (hoursWorked > 16) hoursWorked = normHoursForDay > 0 ? normHoursForDay : 8;
-                if (hoursWorked > 0 && effSched is { LunchBreakDeductionEnabled: true, LunchBreakMinutes: > 0 })
-                    hoursWorked = Math.Max(0, hoursWorked - effSched.LunchBreakMinutes / 60.0);
-                if (hoursWorked > 0)
+                if (d.TotalHours > 0)
                 {
                     workedDays++;
-                    totalWorkedHours += hoursWorked;
-                    if (normHoursForDay > 0)
-                    {
-                        var dailyOt = Math.Max(0, hoursWorked - normHoursForDay);
-                        // Daily-порог из расписания.
-                        if (effSched is { OvertimeDailyThresholdMinutes: > 0 }
-                            && dailyOt * 60.0 < effSched.OvertimeDailyThresholdMinutes)
-                        {
-                            dailyOt = 0;
-                        }
-                        totalOvertimeHours += dailyOt;
-                        if (dailyOt > 0) dailyOtList.Add(dailyOt);
-                    }
-                    if (shiftStart is TimeSpan ssLate && first.HasValue)
-                    {
-                        var firstLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                        var lateMin = (firstLocal.TimeOfDay - ssLate).TotalMinutes;
-                        if (lateMin > 0) { totalLatenessMinutes += lateMin; latenessDaysCount++; }
-                    }
-                    if (shiftEnd is TimeSpan ssEnd && last.HasValue)
-                    {
-                        var lastLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-                        var earlyMin = (ssEnd - lastLocal.TimeOfDay).TotalMinutes;
-                        if (earlyMin > 0) { totalEarlyLeaveMinutes += earlyMin; earlyLeaveDaysCount++; }
-                    }
+                    totalWorkedHours += d.TotalHours;
+                    totalOvertimeHours += d.OvertimeHours;
+                    if (d.OvertimeHours > 0) dailyOtList.Add(d.OvertimeHours);
+                    if (d.LateMinutes is int lm && lm > 0) { totalLatenessMinutes += lm; latenessDaysCount++; }
+                    if (d.EarlyLeaveMinutes is int em && em > 0) { totalEarlyLeaveMinutes += em; earlyLeaveDaysCount++; }
                 }
-            }
-
-            if (leavesByEmp.TryGetValue(emp.Id, out var empLeaves))
-            {
-                foreach (var lv in empLeaves)
+                else if (d.OnLeave)
                 {
-                    for (var d = lv.StartDate; d <= lv.EndDate; d = d.AddDays(1))
-                    {
-                        if (d < rangeStart || d > rangeEnd) continue;
-                        patternsByDate.TryGetValue(d, out var dp);
-                        var effSched = (dp is not null && !dp.IsDayOff) ? (dp.WorkSchedule ?? emp.WorkSchedule) : emp.WorkSchedule;
-                        var dayOff = (dp?.IsDayOff ?? false) || effSched?.Type == ScheduleType.Off;
-                        if (dayOff || effSched is null) continue;
-                        var dayLocal = d.ToDateTime(TimeOnly.MinValue);
-                        if (logsByEmpDay.ContainsKey((empKeyLower, dayLocal))) continue;
-                        workedDays++;
-                        var dayNorm = (double)effSched.RequiredHoursPerDay;
-                        totalWorkedHours += dayNorm > 0 ? dayNorm : 8;
-                    }
+                    // Approved paid leave day without a check-in counts as a worked day at norm hours.
+                    workedDays++;
+                    totalWorkedHours += d.NormHours > 0 ? d.NormHours : 8;
                 }
             }
 
