@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
+import { SelfServiceCalendar } from './SelfServiceCalendar'
 
 const SS_TOKEN_KEY = 'projectx.ss.token'
 
@@ -34,14 +35,27 @@ interface AttendanceRequest {
   createdUtc: string
 }
 
-type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'Vacation' | 'Overtime'
+interface SelfServiceLeave {
+  id: string
+  leaveType: string // 'Vacation' | 'DayOff'
+  isPaid: boolean
+  startDate: string
+  endDate: string
+  reason: string | null
+  status: string
+  approvedAt: string | null
+  createdUtc: string
+}
+
+const MY_REQUESTS_PAGE_SIZE = 5
+
+type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'Vacation'
 
 const REQUEST_TYPE_CONFIG: { type: RequestType; icon: string; color: string }[] = [
   { type: 'CheckIn', icon: 'login', color: 'bg-green-500/10 text-green-600' },
   { type: 'CheckOut', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
   { type: 'Absence', icon: 'person_off', color: 'bg-amber-500/10 text-amber-600' },
   { type: 'Vacation', icon: 'beach_access', color: 'bg-purple-500/10 text-purple-600' },
-  { type: 'Overtime', icon: 'more_time', color: 'bg-indigo-500/10 text-indigo-600' },
 ]
 
 const STATUS_COLORS: Record<string, string> = {
@@ -69,11 +83,17 @@ function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+function formatDateOnly(iso: string) {
+  const [y, m, d] = iso.slice(0, 10).split('-')
+  return `${d}.${m}.${y}`
+}
+
 export function SelfServicePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [me, setMe] = useState<SelfServiceMe | null>(null)
   const [requests, setRequests] = useState<AttendanceRequest[]>([])
+  const [leaves, setLeaves] = useState<SelfServiceLeave[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,7 +101,9 @@ export function SelfServicePage() {
   const [selectedType, setSelectedType] = useState<RequestType>('CheckIn')
   const [reqDateTime, setReqDateTime] = useState(new Date().toISOString().slice(0, 16))
   const [reqEndDateTime, setReqEndDateTime] = useState('')
+  const [reqIsPaid, setReqIsPaid] = useState(true)
   const [reqComment, setReqComment] = useState('')
+  const [myReqPage, setMyReqPage] = useState(0)
   // Поля корректировки (только для type === 'Correction').
   const [corrDate, setCorrDate] = useState(new Date().toISOString().slice(0, 10))
   const [corrCheckIn, setCorrCheckIn] = useState('')
@@ -145,12 +167,14 @@ export function SelfServicePage() {
 
   const loadData = async () => {
     try {
-      const [meData, reqData] = await Promise.all([
+      const [meData, reqData, leaveData] = await Promise.all([
         ssApiRequest<SelfServiceMe>('/api/self-service/me'),
         ssApiRequest<AttendanceRequest[]>('/api/self-service/requests'),
+        ssApiRequest<SelfServiceLeave[]>('/api/self-service/leaves'),
       ])
       setMe(meData)
       setRequests(reqData)
+      setLeaves(leaveData)
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
@@ -168,6 +192,7 @@ export function SelfServicePage() {
     setSelectedType(type)
     setReqDateTime(new Date().toISOString().slice(0, 16))
     setReqEndDateTime('')
+    setReqIsPaid(true)
     setReqComment('')
     setCorrDate(new Date().toISOString().slice(0, 10))
     setCorrCheckIn('')
@@ -182,10 +207,6 @@ export function SelfServicePage() {
     setSubmitting(true)
     setSubmitError(null)
     try {
-      let requestedTimeUtc: string
-      let requestedEndTimeUtc: string | null = null
-      let latitude: number | null = null
-      let longitude: number | null = null
       if (selectedType === 'CheckIn' || selectedType === 'CheckOut') {
         const m = corrCheckIn.match(/^([01][0-9]|2[0-3]):([0-5][0-9])$/)
         if (!m) {
@@ -195,11 +216,11 @@ export function SelfServicePage() {
         }
         const d = new Date(corrDate + 'T00:00:00')
         d.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0)
-        requestedTimeUtc = d.toISOString()
-        requestedEndTimeUtc = null
 
         // Запрос геолокации. Если разрешена — отправим вместе с запросом, на бэке проверится
         // GeoZone и при попадании запрос авто-аппрувится (минуя админа).
+        let latitude: number | null = null
+        let longitude: number | null = null
         if ('geolocation' in navigator) {
           try {
             const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
@@ -209,21 +230,36 @@ export function SelfServicePage() {
             longitude = pos.coords.longitude
           } catch { /* пользователь отказал — отправим без координат, уйдёт в Pending */ }
         }
+        await ssApiRequest('/api/self-service/requests', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: selectedType,
+            requestedTimeUtc: d.toISOString(),
+            requestedEndTimeUtc: null,
+            comment: reqComment || null,
+            latitude,
+            longitude,
+          }),
+        })
       } else {
-        requestedTimeUtc = new Date(reqDateTime).toISOString()
-        requestedEndTimeUtc = reqEndDateTime ? new Date(reqEndDateTime).toISOString() : null
+        // Отпуск (Vacation) / отгул (Absence → DayOff) — это leave (EmployeeLeave),
+        // чтобы после одобрения он отображался в отчётах как "в отпуске"/"отгул".
+        const startDate = reqDateTime.slice(0, 10)
+        if (!startDate) { setSubmitError(t('selfService.failedSubmitRequest')); setSubmitting(false); return }
+        // Отгул/отсутствие — всегда одна дата; отпуск — диапазон.
+        const endDate = selectedType === 'Vacation' ? (reqEndDateTime.slice(0, 10) || startDate) : startDate
+        if (endDate < startDate) { setSubmitError(t('selfService.endBeforeStart')); setSubmitting(false); return }
+        await ssApiRequest('/api/self-service/leaves', {
+          method: 'POST',
+          body: JSON.stringify({
+            leaveType: selectedType === 'Vacation' ? 'Vacation' : 'DayOff',
+            isPaid: reqIsPaid,
+            startDate,
+            endDate,
+            reason: reqComment || null,
+          }),
+        })
       }
-      await ssApiRequest('/api/self-service/requests', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: selectedType,
-          requestedTimeUtc,
-          requestedEndTimeUtc,
-          comment: reqComment || null,
-          latitude,
-          longitude,
-        }),
-      })
       setSubmitSuccess(true)
       await loadData()
     } catch (err) {
@@ -309,7 +345,17 @@ export function SelfServicePage() {
   }
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-  const needsEndDate = selectedType === 'Vacation' || selectedType === 'Absence' || selectedType === 'Overtime'
+  const isLeaveType = selectedType === 'Vacation' || selectedType === 'Absence'
+  const needsEndDate = selectedType === 'Vacation' // отпуск — диапазон; отгул/отсутствие — одна дата
+
+  // "My requests" = leaves + attendance requests, newest first, paginated (5/page).
+  const myItems = [
+    ...leaves.map((lv) => ({ id: lv.id, kind: 'leave' as const, sort: new Date(lv.createdUtc).getTime(), leave: lv })),
+    ...requests.map((r) => ({ id: r.id, kind: 'request' as const, sort: new Date(r.createdUtc).getTime(), request: r })),
+  ].sort((a, b) => b.sort - a.sort)
+  const myTotalPages = Math.max(1, Math.ceil(myItems.length / MY_REQUESTS_PAGE_SIZE))
+  const myCurPage = Math.min(myReqPage, myTotalPages - 1)
+  const myPageItems = myItems.slice(myCurPage * MY_REQUESTS_PAGE_SIZE, myCurPage * MY_REQUESTS_PAGE_SIZE + MY_REQUESTS_PAGE_SIZE)
 
   return (
     <div className="min-h-screen bg-background-light font-sans antialiased">
@@ -413,10 +459,13 @@ export function SelfServicePage() {
           )}
         </div>
 
+        {/* Attendance calendar (check-in/out, day-offs, vacations, absences) */}
+        <SelfServiceCalendar />
+
         {/* Action Buttons */}
         <div>
           <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">{t('selfService.submitARequest')}</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             {REQUEST_TYPE_CONFIG.map(({ type, icon, color }) => (
               <button
                 key={type}
@@ -433,30 +482,69 @@ export function SelfServicePage() {
         {/* Recent Requests */}
         <div>
           <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-3">{t('selfService.myRequests')}</p>
-          {requests.length === 0 ? (
+          {myItems.length === 0 ? (
             <div className="bg-surface rounded-2xl p-6 text-center text-text-light text-sm">
               {t('selfService.noRequestsYet')}
             </div>
           ) : (
-            <div className="space-y-2">
-              {requests.map((r) => {
-                const statusColor = STATUS_COLORS[r.status] ?? 'text-text-light bg-background-light'
-                const statusLabel = STATUS_COLORS[r.status] ? t(`selfService.statuses.${r.status}`) : r.status
-                const typeLabel = REQUEST_TYPE_CONFIG.find((c) => c.type === r.type) ? t(`selfService.requestTypes.${r.type}`) : r.type
-                return (
-                  <div key={r.id} className="bg-surface rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3">
-                    <div className="space-y-0.5">
-                      <p className="font-bold text-text-dark text-sm">{typeLabel}</p>
-                      <p className="text-text-light text-xs">{formatDateTime(r.requestedTimeUtc)}</p>
-                      {r.comment && <p className="text-text-light text-xs italic">"{r.comment}"</p>}
+            <>
+              <div className="space-y-2">
+                {myPageItems.map((it) => {
+                  if (it.kind === 'leave') {
+                    const lv = it.leave
+                    const statusColor = STATUS_COLORS[lv.status] ?? 'text-text-light bg-background-light'
+                    const statusLabel = STATUS_COLORS[lv.status] ? t(`selfService.statuses.${lv.status}`) : lv.status
+                    const typeLabel = t(`selfService.requestTypes.${lv.leaveType === 'DayOff' ? 'Absence' : 'Vacation'}`)
+                    const dates = lv.startDate === lv.endDate ? formatDateOnly(lv.startDate) : `${formatDateOnly(lv.startDate)} – ${formatDateOnly(lv.endDate)}`
+                    return (
+                      <div key={lv.id} className="bg-surface rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <p className="font-bold text-text-dark text-sm">{typeLabel} · {t(lv.isPaid ? 'selfService.paid' : 'selfService.unpaid')}</p>
+                          <p className="text-text-light text-xs">{dates}</p>
+                          {lv.reason && <p className="text-text-light text-xs italic">"{lv.reason}"</p>}
+                        </div>
+                        <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusColor}`}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                    )
+                  }
+                  const r = it.request
+                  const statusColor = STATUS_COLORS[r.status] ?? 'text-text-light bg-background-light'
+                  const statusLabel = STATUS_COLORS[r.status] ? t(`selfService.statuses.${r.status}`) : r.status
+                  const typeLabel = REQUEST_TYPE_CONFIG.find((c) => c.type === r.type) ? t(`selfService.requestTypes.${r.type}`) : r.type
+                  return (
+                    <div key={r.id} className="bg-surface rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-text-dark text-sm">{typeLabel}</p>
+                        <p className="text-text-light text-xs">{formatDateTime(r.requestedTimeUtc)}</p>
+                        {r.comment && <p className="text-text-light text-xs italic">"{r.comment}"</p>}
+                      </div>
+                      <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusColor}`}>
+                        {statusLabel}
+                      </span>
                     </div>
-                    <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusColor}`}>
-                      {statusLabel}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+              {myTotalPages > 1 && (
+                <div className="flex items-center justify-between gap-2 mt-3">
+                  <button
+                    type="button" disabled={myCurPage === 0} onClick={() => setMyReqPage(myCurPage - 1)}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-surface shadow-sm text-text-dark disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background-light transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-xl">chevron_left</span>
+                  </button>
+                  <span className="text-xs font-bold text-text-light">{myCurPage + 1} / {myTotalPages}</span>
+                  <button
+                    type="button" disabled={myCurPage >= myTotalPages - 1} onClick={() => setMyReqPage(myCurPage + 1)}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-surface shadow-sm text-text-dark disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background-light transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-xl">chevron_right</span>
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -506,41 +594,40 @@ export function SelfServicePage() {
               <>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
-                    {needsEndDate ? t('selfService.startDateTime') : t('selfService.dateTime')}
+                    {needsEndDate ? t('selfService.startDate') : t('common.date')}
                   </label>
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <input
-                      type="date"
-                      value={reqDateTime.slice(0, 10)}
-                      onChange={(e) => setReqDateTime(`${e.target.value}T${reqDateTime.slice(11) || '09:00'}`)}
-                      required
-                      className="rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                    />
-                    <input
-                      type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
-                      value={reqDateTime.slice(11, 16)}
-                      onChange={(e) => setReqDateTime(`${reqDateTime.slice(0, 10) || new Date().toISOString().slice(0, 10)}T${maskHHMM(e.target.value)}`)}
-                      required
-                      className="w-24 rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                    />
-                  </div>
+                  <input
+                    type="date"
+                    value={reqDateTime.slice(0, 10)}
+                    onChange={(e) => setReqDateTime(`${e.target.value}T09:00`)}
+                    required
+                    className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                  />
                 </div>
                 {needsEndDate && (
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.endDateTime')}</label>
-                    <div className="grid grid-cols-[1fr_auto] gap-2">
-                      <input
-                        type="date"
-                        value={reqEndDateTime.slice(0, 10)}
-                        onChange={(e) => setReqEndDateTime(`${e.target.value}T${reqEndDateTime.slice(11) || '18:00'}`)}
-                        className="rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                      <input
-                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
-                        value={reqEndDateTime.slice(11, 16)}
-                        onChange={(e) => setReqEndDateTime(`${reqEndDateTime.slice(0, 10) || new Date().toISOString().slice(0, 10)}T${maskHHMM(e.target.value)}`)}
-                        className="w-24 rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.endDate')}</label>
+                    <input
+                      type="date"
+                      value={reqEndDateTime.slice(0, 10)}
+                      onChange={(e) => setReqEndDateTime(`${e.target.value}T18:00`)}
+                      required
+                      className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                  </div>
+                )}
+                {isLeaveType && (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.paidLeave')}</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button" onClick={() => setReqIsPaid(true)}
+                        className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${reqIsPaid ? 'bg-primary text-white' : 'bg-background-light text-text-light'}`}
+                      >{t('selfService.paid')}</button>
+                      <button
+                        type="button" onClick={() => setReqIsPaid(false)}
+                        className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${!reqIsPaid ? 'bg-primary text-white' : 'bg-background-light text-text-light'}`}
+                      >{t('selfService.unpaid')}</button>
                     </div>
                   </div>
                 )}

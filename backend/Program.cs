@@ -4714,6 +4714,9 @@ app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody req
 
     if (!Enum.TryParse<AttendanceRequestType>(request.Type, true, out var reqType))
         return Results.BadRequest(new { message = "Invalid request type." });
+    // Overtime is not a self-service request type.
+    if (reqType == AttendanceRequestType.Overtime)
+        return Results.BadRequest(new { message = "Overtime requests are not available in self-service." });
 
     // Гео-проверка: если CheckIn/CheckOut и координаты в радиусе активной зоны → авто-аппрув.
     string? matchedZone = null;
@@ -4837,9 +4840,9 @@ app.MapGet("/api/self-service/schedule", async (
     if (toDate.DayNumber - fromDate.DayNumber > 92) toDate = fromDate.AddDays(92);
 
     var employee = await dbContext.Employees.AsNoTracking()
-        .Include(e => e.WorkSchedule)
+        .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.DayPatterns.Where(p => p.Date >= fromDate && p.Date <= toDate))
-            .ThenInclude(p => p.WorkSchedule)
+            .ThenInclude(p => p.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .FirstOrDefaultAsync(e => e.Id == appUser.EmployeeId, cancellationToken);
     if (employee is null) return Results.NotFound();
 
@@ -4849,23 +4852,53 @@ app.MapGet("/api/self-service/schedule", async (
                  && l.Status != LeaveStatus.Rejected && l.Status != LeaveStatus.Cancelled)
         .ToListAsync(cancellationToken);
 
+    // Actual check-in/out per day (device logs + admin corrections) for the calendar.
+    var rangeFromUtc = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var rangeToUtcExcl = toDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var empNo = (employee.EmployeeNo ?? "").Trim();
+    var logsByDay = new Dictionary<DateOnly, (DateTime First, DateTime Last)>();
+    if (!string.IsNullOrEmpty(empNo))
+    {
+        var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+            .Where(r => r.EmployeeNoString == empNo && r.EventTimeUtc >= rangeFromUtc && r.EventTimeUtc < rangeToUtcExcl)
+            .Select(r => r.EventTimeUtc)
+            .ToListAsync(cancellationToken);
+        logsByDay = logs.GroupBy(t => DateOnly.FromDateTime(t.Date))
+            .ToDictionary(g => g.Key, g => (g.Min(), g.Max()));
+    }
+    var corrByDate = (await dbContext.AttendanceCorrections.AsNoTracking()
+            .Where(c => c.EmployeeId == appUser.EmployeeId && c.DateUtc >= rangeFromUtc && c.DateUtc < rangeToUtcExcl)
+            .ToListAsync(cancellationToken))
+        .ToDictionary(c => DateOnly.FromDateTime(c.DateUtc));
+
     var patternsByDate = employee.DayPatterns.ToDictionary(p => p.Date);
     var days = new List<object>();
     for (var d = fromDate; d <= toDate; d = d.AddDays(1))
     {
         patternsByDate.TryGetValue(d, out var pat);
         var sched = (pat is not null && !pat.IsDayOff) ? (pat.WorkSchedule ?? employee.WorkSchedule) : employee.WorkSchedule;
-        var isDayOff = (pat?.IsDayOff ?? false) || sched?.Type == ScheduleType.Off;
         var leave = leaves.FirstOrDefault(l => l.StartDate <= d && l.EndDate >= d);
+        var approvedLeave = leaves.FirstOrDefault(l => l.Status == LeaveStatus.Approved && l.StartDate <= d && l.EndDate >= d);
+
+        DateTime? rawFirst = null, rawLast = null;
+        if (logsByDay.TryGetValue(d, out var stat)) { rawFirst = stat.First; rawLast = stat.Last; }
+        corrByDate.TryGetValue(d, out var corr);
+
+        var calc = AttendanceDayCalculator.Compute(employee.WorkSchedule, pat, rawFirst, rawLast, corr, approvedLeave);
+
         days.Add(new
         {
             date = d.ToString("yyyy-MM-dd"),
             scheduleId = sched?.Id,
-            scheduleName = sched?.Name,
-            shiftStart = sched?.ShiftStart?.ToString(@"hh\:mm"),
-            shiftEnd = sched?.ShiftEnd?.ToString(@"hh\:mm"),
+            scheduleName = calc.ScheduleName ?? sched?.Name,
+            shiftStart = calc.ShiftStart?.ToString(@"hh\:mm"),
+            shiftEnd = calc.ShiftEnd?.ToString(@"hh\:mm"),
             color = sched?.Color,
-            isDayOff,
+            isDayOff = calc.IsDayOff,
+            isAbsent = calc.IsAbsent,
+            onLeave = calc.OnLeave,
+            checkInUtc = calc.CheckInUtc,
+            checkOutUtc = calc.CheckOutUtc,
             leaveType = leave?.LeaveType.ToString(),
             leaveStatus = leave?.Status.ToString()
         });
