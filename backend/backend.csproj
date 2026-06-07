@@ -37,8 +37,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- .env is a DEV convenience: copied to bin for `dotnet run`, but NEVER published
+         (it must not ship inside the installer and override Production config). -->
     <None Update=".env" Condition="Exists('.env')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
   <ItemGroup>

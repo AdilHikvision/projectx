@@ -126,7 +126,6 @@ export function LoginPage() {
             </div>
             <div className="space-y-1">
               <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.signInUpper')}</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.signInToDashboard')}</p>
             </div>
           </div>
 

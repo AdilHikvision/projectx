@@ -29,7 +29,11 @@ using QuestPDF.Infrastructure;
 QuestPDF.Settings.License = LicenseType.Community;
 
 // Подхватить backend/.env в переменные окружения до загрузки конфигурации (Database__Password и т.д.).
-foreach (var baseDir in new[]
+// Только для DEV-запуска (dotnet run): под Windows-службой конфигурация берётся из
+// appsettings.Production.json, и .env не должен её переопределять.
+foreach (var baseDir in Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService()
+         ? Array.Empty<string>()
+         : new[]
          {
              Directory.GetCurrentDirectory(),
              Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..")),

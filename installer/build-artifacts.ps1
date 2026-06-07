@@ -5,6 +5,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Run a native command (npm/dotnet) without letting its stderr output be treated as
+# a terminating error (Windows PowerShell 5.1 wraps native stderr as ErrorRecords
+# under -EA Stop). Success/failure is decided by the real exit code.
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$Script,
+        [Parameter(Mandatory = $true)][string]$What
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Script } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)." }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDir "..")
 $frontendDir = Join-Path $repoRoot "frontend"
@@ -18,9 +32,11 @@ if (Test-Path $publishDir) {
 
 Write-Host "Building frontend..."
 Push-Location $frontendDir
-npm ci
-npm run build
-Pop-Location
+try {
+    Invoke-Native { npm ci } 'npm ci'
+    Invoke-Native { npm run build } 'npm run build'
+}
+finally { Pop-Location }
 
 $backendWwwroot = Join-Path $backendDir "wwwroot"
 if (Test-Path $backendWwwroot) {
@@ -31,15 +47,27 @@ Copy-Item (Join-Path $frontendDir "dist\*") $backendWwwroot -Recurse -Force
 
 Write-Host "Publishing backend..."
 Push-Location $backendDir
-dotnet publish "backend.csproj" `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained true `
-    /p:PublishSingleFile=true `
-    /p:IncludeNativeLibrariesForSelfExtract=true `
-    /p:PublishTrimmed=false `
-    -o $publishDir
-Pop-Location
+try {
+    Invoke-Native {
+        dotnet publish "backend.csproj" `
+            -c $Configuration `
+            -r $Runtime `
+            --self-contained true `
+            /p:PublishSingleFile=true `
+            /p:IncludeNativeLibrariesForSelfExtract=true `
+            /p:PublishTrimmed=false `
+            -o $publishDir
+    } 'dotnet publish'
+}
+finally { Pop-Location }
+
+# Safety: a dev .env must never ship inside the installer (it would override the
+# generated appsettings.Production.json at runtime). Remove it if it slipped in.
+$publishedEnv = Join-Path $publishDir ".env"
+if (Test-Path $publishedEnv) {
+    Remove-Item $publishedEnv -Force
+    Write-Host "Removed stray .env from publish output."
+}
 
 Write-Host "Copying Hikvision SDK native dependencies..."
 $sdkCandidates = @()
@@ -53,8 +81,13 @@ $defaultSdkDir = if ($isLinuxRuntime) {
     Join-Path $repoRoot "winSDK\lib"
 }
 # HCNetSDK (не HPNetSDK) — требуется для NET_DVR_ActivateDevice. HPNetSDK исключён.
+# The SDK normally lives under the repo root, but it is also kept under backend\
+# (gitignored) — include both so the build finds it without HIKVISION_SDK_PATH.
 $sdkCandidates += @(
     $defaultSdkDir,
+    (Join-Path $repoRoot "backend\winSDK\lib"),
+    (Join-Path $repoRoot "winSDK\lib"),
+    (Join-Path $repoRoot "backend\linuxSDK\lib"),
     (Join-Path $repoRoot "linuxSDK\lib")
 )
 

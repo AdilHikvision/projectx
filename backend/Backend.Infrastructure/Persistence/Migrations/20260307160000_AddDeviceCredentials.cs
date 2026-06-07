@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
-    public class AddDeviceCredentials : Migration
+    public partial class AddDeviceCredentials : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

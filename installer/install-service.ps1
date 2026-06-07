@@ -6,24 +6,27 @@ param(
     [string]$ServiceName = "ProjectXBackend",
     [string]$ServiceDisplayName = "ProjectX Backend Service",
     [string]$ServiceDescription = "ProjectX API and local dashboard service",
-    [string]$ApiUrls = "http://localhost:5055",
-    [string]$DashboardUrl = "http://localhost:5055/system",
+    # Kestrel binds loopback only — nginx (install-nginx.ps1) fronts it for LAN access.
+    [string]$ApiUrls = "http://127.0.0.1:5055",
+    [string]$DashboardUrl = "http://127.0.0.1:5055/system",
 
     [string]$DbHost = "localhost",
     [int]$DbPort = 5432,
     [string]$DbName = "projectx",
     [string]$DbUser = "projectx_user",
-    [Parameter(Mandatory = $true)]
-    [string]$DbPassword,
+    # Optional when -PreserveConfig is set (update keeps the existing appsettings).
+    [string]$DbPassword = "",
 
     [string]$JwtIssuer = "projectx-api",
     [string]$JwtAudience = "projectx-frontend",
-    [Parameter(Mandatory = $true)]
-    [string]$JwtKey,
+    [string]$JwtKey = "",
 
     [string]$LocalControlKey = "",
     [string]$PostgresServiceName = "postgresql-x64-16",
     [bool]$EnableTrayMonitor = $true,
+    # Update mode: reuse the existing appsettings.Production.json instead of
+    # regenerating it from DB/JWT parameters.
+    [switch]$PreserveConfig,
     [string]$LogPath = "$env:TEMP\ProjectX-install-service.log"
 )
 
@@ -40,6 +43,32 @@ try {
 
 if (-not (Test-Path $SourceDir)) {
     throw "Source directory not found: $SourceDir"
+}
+
+# ── Config preservation (update mode) ──────────────────────────────────────────
+# On update, back up the existing appsettings.Production.json (it survives the
+# InstallDir wipe below) and restore it afterwards so DB/JWT stay unchanged.
+$existingConfig = Join-Path $InstallDir "appsettings.Production.json"
+$preservedConfigBackup = $null
+if ($PreserveConfig -and (Test-Path $existingConfig)) {
+    $preservedConfigBackup = Join-Path $env:TEMP "ProjectX-appsettings-preserve.json"
+    Copy-Item $existingConfig $preservedConfigBackup -Force
+    Write-Host "PreserveConfig: backed up existing appsettings.Production.json."
+}
+
+$willGenerateConfig = ($null -eq $preservedConfigBackup)
+if ($willGenerateConfig) {
+    if ([string]::IsNullOrWhiteSpace($DbPassword)) {
+        throw "DbPassword is required (it is optional only with -PreserveConfig when a previous config exists)."
+    }
+    # The JWT signing key is internal to the backend — generate a strong one when
+    # the caller did not supply it (the installer no longer asks the user for it).
+    if ([string]::IsNullOrWhiteSpace($JwtKey)) {
+        $jwtBytes = New-Object 'byte[]' 48
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($jwtBytes)
+        $JwtKey = [Convert]::ToBase64String($jwtBytes)
+        Write-Host "Generated a random JWT signing key."
+    }
 }
 
 $appSettingsProduction = @{
@@ -73,6 +102,13 @@ $appSettingsProduction = @{
                 DisplayName = "PostgreSQL"
                 Port = "$DbPort"
                 IsControllable = $true
+            },
+            @{
+                Key = "nginx"
+                ServiceName = "ProjectXNginx"
+                DisplayName = "Nginx (LAN proxy)"
+                Port = "80"
+                IsControllable = $true
             }
         )
     }
@@ -100,8 +136,22 @@ if (Test-Path $InstallDir) {
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item (Join-Path $SourceDir "*") $InstallDir -Recurse -Force
 
-$json = $appSettingsProduction | ConvertTo-Json -Depth 8
-Set-Content -Path (Join-Path $InstallDir "appsettings.Production.json") -Value $json -Encoding UTF8
+# A dev .env would override Production config at runtime — never keep it in the install.
+$strayEnv = Join-Path $InstallDir ".env"
+if (Test-Path $strayEnv) {
+    Remove-Item $strayEnv -Force
+    Write-Host "Removed stray .env from install directory."
+}
+
+if ($willGenerateConfig) {
+    $json = $appSettingsProduction | ConvertTo-Json -Depth 8
+    Set-Content -Path (Join-Path $InstallDir "appsettings.Production.json") -Value $json -Encoding UTF8
+    Write-Host "Generated appsettings.Production.json."
+}
+else {
+    Copy-Item $preservedConfigBackup (Join-Path $InstallDir "appsettings.Production.json") -Force
+    Write-Host "PreserveConfig: restored existing appsettings.Production.json (DB/JWT unchanged)."
+}
 
 if (-not (Test-Path $exePath)) {
     throw "backend.exe not found in install dir: $exePath"

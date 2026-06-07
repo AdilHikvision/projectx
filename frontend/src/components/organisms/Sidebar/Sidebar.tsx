@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { NavItem } from '../../molecules';
 import { useAuth } from '../../../auth/AuthContext';
 import { useModule } from '../../../context/ModuleContext';
-import { MODULES, type ModuleKey } from '../../../config/modules';
+import { /* MODULES, */ type ModuleKey } from '../../../config/modules';
 
 interface NavConfig {
     to: string;
@@ -49,8 +49,8 @@ const SYSTEM_NAV: NavConfig[] = [
 export function Sidebar() {
     const { hasAnyPermission } = useAuth();
     const { t } = useTranslation();
-    const { activeModule, openPicker } = useModule();
-    const module = MODULES[activeModule];
+    const { activeModule /*, openPicker */ } = useModule();
+    // const module = MODULES[activeModule]; // временно отключено вместе с карточкой выбора модуля
 
     const isAllowed = (item: NavConfig): boolean => {
         if (item.modules && !item.modules.includes(activeModule)) return false;
@@ -72,7 +72,8 @@ export function Sidebar() {
                 </div>
             </div>
 
-            {/* ─── Active module card (opens the module picker) ─── */}
+            {/* ─── Active module card (opens the module picker) — временно отключено ─── */}
+            {/*
             <button
                 type="button"
                 onClick={openPicker}
@@ -88,6 +89,7 @@ export function Sidebar() {
                 </span>
                 <span className="material-symbols-outlined shrink-0 text-text-muted">unfold_more</span>
             </button>
+            */}
 
             <nav className="flex-1 px-3 space-y-1">
                 {primary.map(item => (
@@ -105,6 +107,10 @@ export function Sidebar() {
                     </nav>
                 </div>
             )}
+
+            <div className="px-6 pt-1 text-[10px] font-bold uppercase tracking-widest text-text-light/60">
+                v{__APP_VERSION__}
+            </div>
 
         </aside>
     );

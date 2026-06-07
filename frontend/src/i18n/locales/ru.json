@@ -631,7 +631,6 @@
   "auth": {
     "signIn": "Войти",
     "signInUpper": "ВХОД",
-    "signInToDashboard": "Доступ к панели UniFi",
     "staff": "Сотрудник",
     "selfService": "Самообслуживание",
     "emailAddress": "Эл. почта",

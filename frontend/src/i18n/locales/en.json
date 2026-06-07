@@ -624,7 +624,6 @@
   "auth": {
     "signIn": "Sign In",
     "signInUpper": "SIGN IN",
-    "signInToDashboard": "Access your UniFi dashboard",
     "staff": "Staff",
     "selfService": "Self-service",
     "emailAddress": "Email Address",

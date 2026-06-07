@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
-    public class AddDeviceIdentifierAndLastSeen : Migration
+    public partial class AddDeviceIdentifierAndLastSeen : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

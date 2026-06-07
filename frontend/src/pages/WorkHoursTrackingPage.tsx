@@ -477,6 +477,8 @@ useEffect(() => {
       color: '#6366f1',
       countEarlyArrival: true,
       overtimeDailyThresholdMinutes: '0',
+      lunchBreakDeductionEnabled: false,
+      lunchBreakMinutes: '30',
     })
     setScheduleShifts([])
     setEditingSchedule(null)
