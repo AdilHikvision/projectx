@@ -23,9 +23,9 @@ Authorization: Bearer <token>
 | GET | `/api/self-service/me` | Профиль + записи за сегодня |
 | GET | `/api/self-service/summary` | Сводка за месяц для виджета |
 | GET | `/api/self-service/attendance` | История посещаемости (фильтр по диапазону) |
-| GET | `/api/self-service/schedule` | Рабочий график на диапазон дат |
+| GET | `/api/self-service/schedule` | Рабочий график + посещения на диапазон (данные календаря-планера) |
 | GET | `/api/self-service/requests` | Список заявок (последние 50) |
-| POST | `/api/self-service/requests` | Создать заявку (check-in/check-out/absence/vacation/overtime) |
+| POST | `/api/self-service/requests` | Создать заявку (check-in / check-out / absence / vacation; overtime отклоняется) |
 | DELETE | `/api/self-service/requests/{id}` | Отменить Pending заявку |
 | GET | `/api/self-service/leaves` | Список отпусков сотрудника |
 | POST | `/api/self-service/leaves` | Подать запрос на отпуск |
@@ -198,7 +198,7 @@ Authorization: Bearer <token>
 
 ### GET /api/self-service/schedule
 
-Рабочий график сотрудника на диапазон дат: дефолтное расписание + точечные `DayPattern` + наложение отпусков.
+Данные **календаря-планера** сотрудника на диапазон дат: дефолтное расписание + точечные `DayPattern` + отпуска + **фактические приход/уход и статус дня** (присутствие / выходной / отсутствие / в отпуске). Приход/уход и статус считаются тем же общим калькулятором (`AttendanceDayCalculator`), что и сетка Work Hours / отчёты / зарплата.
 
 **Query:**
 - `from` — `YYYY-MM-DD` (опционально, по умолчанию — 1-е число текущего месяца)
@@ -228,6 +228,10 @@ Authorization: Bearer <token>
       "shiftEnd": "18:00",
       "color": "#6366f1",
       "isDayOff": false,
+      "isAbsent": false,
+      "onLeave": false,
+      "checkInUtc": "2026-05-01T05:00:00Z",
+      "checkOutUtc": "2026-05-01T14:00:00Z",
       "leaveType": null,
       "leaveStatus": null
     }
@@ -235,7 +239,15 @@ Authorization: Bearer <token>
 }
 ```
 
-`leaveType` / `leaveStatus` заполняются только для дат, попадающих в активный отпуск (статусы `Pending` или `Approved`).
+| Поле дня | Описание |
+|----------|----------|
+| `isDayOff` | Запланированный выходной (по `DayPattern` или расписанию типа `Off`) |
+| `isAbsent` | Рабочий день без прихода и не в одобренном отпуске |
+| `onLeave` | День покрыт **одобренным** отпуском (рабочий день без прихода) |
+| `checkInUtc` / `checkOutUtc` | Фактические приход/уход (первое/последнее событие + админ-коррекция), `null` если нет |
+| `leaveType` / `leaveStatus` | Заполняются для дат в активном отпуске (`Vacation`/`DayOff`; статус `Pending` или `Approved`). При `Pending`-отпуске `onLeave=false` |
+
+Приоритет статуса для отрисовки: пришёл (есть `checkInUtc`) → отпуск (`leaveType`) → отсутствие (`isAbsent`) → выходной (`isDayOff`).
 
 ---
 
@@ -268,7 +280,7 @@ Authorization: Bearer <token>
 ]
 ```
 
-**Значения `type`:** `CheckIn` | `CheckOut` | `Absence` | `Vacation` | `Overtime` | `Correction`
+**Значения `type`:** `CheckIn` | `CheckOut` | `Absence` | `Vacation` | `Correction` | `Overtime` _(только в исторических записях — новые self-service заявки типа `Overtime` создать нельзя)_
 
 **Значения `status`:** `Pending` | `Approved` | `Rejected`
 
@@ -292,12 +304,18 @@ Authorization: Bearer <token>
 
 | Поле | Обязательно | Описание |
 |------|------------|----------|
-| `type` | да | `CheckIn`, `CheckOut`, `Absence`, `Vacation`, `Overtime`, `Correction` |
+| `type` | да | `CheckIn`, `CheckOut`, `Absence`, `Vacation`, `Correction` (тип `Overtime` отклоняется — `400`) |
 | `requestedTimeUtc` | да | Время события (ISO 8601) |
-| `requestedEndTimeUtc` | нет | Конец периода (для `Absence` / `Vacation` / `Overtime`) |
+| `requestedEndTimeUtc` | нет | Конец периода (для `Absence` / `Vacation`) |
 | `comment` | нет | Комментарий |
 | `latitude` | нет | Широта (для геопроверки) |
 | `longitude` | нет | Долгота (для геопроверки) |
+
+> **Примечание.** Портал отправляет сюда только корректировки времени (`CheckIn`/`CheckOut`).
+> Отпуск (`Vacation`) и отгул/отсутствие (`Absence` → `DayOff`) теперь подаются как **leave** через
+> `POST /api/self-service/leaves` — это создаёт `EmployeeLeave`, который после одобрения отображается
+> в отчётах и календаре. Эндпоинт `/requests` по-прежнему принимает `Absence`/`Vacation` (создаёт
+> `AttendanceRequest`), но такие заявки в отчётах как отпуск **не** отображаются.
 
 **Автоматическое одобрение:** если тип `CheckIn`/`CheckOut` и координаты попадают в радиус активной геозоны — заявка автоматически получает статус `Approved` и создаётся `AttendanceCorrection`.
 
@@ -313,7 +331,9 @@ Authorization: Bearer <token>
 }
 ```
 
-**Response 400:** `{ "message": "Invalid request type." }`
+**Response 400:**
+- `{ "message": "Invalid request type." }`
+- `{ "message": "Overtime requests are not available in self-service." }` — тип `Overtime` в self-service запрещён.
 
 ---
 
