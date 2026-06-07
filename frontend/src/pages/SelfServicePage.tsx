@@ -5,6 +5,7 @@ import { Button } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { SelfServiceCalendar } from './SelfServiceCalendar'
+import { SUPPORTED_LANGUAGES } from '../i18n'
 
 const SS_TOKEN_KEY = 'projectx.ss.token'
 
@@ -89,7 +90,7 @@ function formatDateOnly(iso: string) {
 }
 
 export function SelfServicePage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const [me, setMe] = useState<SelfServiceMe | null>(null)
   const [requests, setRequests] = useState<AttendanceRequest[]>([])
@@ -372,6 +373,16 @@ export function SelfServicePage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <select
+              value={i18n.resolvedLanguage ?? i18n.language?.split('-')[0] ?? 'en'}
+              onChange={(e) => { void i18n.changeLanguage(e.target.value) }}
+              aria-label="Language"
+              className="bg-background-light border-none rounded-lg px-2 py-1.5 text-xs font-bold text-text-dark appearance-none outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+            >
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <option key={lang.code} value={lang.code}>{lang.flag} {lang.code.toUpperCase()}</option>
+              ))}
+            </select>
             <button
               onClick={() => { setPwCurrent(''); setPwNew(''); setPwConfirm(''); setPwError(null); setPwModal(true) }}
               className="flex items-center gap-1 text-text-light hover:text-primary text-xs font-bold uppercase tracking-widest transition-colors"
