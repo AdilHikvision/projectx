@@ -116,22 +116,53 @@ $appSettingsProduction = @{
 
 $exePath = Join-Path $InstallDir "backend.exe"
 
+# ── Step 1: Kill tray monitor first (it holds a handle on $InstallDir as WorkingDirectory)
+$trayProcs = Get-WmiObject Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -like '*ProjectXTrayMonitor*' }
+foreach ($p in $trayProcs) {
+    Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue
+    Write-Host "Stopped tray monitor PID $($p.ProcessId)."
+}
+if ($trayProcs) { Start-Sleep -Seconds 2 }
+
+# ── Step 2: Stop and delete the Windows service
 $existing = sc.exe query $ServiceName 2>$null
 if ($LASTEXITCODE -eq 0) {
     sc.exe stop $ServiceName 2>$null | Out-Null
-    Start-Sleep -Seconds 2
+    # Wait up to 30 seconds for the service to fully stop
+    $stopWait = 0
+    while ($stopWait -lt 30) {
+        Start-Sleep -Seconds 1
+        $stopWait++
+        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if (-not $svc -or $svc.Status -eq 'Stopped') { break }
+    }
     sc.exe delete $ServiceName 2>$null | Out-Null
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2
 }
 
+# ── Step 3: Kill any remaining backend.exe processes
 $runningBackendProcesses = Get-Process -Name "backend" -ErrorAction SilentlyContinue
 if ($runningBackendProcesses) {
     $runningBackendProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2
 }
 
 if (Test-Path $InstallDir) {
-    Remove-Item $InstallDir -Recurse -Force
+    # Retry up to 5 times in case files are still briefly locked after service stop
+    $removeRetry = 0
+    while ($true) {
+        try {
+            Remove-Item $InstallDir -Recurse -Force -ErrorAction Stop
+            break
+        }
+        catch {
+            $removeRetry++
+            if ($removeRetry -ge 5) { throw }
+            Write-Host "InstallDir still locked, retrying in 3s... ($removeRetry/5)"
+            Start-Sleep -Seconds 3
+        }
+    }
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item (Join-Path $SourceDir "*") $InstallDir -Recurse -Force

@@ -44,6 +44,8 @@ public static class AuditPathClassifier
         if (Match(path, "/api/auth/setup-admin-password")) return ("Users", "Set admin password");
 
         if (Match(path, "/api/vault/backup")) return ("Backup", "Created database backup");
+        if (path.Contains("/restore")) return ("Backup", "Restored database from backup");
+        if (Match(path, "/api/vault/upload-restore")) return ("Backup", "Restored database from uploaded backup");
         if (Match(path, "/api/vault/backups")) return ("Backup", verb == "Deleted" ? "Deleted database backup" : "Backup operation");
         if (Match(path, "/api/vault/secondary-db")) return ("Backup", "Updated secondary DB connection");
 

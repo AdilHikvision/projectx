@@ -2531,6 +2531,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<int>("LunchBreakMinutes")
                         .HasColumnType("integer");
 
+                    b.Property<int>("LateToleranceMinutes")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)

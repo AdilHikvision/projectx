@@ -918,6 +918,9 @@
     "terminated": "İşdən azad edilib",
     "blocked": "Bloklanıb",
     "noPeopleFound": "Heç kim tapılmadı",
+    "departmentLabel": "Şöbə:",
+    "allDepartments": "Bütün şöbələr",
+    "pageOf": "{{total}}-dən {{page}}-ci səhifə (cəmi {{count}})",
     "credLine": "{{cards}} kart • {{faces}} üz • {{fingerprints}} barmaq izi • {{irises}} qüzehli qişa",
     "validSubtitle": "Etibarlıdır: {{from}} – {{to}} • {{creds}}",
     "importFromDevices": "Cihazlardan idxal",
@@ -1761,6 +1764,8 @@
     "countEarlyArrivalDesc": "Söndürülsə — şəxs növbənin başlanğıcından əvvəl daxil olduqda, ümumi saatlar növbənin başlanğıcından sayılır (erkən vaxt əlavə iş üçün nəzərə alınmır).",
     "overtimeDailyThreshold": "Günlük əlavə iş həddi (dəqiqə)",
     "overtimeDailyThresholdDesc": "Əgər bir gündə əlavə iş bu hədddən azdırsa — nə davamiyyətdə, nə də maaşda nəzərə alınmır. 0 = hədd yoxdur.",
+    "lateToleranceMinutes": "İcazəli gecikmə (dəqiqə)",
+    "lateToleranceMinutesDesc": "Növbənin başlanğıcından bu qədər dəqiqə ərzindəki gəliş hesabatlarda və maaşda gecikmiş sayılmır. 0 = icazə yoxdur.",
     "lunchBreakDeduction": "Nahar fasiləsini çıx",
     "lunchBreakDeductionDesc": "Aktiv olduqda — nahar fasiləsinin müddəti faktiki işlənmiş vaxtdan çıxılır.",
     "lunchBreakMinutes": "Nahar fasiləsinin müddəti (dəqiqə)",
@@ -1854,6 +1859,7 @@
       "updateModeFailed": "Rejimi yeniləmək alınmadı",
       "backupFailed": "Ehtiyat nüsxə uğursuz oldu",
       "testFailed": "Test uğursuz oldu",
+      "restoreFailed": "Bərpa uğursuz oldu",
       "resetFailed": "Sıfırlamaq alınmadı",
       "previewFailed": "Önizləmə alınmadı",
       "deleteFailed": "Silmək alınmadı",
@@ -1897,6 +1903,9 @@
       "backupNow": "İndi ehtiyat nüsxə",
       "snapshotCount": "{{count}} anlıq görüntü",
       "noBackups": "Hələ ehtiyat nüsxə yoxdur. Yaratmaq üçün “İndi ehtiyat nüsxə”yə klikləyin.",
+      "restoreNow": "Bərpa et",
+      "uploadRestore": "Yüklə və bərpa et",
+      "restoreConfirm": "Bu əməliyyat bütün cari məlumatları seçilmiş ehtiyat nüsxə ilə əvəz edəcək. Bu əməliyyatı geri qaytarmaq mümkün deyil. Davam etmək istəyirsiniz?",
       "secondaryDb": "İkinci / ehtiyat verilənlər bazası",
       "secondaryDbDesc": "Replika və ya ehtiyat üçün PostgreSQL bağlantı sətri",
       "testConnection": "Bağlantını yoxla"
@@ -1924,6 +1933,7 @@
       "fromName": "Göndərən ad",
       "enableSsl": "SSL/TLS-i aktiv et",
       "saveSettings": "Parametrləri yadda saxla",
+      "testRecipient": "Test e-poçtunun alıcısı",
       "sendTestEmail": "Test e-poçtu göndər"
     },
     "templates": {
@@ -2042,7 +2052,26 @@
     "justNow": "indicə",
     "minutesAgo": "{{count}} dəq əvvəl",
     "hoursAgo": "{{count}} saat əvvəl",
-    "daysAgo": "{{count}} gün əvvəl"
+    "daysAgo": "{{count}} gün əvvəl",
+    "titles": {
+      "deviceOffline": "Cihaz əlçatmaz",
+      "approvalRequest": "Yeni təsdiq sorğusu",
+      "approvalApproved": "Sorğu təsdiqləndi",
+      "approvalRejected": "Sorğu rədd edildi",
+      "leaveApproved": "Məzuniyyət təsdiqləndi",
+      "leaveRejected": "Məzuniyyət rədd edildi",
+      "dailyReport": "Günlük hesabat — {{date}}"
+    },
+    "bodies": {
+      "deviceOffline": "Cihaz «{{device}}» əlaqəni kəsdi.",
+      "approvalRequest": "{{name}} sorğu göndərdi: {{type}}.",
+      "approvalApproved": "«{{type}}» sorğunuz təsdiqləndi.",
+      "approvalRejected": "«{{type}}» sorğunuz rədd edildi.{{comment}}",
+      "leaveApproved": "Məzuniyyət sorğunuz ({{leaveType}}, {{from}} – {{to}}) təsdiqləndi.",
+      "leaveRejected": "Məzuniyyət sorğunuz ({{leaveType}}, {{from}} – {{to}}) rədd edildi.{{reason}}",
+      "dailyReport": "İşdə: {{present}} / {{total}}. Qayıb: {{absent}}.{{onLeave}}",
+      "selfServiceLeaveRequest": "{{name}} {{from}}–{{to}} tarixləri üçün {{leaveType}} sorğusu göndərdi."
+    }
   },
   "faces": {
     "noPhoto": "Foto yoxdur",

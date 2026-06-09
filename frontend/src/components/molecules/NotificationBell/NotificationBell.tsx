@@ -12,13 +12,25 @@ const TYPE_ICON: Record<string, string> = {
 };
 
 const TYPE_COLOR: Record<string, string> = {
-    DeviceOffline: 'text-red-500',
-    DeviceOnline: 'text-green-500',
-    ApprovalRequest: 'text-blue-500',
-    ApprovalApproved: 'text-green-500',
-    ApprovalRejected: 'text-red-500',
-    DailyReport: 'text-indigo-500',
+    DeviceOffline: 'text-error-text',
+    DeviceOnline: 'text-success-text',
+    ApprovalRequest: 'text-primary',
+    ApprovalApproved: 'text-success-text',
+    ApprovalRejected: 'text-error-text',
+    DailyReport: 'text-primary',
 };
+
+function parseNotifText(raw: string, t: (key: string, params?: Record<string, unknown>) => string): string {
+    try {
+        const parsed = JSON.parse(raw) as { k?: string; p?: Record<string, unknown> };
+        if (parsed && typeof parsed.k === 'string') {
+            return t(parsed.k, parsed.p ?? {});
+        }
+    } catch {
+        // not JSON — return as-is
+    }
+    return raw;
+}
 
 function useTimeAgo() {
     const { t } = useTranslation();
@@ -59,18 +71,18 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
             <button
                 type="button"
                 onClick={() => setOpen(v => !v)}
-                className="relative w-9 h-9 rounded-full border border-border-base bg-white hover:bg-slate-50 transition-colors flex items-center justify-center"
+                className="relative w-9 h-9 rounded-full border border-border-base bg-surface hover:bg-background-light transition-colors flex items-center justify-center"
             >
                 <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
                 {unreadCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] rounded-full bg-error-text text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
                         {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                 )}
             </button>
 
             {open && (
-                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-border z-50 overflow-hidden flex flex-col max-h-[420px]">
+                <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-border z-50 overflow-hidden flex flex-col max-h-[420px]">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                         <span className="text-sm font-bold text-text-dark">{t('notifications.title')}</span>
@@ -98,14 +110,18 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
                                     key={n.id}
                                     type="button"
                                     onClick={() => { if (!n.isRead) onMarkRead(n.id); }}
-                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-b border-border last:border-0 ${n.isRead ? 'bg-white hover:bg-slate-50' : 'bg-primary/5 hover:bg-primary/10'}`}
+                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-b border-border last:border-0 ${n.isRead ? 'bg-surface hover:bg-background-light' : 'bg-primary/5 hover:bg-primary/10'}`}
                                 >
                                     <span className={`material-symbols-outlined text-[20px] mt-0.5 shrink-0 ${TYPE_COLOR[n.type] ?? 'text-text-muted'}`}>
                                         {TYPE_ICON[n.type] ?? 'circle_notifications'}
                                     </span>
                                     <div className="flex-1 min-w-0">
-                                        <p className={`text-xs font-bold leading-snug ${n.isRead ? 'text-text-dark' : 'text-text-dark'}`}>{n.title}</p>
-                                        <p className="text-xs text-text-light leading-snug mt-0.5 line-clamp-2">{n.body}</p>
+                                        <p className="text-xs font-bold leading-snug text-text-dark">
+                                            {parseNotifText(n.title, t)}
+                                        </p>
+                                        <p className="text-xs text-text-light leading-snug mt-0.5 line-clamp-2">
+                                            {parseNotifText(n.body, t)}
+                                        </p>
                                         <p className="text-[10px] text-text-muted mt-1">{timeAgo(n.createdAtUtc)}</p>
                                     </div>
                                     {!n.isRead && (

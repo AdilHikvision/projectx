@@ -272,6 +272,7 @@ export function PersonDetailPage() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [syncWarning, setSyncWarning] = useState<string | null>(null)
   const [addModal, setAddModal] = useState<'card' | 'face' | 'fingerprint' | null>(null)
   const [faceSourceMode, setFaceSourceMode] = useState<'device' | 'enroller' | 'computer' | 'webcam'>('computer')
   const [cardForm, setCardForm] = useState({ cardNo: '' })
@@ -604,9 +605,9 @@ export function PersonDetailPage() {
 
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
-    if (Array.isArray(w) && w.length > 0) {
-      setError(t('personDetail.errors.deviceSyncErrors') + '\n' + w.join('\n'))
-    }
+    setSyncWarning(Array.isArray(w) && w.length > 0
+      ? t('personDetail.errors.deviceSyncErrors') + '\n' + w.join('\n')
+      : null)
   }
 
   async function handleAddCardFromDevice() {
@@ -970,6 +971,7 @@ export function PersonDetailPage() {
         ? crypto.randomUUID()
         : `sync-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
+    setSyncWarning(null)
     setSaveLoading(true)
     setError(null)
     setSyncProgress({
@@ -1098,7 +1100,7 @@ export function PersonDetailPage() {
         ? (res as { syncWarnings: string[] }).syncWarnings
         : null
       setDeleteConfirmOpen(false)
-      navigate('/people', { state: warnings?.length ? { syncError: t('personDetail.errors.deviceSyncErrors') + '\n' + warnings.join('\n') } : undefined })
+      navigate('/people', { state: warnings?.length ? { syncWarning: t('personDetail.errors.deviceSyncErrors') + '\n' + warnings.join('\n') } : undefined })
     } catch (e) {
       setError(e instanceof Error ? e.message : t('personDetail.errors.deleteProfileFailed'))
     } finally {
@@ -1155,6 +1157,14 @@ export function PersonDetailPage() {
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-base">error</span>
                 {error}
+              </div>
+            </div>
+          )}
+          {syncWarning && (
+            <div className="p-4 bg-amber-50 text-amber-800 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-amber-200 shadow-sm animate-in zoom-in-95 duration-300">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined text-base shrink-0">warning</span>
+                <span className="whitespace-pre-wrap">{syncWarning}</span>
               </div>
             </div>
           )}

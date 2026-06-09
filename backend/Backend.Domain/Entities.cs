@@ -275,6 +275,8 @@ public sealed class WorkSchedule : BaseEntity
     public bool LunchBreakDeductionEnabled { get; set; } = false;
     /// <summary>Длительность обеда в минутах (вычитается из фактического времени, если LunchBreakDeductionEnabled=true).</summary>
     public int LunchBreakMinutes { get; set; } = 30;
+    /// <summary>Допустимое опоздание в минутах: приход в пределах этого порога не считается опозданием в отчётах. 0 — без допуска.</summary>
+    public int LateToleranceMinutes { get; set; } = 0;
     public ICollection<Employee> Employees { get; set; } = [];
     /// <summary>Под-смены (для Multi-расписания).</summary>
     public ICollection<WorkScheduleShift> Shifts { get; set; } = new List<WorkScheduleShift>();

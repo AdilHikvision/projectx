@@ -918,6 +918,9 @@
     "terminated": "Terminated",
     "blocked": "Blocked",
     "noPeopleFound": "No people found",
+    "departmentLabel": "Department:",
+    "allDepartments": "All departments",
+    "pageOf": "Page {{page}} of {{total}} ({{count}} total)",
     "credLine": "{{cards}} cards • {{faces}} faces • {{fingerprints}} fingerprints • {{irises}} irises",
     "validSubtitle": "Valid: {{from}} – {{to}} • {{creds}}",
     "importFromDevices": "Import from Devices",
@@ -1769,6 +1772,8 @@
     "countEarlyArrivalDesc": "If off — when a person checks in before the shift start, total hours are counted from the shift start (early time is ignored for overtime).",
     "overtimeDailyThreshold": "Overtime daily threshold (minutes)",
     "overtimeDailyThresholdDesc": "If overtime for the day is less than this threshold — it will not be counted in Time Attendance or payroll. 0 = no threshold.",
+    "lateToleranceMinutes": "Late tolerance (minutes)",
+    "lateToleranceMinutesDesc": "Arrivals within this many minutes after shift start are not counted as late in reports and payroll. 0 = no tolerance.",
     "lunchBreakDeduction": "Deduct lunch break",
     "lunchBreakDeductionDesc": "If enabled — the lunch break duration is subtracted from actual worked time.",
     "lunchBreakMinutes": "Lunch break duration (minutes)",
@@ -1862,6 +1867,7 @@
       "updateModeFailed": "Failed to update mode",
       "backupFailed": "Backup failed",
       "testFailed": "Test failed",
+      "restoreFailed": "Restore failed",
       "resetFailed": "Reset failed",
       "previewFailed": "Preview failed",
       "deleteFailed": "Delete failed",
@@ -1905,6 +1911,9 @@
       "backupNow": "Backup now",
       "snapshotCount": "{{count}} snapshot(s)",
       "noBackups": "No backups yet. Click \"Backup now\" to create one.",
+      "restoreNow": "Restore",
+      "uploadRestore": "Upload & restore",
+      "restoreConfirm": "This will overwrite ALL current data with the selected backup. This action cannot be undone. Continue?",
       "secondaryDb": "Secondary / Backup Database",
       "secondaryDbDesc": "PostgreSQL connection string for replica or standby",
       "testConnection": "Test connection"
@@ -1932,6 +1941,7 @@
       "fromName": "From Name",
       "enableSsl": "Enable SSL/TLS",
       "saveSettings": "Save Settings",
+      "testRecipient": "Test email recipient",
       "sendTestEmail": "Send Test Email"
     },
     "templates": {
@@ -2050,7 +2060,26 @@
     "justNow": "just now",
     "minutesAgo": "{{count}} min ago",
     "hoursAgo": "{{count}} h ago",
-    "daysAgo": "{{count}} d ago"
+    "daysAgo": "{{count}} d ago",
+    "titles": {
+      "deviceOffline": "Device unavailable",
+      "approvalRequest": "New approval request",
+      "approvalApproved": "Request approved",
+      "approvalRejected": "Request rejected",
+      "leaveApproved": "Leave approved",
+      "leaveRejected": "Leave rejected",
+      "dailyReport": "Daily report — {{date}}"
+    },
+    "bodies": {
+      "deviceOffline": "Device «{{device}}» lost connection.",
+      "approvalRequest": "{{name}} submitted a request: {{type}}.",
+      "approvalApproved": "Your request «{{type}}» has been approved.",
+      "approvalRejected": "Your request «{{type}}» has been rejected.{{comment}}",
+      "leaveApproved": "Your leave request ({{leaveType}}, {{from}} – {{to}}) has been approved.",
+      "leaveRejected": "Your leave request ({{leaveType}}, {{from}} – {{to}}) has been rejected.{{reason}}",
+      "dailyReport": "Present: {{present}} of {{total}}. Absent: {{absent}}.{{onLeave}}",
+      "selfServiceLeaveRequest": "{{name}} requested {{leaveType}} from {{from}} to {{to}}."
+    }
   },
   "faces": {
     "noPhoto": "No photo",

@@ -169,6 +169,11 @@ public sealed class DatabaseInitializer(
             CREATE INDEX IF NOT EXISTS "IX_fingerprints_VisitorId" ON fingerprints ("VisitorId")
             """, cancellationToken);
 
+        // LateToleranceMinutes — допустимое опоздание в минутах (0 = без допуска)
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE work_schedules ADD COLUMN IF NOT EXISTS "LateToleranceMinutes" integer NOT NULL DEFAULT 0
+            """, cancellationToken);
+
         foreach (var role in SystemRoles.All)
         {
             if (!await roleManager.RoleExistsAsync(role))

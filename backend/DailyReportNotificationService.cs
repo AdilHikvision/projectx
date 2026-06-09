@@ -60,11 +60,13 @@ public sealed class DailyReportNotificationService(
         var absentCount = Math.Max(0, totalEmployees - presentCount - onLeaveCount);
         var date = yesterday.ToString("dd.MM.yyyy");
 
-        var leavePart = onLeaveCount > 0 ? $" В отпуске: {onLeaveCount}." : string.Empty;
+        static string N(string key, object? p = null) =>
+            System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
+
         await notificationService.CreateAsync(
             NotificationTypes.DailyReport,
-            $"Ежедневный отчёт — {date}",
-            $"Присутствовало: {presentCount} из {totalEmployees}. Отсутствовало: {absentCount}.{leavePart}",
+            N("notifications.titles.dailyReport", new { date }),
+            N("notifications.bodies.dailyReport", new { present = presentCount, total = totalEmployees, absent = absentCount, onLeave = onLeaveCount > 0 ? $" On leave: {onLeaveCount}." : "" }),
             ct: ct);
 
         logger.LogInformation("Daily report notification sent for {Date}: present={Present}, onLeave={OnLeave}, absent={Absent}, total={Total}",

@@ -427,7 +427,7 @@ begin
       InstallSucceeded := True;
 
     { ── Optional: nginx LAN reverse proxy (port 80 -> 127.0.0.1:5055) ── }
-    if InstallSucceeded and EnableLanCheckbox.Checked then
+    if InstallSucceeded and EnableLanCheckbox.Checked and (not IsUpdate) then
     begin
       NginxLogPath := ExpandConstant('{userdocs}') + '\ProjectX-install-nginx.log';
       NginxParams :=

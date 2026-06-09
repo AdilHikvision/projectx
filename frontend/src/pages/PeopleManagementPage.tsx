@@ -20,6 +20,7 @@ interface EmployeeResponse {
   isActive: boolean
   onlyVerify?: boolean
   accessLevelNames: string[]
+  department?: { id: string; name: string } | null
   primaryFaceId?: string | null
   cardsCount: number
   facesCount: number
@@ -36,6 +37,7 @@ interface VisitorResponse {
   validToUtc?: string | null
   isActive: boolean
   accessLevelNames: string[]
+  department?: { id: string; name: string } | null
   primaryFaceId?: string | null
   cardsCount: number
   facesCount: number
@@ -78,7 +80,11 @@ export function PeopleManagementPage() {
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [deptFilter, setDeptFilter] = useState<string>('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 20
   const [error, setError] = useState<string | null>(null)
+  const [syncWarning, setSyncWarning] = useState<string | null>(null)
   const [modalMode, setModalMode] = useState<'create' | null>(null)
   const [formData, setFormData] = useState({
     firstName: '',
@@ -203,7 +209,8 @@ export function PeopleManagementPage() {
     loadAccessLevels()
     loadCompanies()
     loadCompanyMode()
-  }, [loadAccessLevels, loadCompanies, loadCompanyMode])
+    loadDepartments()
+  }, [loadAccessLevels, loadCompanies, loadCompanyMode, loadDepartments])
 
   useEffect(() => {
     loadDepartments(formData.companyId)
@@ -220,9 +227,10 @@ export function PeopleManagementPage() {
   }, [token, loadEmployees, loadVisitors, startLoading, stopLoading])
 
   useEffect(() => {
-    const state = location.state as { syncError?: string }
-    if (state?.syncError) {
-      setError(state.syncError)
+    const state = location.state as { syncWarning?: string; syncError?: string }
+    const msg = state?.syncWarning ?? state?.syncError
+    if (msg) {
+      setSyncWarning(msg)
       navigate(location.pathname, { replace: true, state: {} })
     }
   }, [location.state, location.pathname, navigate])
@@ -297,9 +305,9 @@ export function PeopleManagementPage() {
 
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
     const w = res?.syncWarnings
-    if (Array.isArray(w) && w.length > 0) {
-      setError(t('people.errors.deviceSyncErrors') + '\n' + w.join('\n'))
-    }
+    setSyncWarning(Array.isArray(w) && w.length > 0
+      ? t('people.errors.deviceSyncErrors') + '\n' + w.join('\n')
+      : null)
   }
 
   async function handleSubmit() {
@@ -443,23 +451,35 @@ export function PeopleManagementPage() {
     }
   }
 
-  const list = useMemo(() => {
+  useEffect(() => { setCurrentPage(1) }, [tab, searchQuery, deptFilter, statusFilterEmployees, statusFilterVisitors])
+
+  const filteredList = useMemo(() => {
     const raw = tab === 'employees'
       ? employees.map(e => ({ ...e, type: 'employee' as const }))
       : visitors.map(v => ({ ...v, type: 'visitor' as const }))
-    if (tab === 'employees') {
-      return raw.filter((item) => {
-        if (item.isActive && statusFilterEmployees.active) return true
-        if (!item.isActive && statusFilterEmployees.dismissed) return true
-        return false
-      })
+    let result = tab === 'employees'
+      ? raw.filter((item) => {
+          if (item.isActive && statusFilterEmployees.active) return true
+          if (!item.isActive && statusFilterEmployees.dismissed) return true
+          return false
+        })
+      : raw.filter((item) => {
+          if (item.isActive && statusFilterVisitors.active) return true
+          if (!item.isActive && statusFilterVisitors.blocked) return true
+          return false
+        })
+    if (deptFilter) {
+      result = result.filter(item => item.department?.id === deptFilter)
     }
-    return raw.filter((item) => {
-      if (item.isActive && statusFilterVisitors.active) return true
-      if (!item.isActive && statusFilterVisitors.blocked) return true
-      return false
-    })
-  }, [tab, employees, visitors, statusFilterEmployees, statusFilterVisitors])
+    return result
+  }, [tab, employees, visitors, statusFilterEmployees, statusFilterVisitors, deptFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE))
+
+  const list = useMemo(
+    () => filteredList.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [filteredList, currentPage, PAGE_SIZE]
+  )
 
   return (
     <AppLayout onAction={openCreateModal}>
@@ -484,6 +504,12 @@ export function PeopleManagementPage() {
           {error && (
             <div className="p-4 bg-error-bg text-error-text rounded-xl text-xs font-bold shadow-sm max-h-40 overflow-y-auto whitespace-pre-wrap">
               {error}
+            </div>
+          )}
+          {syncWarning && (
+            <div className="p-4 bg-amber-50 text-amber-800 rounded-xl text-xs font-bold shadow-sm max-h-40 overflow-y-auto border border-amber-200 whitespace-pre-wrap flex items-start gap-2">
+              <span className="material-symbols-outlined text-base shrink-0">warning</span>
+              {syncWarning}
             </div>
           )}
 
@@ -517,6 +543,23 @@ export function PeopleManagementPage() {
               <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">{t('common.import')}</Button>
             </div>
           </div>
+
+          {/* Department filter */}
+          {departments.length > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-text-light uppercase tracking-widest shrink-0">{t('people.departmentLabel')}</span>
+              <select
+                value={deptFilter}
+                onChange={e => setDeptFilter(e.target.value)}
+                className="text-xs font-bold text-text-dark bg-surface border border-border-light rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-sm min-w-[160px]"
+              >
+                <option value="">{t('people.allDepartments')}</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Status filter */}
           <div className="flex flex-wrap items-center gap-4">
@@ -586,7 +629,7 @@ export function PeopleManagementPage() {
 
           {/* List Layout */}
           <div className="space-y-3">
-            {list.length === 0 ? (
+            {filteredList.length === 0 ? (
               <div className="py-20 text-center bg-surface rounded-2xl shadow-md">
                 <span className="material-symbols-outlined text-text-light text-5xl mb-3">person_search</span>
                 <p className="text-sm font-bold text-text-muted uppercase tracking-widest">{t('people.noPeopleFound')}</p>
@@ -641,6 +684,52 @@ export function PeopleManagementPage() {
               })
             )}
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-text-muted font-bold">
+                {t('people.pageOf', { page: currentPage, total: totalPages, count: filteredList.length })}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="w-8 h-8 flex items-center justify-center rounded-xl bg-surface shadow text-text-muted hover:text-primary disabled:opacity-30 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">chevron_left</span>
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
+                  .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+                    if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('...')
+                    acc.push(p)
+                    return acc
+                  }, [])
+                  .map((p, idx) =>
+                    p === '...' ? (
+                      <span key={`ellipsis-${idx}`} className="w-8 h-8 flex items-center justify-center text-xs text-text-muted">…</span>
+                    ) : (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p as number)}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl text-xs font-black transition-colors ${currentPage === p ? 'bg-primary text-white shadow' : 'bg-surface text-text-muted hover:text-primary shadow'}`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )
+                }
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="w-8 h-8 flex items-center justify-center rounded-xl bg-surface shadow text-text-muted hover:text-primary disabled:opacity-30 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">chevron_right</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

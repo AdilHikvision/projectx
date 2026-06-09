@@ -146,6 +146,7 @@ interface WorkScheduleRow {
   overtimeDailyThresholdMinutes?: number
   lunchBreakDeductionEnabled?: boolean
   lunchBreakMinutes?: number
+  lateToleranceMinutes?: number
 }
 
 
@@ -267,6 +268,7 @@ export function WorkHoursTrackingPage() {
     overtimeDailyThresholdMinutes: '0',
     lunchBreakDeductionEnabled: false,
     lunchBreakMinutes: '30',
+    lateToleranceMinutes: '0',
   })
   const [scheduleShifts, setScheduleShifts] = useState<WorkScheduleShiftRow[]>([])
   const [scheduleSaving, setScheduleSaving] = useState(false)
@@ -485,6 +487,7 @@ useEffect(() => {
       overtimeDailyThresholdMinutes: '0',
       lunchBreakDeductionEnabled: false,
       lunchBreakMinutes: '30',
+      lateToleranceMinutes: '0',
     })
     setScheduleShifts([])
     setEditingSchedule(null)
@@ -504,6 +507,7 @@ useEffect(() => {
       overtimeDailyThresholdMinutes: String(s.overtimeDailyThresholdMinutes ?? 0),
       lunchBreakDeductionEnabled: s.lunchBreakDeductionEnabled ?? false,
       lunchBreakMinutes: String(s.lunchBreakMinutes ?? 30),
+      lateToleranceMinutes: String(s.lateToleranceMinutes ?? 0),
     })
     // Load sub-shifts for Multi schedules
     setScheduleShifts(s.shifts?.map(sh => ({
@@ -545,6 +549,7 @@ useEffect(() => {
         overtimeDailyThresholdMinutes: Math.max(0, parseInt(scheduleForm.overtimeDailyThresholdMinutes, 10) || 0),
         lunchBreakDeductionEnabled: scheduleForm.lunchBreakDeductionEnabled,
         lunchBreakMinutes: Math.max(0, parseInt(scheduleForm.lunchBreakMinutes, 10) || 30),
+        lateToleranceMinutes: Math.max(0, parseInt(scheduleForm.lateToleranceMinutes, 10) || 0),
       }
       if (isMulti) {
         body.shifts = scheduleShifts.map((sh, idx) => ({
@@ -1507,6 +1512,19 @@ useEffect(() => {
               <p className="text-[10px] text-text-muted">{t('workHours.overtimeDailyThresholdDesc')}</p>
             </div>
           )}
+          {scheduleForm.type !== 'Flexible' && scheduleForm.type !== 'Off' && (
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.lateToleranceMinutes')}</label>
+              <Input
+                type="number"
+                value={scheduleForm.lateToleranceMinutes}
+                onChange={(e) => setScheduleForm((p) => ({ ...p, lateToleranceMinutes: e.target.value }))}
+                min={0}
+                step={1}
+              />
+              <p className="text-[10px] text-text-muted">{t('workHours.lateToleranceMinutesDesc')}</p>
+            </div>
+          )}
           <label className="flex items-start gap-2.5 rounded-xl bg-background-light px-4 py-3 cursor-pointer">
             <input
               type="checkbox"
@@ -2039,7 +2057,7 @@ useEffect(() => {
                   {canAssign && !assignRemoveMode && (
                     <div className="rounded-2xl px-4 py-3 text-[11px] font-bold space-y-1"
                       style={{ backgroundColor: assignSchedule.color + '15', color: assignSchedule.color }}>
-                      <p>{t('workHours.willAssignSummary', { days: dateCount, employees: assignSelEmps.size })}</p>
+                      <p dangerouslySetInnerHTML={{ __html: t('workHours.willAssignSummary', { days: dateCount, employees: assignSelEmps.size }) }} />
                       <p className="opacity-70">{t('workHours.willAssignDefaultNote')}</p>
                     </div>
                   )}

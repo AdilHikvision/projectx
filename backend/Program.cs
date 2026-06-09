@@ -1801,10 +1801,12 @@ app.MapPut("/api/settings/smtp", async (SmtpSettingsRequest request, AppDbContex
     return Results.Ok(new { message = "SMTP settings saved." });
 }).RequireAuthorization("Settings.Manage");
 
-app.MapPost("/api/settings/smtp/test", async (IEmailService emailService, CancellationToken cancellationToken) =>
+app.MapPost("/api/settings/smtp/test", async (SmtpTestRequest request, IEmailService emailService, CancellationToken cancellationToken) =>
 {
-    var ok = await emailService.TestConnectionAsync(cancellationToken);
-    return ok ? Results.Ok(new { message = "Test email sent successfully." }) : Results.BadRequest(new { message = "Failed to send test email. Check SMTP settings." });
+    if (string.IsNullOrWhiteSpace(request.To))
+        return Results.BadRequest(new { message = "Recipient email is required." });
+    var ok = await emailService.TestConnectionAsync(request.To, cancellationToken);
+    return ok ? Results.Ok(new { message = $"Test email sent to {request.To}." }) : Results.BadRequest(new { message = "Failed to send test email. Check SMTP settings." });
 }).RequireAuthorization("Settings.Manage");
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
@@ -2159,6 +2161,7 @@ app.MapPut("/api/employees/{id:guid}", async (
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
     IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster activityBroadcaster,
     UserManager<ApplicationUser> userManager,
     IEmailService emailService,
@@ -2300,6 +2303,7 @@ app.MapPut("/api/employees/{id:guid}", async (
         devices,
         syncService,
         connectionManager,
+        arpStatusService,
         activityBroadcaster,
         logger,
         cancellationToken);
@@ -2567,6 +2571,7 @@ app.MapPut("/api/visitors/{id:guid}", async (
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
     IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster activityBroadcaster,
     HttpRequest httpRequest,
     ILogger<Program> logger,
@@ -2634,6 +2639,7 @@ app.MapPut("/api/visitors/{id:guid}", async (
         devices,
         syncService,
         connectionManager,
+        arpStatusService,
         activityBroadcaster,
         logger,
         cancellationToken);
@@ -3230,7 +3236,7 @@ app.MapGet("/api/work-schedules", async (AppDbContext dbContext, CancellationTok
     var result = schedules.Select(s => new WorkScheduleResponse(
         s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc,
         s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null,
-        s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes
+        s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes, s.LateToleranceMinutes
     )).ToList();
     return Results.Ok(result);
 }).RequireAuthorization("Schedules.View");
@@ -3242,7 +3248,7 @@ app.MapGet("/api/work-schedules/{id:guid}", async (Guid id, AppDbContext dbConte
         .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
     if (s is null) return Results.NotFound();
     var shiftsDto = s.Shifts.Count > 0 ? s.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(sh.Id, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray() : null;
-    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc, shiftsDto, s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes));
+    return Results.Ok(new WorkScheduleResponse(s.Id, s.Name, s.Type.ToString(), s.ShiftStart, s.ShiftEnd, s.RequiredHoursPerDay, s.Color, s.CreatedUtc, shiftsDto, s.CountEarlyArrival, s.OvertimeDailyThresholdMinutes, s.LunchBreakDeductionEnabled, s.LunchBreakMinutes, s.LateToleranceMinutes));
 }).RequireAuthorization("Schedules.View");
 
 app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -3261,6 +3267,7 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
         OvertimeDailyThresholdMinutes = Math.Max(0, request.OvertimeDailyThresholdMinutes ?? 0),
         LunchBreakDeductionEnabled = request.LunchBreakDeductionEnabled ?? false,
         LunchBreakMinutes = Math.Max(0, request.LunchBreakMinutes ?? 30),
+        LateToleranceMinutes = Math.Max(0, request.LateToleranceMinutes ?? 0),
     };
     dbContext.WorkSchedules.Add(entity);
     if (scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 })
@@ -3284,7 +3291,7 @@ app.MapPost("/api/work-schedules", async (CreateWorkScheduleRequest request, App
     var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
         ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
         : null;
-    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes));
+    return Results.Created($"/api/work-schedules/{entity.Id}", new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes, entity.LateToleranceMinutes));
 }).RequireAuthorization("Schedules.Manage");
 
 app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -3305,6 +3312,7 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     if (request.OvertimeDailyThresholdMinutes.HasValue) entity.OvertimeDailyThresholdMinutes = Math.Max(0, request.OvertimeDailyThresholdMinutes.Value);
     if (request.LunchBreakDeductionEnabled.HasValue) entity.LunchBreakDeductionEnabled = request.LunchBreakDeductionEnabled.Value;
     if (request.LunchBreakMinutes.HasValue) entity.LunchBreakMinutes = Math.Max(0, request.LunchBreakMinutes.Value);
+    if (request.LateToleranceMinutes.HasValue) entity.LateToleranceMinutes = Math.Max(0, request.LateToleranceMinutes.Value);
     entity.UpdatedUtc = DateTime.UtcNow;
     // Replace shifts for Multi schedules
     dbContext.WorkScheduleShifts.RemoveRange(entity.Shifts);
@@ -3329,7 +3337,7 @@ app.MapPut("/api/work-schedules/{id:guid}", async (Guid id, CreateWorkScheduleRe
     var shiftsDto = scheduleType == ScheduleType.Multi && request.Shifts is { Length: > 0 }
         ? request.Shifts.OrderBy(sh => sh.SortOrder).Select(sh => new WorkScheduleShiftDto(null, sh.Name, sh.ShiftStart, sh.ShiftEnd, sh.ValidEntryFrom, sh.ValidEntryTo, sh.RequiredHoursPerDay, sh.SortOrder)).ToArray()
         : null;
-    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes));
+    return Results.Ok(new WorkScheduleResponse(entity.Id, entity.Name, entity.Type.ToString(), entity.ShiftStart, entity.ShiftEnd, entity.RequiredHoursPerDay, entity.Color, entity.CreatedUtc, shiftsDto, entity.CountEarlyArrival, entity.OvertimeDailyThresholdMinutes, entity.LunchBreakDeductionEnabled, entity.LunchBreakMinutes, entity.LateToleranceMinutes));
 }).RequireAuthorization("Schedules.Manage");
 
 // Returns the current assignment state for a schedule: which employees are assigned,
@@ -3707,8 +3715,9 @@ app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, Cl
     await db.SaveChangesAsync(ct);
     var empUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == leave.EmployeeId, ct);
     if (empUser is not null)
-        _ = notifService.CreateAsync(NotificationTypes.ApprovalApproved, "Отпуск одобрен",
-            $"Ваш запрос на отпуск ({leave.LeaveType}, {leave.StartDate:dd.MM} – {leave.EndDate:dd.MM}) одобрен.",
+        _ = notifService.CreateAsync(NotificationTypes.ApprovalApproved,
+            NTitle("notifications.titles.leaveApproved"),
+            NBody("notifications.bodies.leaveApproved", new { leaveType = leave.LeaveType.ToString(), from = leave.StartDate.ToString("dd.MM"), to = leave.EndDate.ToString("dd.MM") }),
             userId: empUser.Id, referenceId: leave.Id.ToString(), ct: CancellationToken.None);
     return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization("Leaves.Manage");
@@ -3723,8 +3732,9 @@ app.MapPost("/api/leaves/{id:guid}/reject", async (Guid id, NoteRequest? req, Ap
     await db.SaveChangesAsync(ct);
     var empUser = await userManager.Users.FirstOrDefaultAsync(u => u.EmployeeId == leave.EmployeeId, ct);
     if (empUser is not null)
-        _ = notifService.CreateAsync(NotificationTypes.ApprovalRejected, "Отпуск отклонён",
-            $"Ваш запрос на отпуск ({leave.LeaveType}, {leave.StartDate:dd.MM} – {leave.EndDate:dd.MM}) отклонён.{(string.IsNullOrWhiteSpace(req?.Note) ? "" : " Причина: " + req.Note)}",
+        _ = notifService.CreateAsync(NotificationTypes.ApprovalRejected,
+            NTitle("notifications.titles.leaveRejected"),
+            NBody("notifications.bodies.leaveRejected", new { leaveType = leave.LeaveType.ToString(), from = leave.StartDate.ToString("dd.MM"), to = leave.EndDate.ToString("dd.MM"), reason = string.IsNullOrWhiteSpace(req?.Note) ? "" : " " + req.Note }),
             userId: empUser.Id, referenceId: leave.Id.ToString(), ct: CancellationToken.None);
     return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization("Leaves.Manage");
@@ -4190,8 +4200,8 @@ app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody reque
     var employeeName = $"{employee.FirstName} {employee.LastName}";
     _ = notifService.CreateAsync(
         NotificationTypes.ApprovalRequest,
-        "Новая заявка на утверждение",
-        $"{employeeName} подал(а) заявку: {reqType}.",
+        NTitle("notifications.titles.approvalRequest"),
+        NBody("notifications.bodies.approvalRequest", new { name = employeeName, type = reqType }),
         referenceId: entity.Id.ToString(),
         ct: CancellationToken.None);
 
@@ -4249,8 +4259,8 @@ app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewA
     if (requesterUser is not null)
         _ = notifService.CreateAsync(
             NotificationTypes.ApprovalApproved,
-            "Заявка одобрена",
-            $"Ваша заявка «{entity.Type}» одобрена.",
+            NTitle("notifications.titles.approvalApproved"),
+            NBody("notifications.bodies.approvalApproved", new { type = entity.Type }),
             userId: requesterUser.Id,
             referenceId: entity.Id.ToString(),
             ct: CancellationToken.None);
@@ -4280,8 +4290,8 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
     if (requesterUser is not null)
         _ = notifService.CreateAsync(
             NotificationTypes.ApprovalRejected,
-            "Заявка отклонена",
-            $"Ваша заявка «{entity.Type}» отклонена.{(string.IsNullOrWhiteSpace(request?.Comment) ? "" : " Комментарий: " + request.Comment)}",
+            NTitle("notifications.titles.approvalRejected"),
+            NBody("notifications.bodies.approvalRejected", new { type = entity.Type, comment = request?.Comment ?? "" }),
             userId: requesterUser.Id,
             referenceId: entity.Id.ToString(),
             ct: CancellationToken.None);
@@ -4538,7 +4548,14 @@ app.MapPost("/api/reports/schedule-planner/send-email", async (
 </div>
 <p style='color:#94a3b8;font-size:11px;margin-top:12px'>Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC</p>
 </div>";
-    await emailService.SendAsync(request.To, subject, body, ct);
+    try
+    {
+        await emailService.SendAsync(request.To, subject, body, ct);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
     return Results.Ok(new { message = $"Report sent to {request.To}." });
 }).RequireAuthorization("Reports.View");
 
@@ -4985,8 +5002,8 @@ app.MapPost("/api/self-service/leaves", async (
     // Broadcast менеджерам — approver-flow тот же, что и у обычных attendance-requests.
     await notifService.CreateAsync(
         NotificationTypes.ApprovalRequest,
-        "New leave request",
-        $"{appUser.UserName} requested {lt} from {request.StartDate:yyyy-MM-dd} to {request.EndDate:yyyy-MM-dd}.",
+        NTitle("notifications.titles.approvalRequest"),
+        NBody("notifications.bodies.selfServiceLeaveRequest", new { name = appUser.UserName, leaveType = lt, from = request.StartDate.ToString("yyyy-MM-dd"), to = request.EndDate.ToString("yyyy-MM-dd") }),
         referenceId: leave.Id.ToString(),
         ct: cancellationToken);
 
@@ -5887,7 +5904,14 @@ app.MapPost("/api/reports/attendance/send-email", async (
         ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
     }, cancellationToken);
 
-    await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    try
+    {
+        await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
     return Results.Ok(new { message = $"Report sent to {request.To}." });
 }).RequireAuthorization("Reports.View");
 
@@ -5936,7 +5960,14 @@ app.MapPost("/api/payroll/periods/{id:guid}/send-email", async (
         ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
     }, cancellationToken);
 
-    await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    try
+    {
+        await emailService.SendAsync(request.To, subject, body, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
     return Results.Ok(new { message = $"Payroll report sent to {request.To}." });
 }).RequireAuthorization("Reports.View");
 
@@ -6028,6 +6059,135 @@ app.MapGet("/api/vault/backups/{filename}/download", (string filename) =>
     if (!File.Exists(path)) return Results.NotFound();
     return Results.File(path, "application/octet-stream", filename);
 }).RequireAuthorization("Backups.Manage");
+
+app.MapPost("/api/vault/backups/{filename}/restore", async (string filename, IConfiguration config, CancellationToken ct) =>
+{
+    if (filename.Contains("..") || filename.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        return Results.BadRequest(new { message = "Invalid filename." });
+    var filepath = Path.Combine(backupDir, filename);
+    if (!File.Exists(filepath)) return Results.NotFound();
+
+    var baseConn2 = config.GetConnectionString("DefaultConnection") ?? "Host=localhost;Port=5433;Database=projectx";
+    var username2 = (!string.IsNullOrWhiteSpace(config["Database:Username"]) ? config["Database:Username"] : null)
+                    ?? Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "projectx_user";
+    var password2 = (!string.IsNullOrWhiteSpace(config["Database:Password"]) ? config["Database:Password"] : null)
+                    ?? Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "";
+    var cb2 = new NpgsqlConnectionStringBuilder(baseConn2) { Username = username2, Password = password2 };
+    var host2 = cb2.Host ?? "localhost"; var port2 = cb2.Port > 0 ? cb2.Port : 5433; var database2 = cb2.Database ?? "projectx";
+
+    var psqlExe = new[]
+    {
+        @"C:\Program Files\PostgreSQL\17\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\16\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\15\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\14\bin\psql.exe",
+    }.FirstOrDefault(File.Exists) ?? "psql";
+
+    var cleanPsi = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = psqlExe,
+        Arguments = $"-h \"{host2}\" -p {port2} -U \"{username2}\" -d \"{database2}\" " +
+                    "-c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
+        RedirectStandardOutput = true, RedirectStandardError = true,
+        UseShellExecute = false, CreateNoWindow = true,
+    };
+    cleanPsi.Environment["PGPASSWORD"] = password2;
+    using (var cleanProc = System.Diagnostics.Process.Start(cleanPsi))
+    {
+        if (cleanProc is null) return Results.Problem("Failed to start psql.");
+        var cleanErr = await cleanProc.StandardError.ReadToEndAsync(ct);
+        await cleanProc.WaitForExitAsync(ct);
+        if (cleanProc.ExitCode != 0)
+            return Results.Problem($"Schema cleanup failed (code {cleanProc.ExitCode}): {cleanErr.Trim()}");
+    }
+
+    var restorePsi = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = psqlExe,
+        Arguments = $"-h \"{host2}\" -p {port2} -U \"{username2}\" -d \"{database2}\" -f \"{filepath}\"",
+        RedirectStandardOutput = true, RedirectStandardError = true,
+        UseShellExecute = false, CreateNoWindow = true,
+    };
+    restorePsi.Environment["PGPASSWORD"] = password2;
+    using var restoreProc = System.Diagnostics.Process.Start(restorePsi);
+    if (restoreProc is null) return Results.Problem("Failed to start psql.");
+    var restoreErr = await restoreProc.StandardError.ReadToEndAsync(ct);
+    await restoreProc.WaitForExitAsync(ct);
+    if (restoreProc.ExitCode != 0)
+        return Results.Problem($"psql restore failed (code {restoreProc.ExitCode}): {restoreErr.Trim()}");
+
+    return Results.Ok(new { message = "Restore completed. Restart the service for changes to take full effect." });
+}).RequireAuthorization("Backups.Manage");
+
+app.MapPost("/api/vault/upload-restore", async (HttpRequest request, IConfiguration config, CancellationToken ct) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { message = "Multipart form required." });
+    var form = await request.ReadFormAsync(ct);
+    var uploadedFile = form.Files.GetFile("file");
+    if (uploadedFile is null || uploadedFile.Length == 0)
+        return Results.BadRequest(new { message = "No file uploaded." });
+    if (!uploadedFile.FileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { message = "Only .sql backup files are accepted." });
+
+    Directory.CreateDirectory(backupDir);
+    var importName = $"import_{DateTime.Now:yyyyMMdd_HHmmss}.sql";
+    var importPath = Path.Combine(backupDir, importName);
+    using (var fs = File.Create(importPath))
+        await uploadedFile.CopyToAsync(fs, ct);
+
+    var baseConn3 = config.GetConnectionString("DefaultConnection") ?? "Host=localhost;Port=5433;Database=projectx";
+    var username3 = (!string.IsNullOrWhiteSpace(config["Database:Username"]) ? config["Database:Username"] : null)
+                    ?? Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "projectx_user";
+    var password3 = (!string.IsNullOrWhiteSpace(config["Database:Password"]) ? config["Database:Password"] : null)
+                    ?? Environment.GetEnvironmentVariable("POSTGRES_PASSWORD") ?? "";
+    var cb3 = new NpgsqlConnectionStringBuilder(baseConn3) { Username = username3, Password = password3 };
+    var host3 = cb3.Host ?? "localhost"; var port3 = cb3.Port > 0 ? cb3.Port : 5433; var database3 = cb3.Database ?? "projectx";
+
+    var psqlExe2 = new[]
+    {
+        @"C:\Program Files\PostgreSQL\17\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\16\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\15\bin\psql.exe",
+        @"C:\Program Files\PostgreSQL\14\bin\psql.exe",
+    }.FirstOrDefault(File.Exists) ?? "psql";
+
+    var cleanPsi2 = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = psqlExe2,
+        Arguments = $"-h \"{host3}\" -p {port3} -U \"{username3}\" -d \"{database3}\" " +
+                    "-c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
+        RedirectStandardOutput = true, RedirectStandardError = true,
+        UseShellExecute = false, CreateNoWindow = true,
+    };
+    cleanPsi2.Environment["PGPASSWORD"] = password3;
+    using (var cleanProc2 = System.Diagnostics.Process.Start(cleanPsi2))
+    {
+        if (cleanProc2 is null) return Results.Problem("Failed to start psql.");
+        var cleanErr2 = await cleanProc2.StandardError.ReadToEndAsync(ct);
+        await cleanProc2.WaitForExitAsync(ct);
+        if (cleanProc2.ExitCode != 0)
+            return Results.Problem($"Schema cleanup failed (code {cleanProc2.ExitCode}): {cleanErr2.Trim()}");
+    }
+
+    var restorePsi2 = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = psqlExe2,
+        Arguments = $"-h \"{host3}\" -p {port3} -U \"{username3}\" -d \"{database3}\" -f \"{importPath}\"",
+        RedirectStandardOutput = true, RedirectStandardError = true,
+        UseShellExecute = false, CreateNoWindow = true,
+    };
+    restorePsi2.Environment["PGPASSWORD"] = password3;
+    using var restoreProc2 = System.Diagnostics.Process.Start(restorePsi2);
+    if (restoreProc2 is null) return Results.Problem("Failed to start psql.");
+    var restoreErr2 = await restoreProc2.StandardError.ReadToEndAsync(ct);
+    await restoreProc2.WaitForExitAsync(ct);
+    if (restoreProc2.ExitCode != 0)
+        return Results.Problem($"psql restore failed (code {restoreProc2.ExitCode}): {restoreErr2.Trim()}");
+
+    return Results.Ok(new { filename = importName, message = "Restore completed. Restart the service for changes to take full effect." });
+}).RequireAuthorization("Backups.Manage")
+  .DisableAntiforgery();
 
 app.MapGet("/api/vault/secondary-db", () =>
 {
@@ -8306,6 +8466,7 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
     IDictionary<Guid, Device> devices,
     IDevicePersonSyncService syncService,
     IDeviceConnectionManager connectionManager,
+    IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster broadcaster,
     Microsoft.Extensions.Logging.ILogger logger,
     CancellationToken cancellationToken)
@@ -8320,9 +8481,10 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
         return warnings;
     }
 
-    // Snapshot the active-connection set ONCE up front. Devices not present here are
-    // currently offline (no SDK login + no recent heartbeat from alertStream). Trying to
-    // POST to them would block on the IsapiClient 30-second-per-port HttpClient timeout.
+    // Snapshot the active-connection set ONCE up front. SDK connections are tracked by
+    // DeviceConnectionManager; ARP/ISAPI status (the canonical "is device reachable?") is
+    // tracked by DeviceArpStatusService. We check BOTH so that devices reachable via ISAPI
+    // but without an SDK session are not incorrectly skipped.
     IReadOnlyCollection<DeviceConnection> active;
     try
     {
@@ -8330,12 +8492,27 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
     }
     catch (Exception ex)
     {
-        logger.LogWarning(ex, "Could not query active device connections; sync will attempt all devices anyway");
+        logger.LogWarning(ex, "Could not query active device connections; will rely on ARP status");
         active = [];
     }
 
-    var onlineIdentifiers = new HashSet<string>(
+    IReadOnlyCollection<DeviceRealtimeStatus> arpStatuses;
+    try
+    {
+        arpStatuses = await arpStatusService.GetStatusesAsync(cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Could not query ARP device statuses; will rely on SDK connections");
+        arpStatuses = [];
+    }
+
+    var sdkOnlineIds = new HashSet<string>(
         active.Select(c => c.DeviceIdentifier),
+        StringComparer.OrdinalIgnoreCase);
+
+    var arpOnlineIds = new HashSet<string>(
+        arpStatuses.Where(s => s.Status == DeviceConnectivityStatus.Connected).Select(s => s.DeviceIdentifier),
         StringComparer.OrdinalIgnoreCase);
 
     var current = 0;
@@ -8347,7 +8524,10 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
         var deviceIdentifier = device?.DeviceIdentifier ?? "";
 
         // OFFLINE FAST-PATH: skip the device entirely instead of hanging on a timeout.
-        if (string.IsNullOrEmpty(deviceIdentifier) || !onlineIdentifiers.Contains(deviceIdentifier))
+        // A device is online if either the SDK session or ARP/ISAPI check says so.
+        var isOnline = !string.IsNullOrEmpty(deviceIdentifier)
+            && (sdkOnlineIds.Contains(deviceIdentifier) || arpOnlineIds.Contains(deviceIdentifier));
+        if (!isOnline)
         {
             warnings.Add($"Устройство \"{deviceName}\" офлайн — пропущено");
             await broadcaster.NotifyPersonSyncProgressAsync(
@@ -8429,6 +8609,13 @@ static string MapConnectivityStatus(DeviceConnectivityStatus status)
 {
     return status == DeviceConnectivityStatus.Connected ? "Online" : "Offline";
 }
+
+// Helpers to create structured i18n-ready notification payloads.
+// Frontend parses these as { k: translationKey, p: params } and renders with t(k, p).
+static string NTitle(string key, object? p = null) =>
+    System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
+static string NBody(string key, object? p = null) =>
+    System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
 
 static EmployeeResponse MapEmployeeResponse(Employee e)
 {
@@ -8719,11 +8906,11 @@ public sealed record ManagedServiceResponse(
 
 // Time Attendance records
 public sealed record WorkScheduleShiftDto(Guid? Id, string Name, TimeSpan ShiftStart, TimeSpan ShiftEnd, TimeSpan ValidEntryFrom, TimeSpan ValidEntryTo, decimal RequiredHoursPerDay, int SortOrder);
-public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc, WorkScheduleShiftDto[]? Shifts = null, bool CountEarlyArrival = true, int OvertimeDailyThresholdMinutes = 0, bool LunchBreakDeductionEnabled = false, int LunchBreakMinutes = 30);
+public sealed record WorkScheduleResponse(Guid Id, string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal RequiredHoursPerDay, string Color, DateTime CreatedUtc, WorkScheduleShiftDto[]? Shifts = null, bool CountEarlyArrival = true, int OvertimeDailyThresholdMinutes = 0, bool LunchBreakDeductionEnabled = false, int LunchBreakMinutes = 30, int LateToleranceMinutes = 0);
 public sealed record SchedulePlannerDayRequest(DateOnly Date, Guid? ScheduleId, bool IsDayOff, bool Reset = false);
 public sealed record BulkAssignScheduleRequest(Guid[] EmployeeIds, Guid? ScheduleId);
 public sealed record BulkSchedulePlannerRequest(Guid[] EmployeeIds, SchedulePlannerDayRequest[] Days, Guid? ReplaceScheduleId = null);
-public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null, bool? CountEarlyArrival = null, int? OvertimeDailyThresholdMinutes = null, bool? LunchBreakDeductionEnabled = null, int? LunchBreakMinutes = null);
+public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null, bool? CountEarlyArrival = null, int? OvertimeDailyThresholdMinutes = null, bool? LunchBreakDeductionEnabled = null, int? LunchBreakMinutes = null, int? LateToleranceMinutes = null);
 public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string EmployeeName, DateTime EventTimeUtc, string EventType, Guid? DeviceId, string Source, DateTime CreatedUtc);
 public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
@@ -8910,7 +9097,9 @@ internal static class AttendanceDayCalculator
         if (!isDayOff && effectiveSchedule is not null && shiftStart is TimeSpan ssLate && first.HasValue)
         {
             var fl = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(first.Value, DateTimeKind.Utc), TimeZoneInfo.Local);
-            lateMinutes = (int)Math.Max(0, Math.Round((fl.TimeOfDay - ssLate).TotalMinutes));
+            var rawLate = (int)Math.Max(0, Math.Round((fl.TimeOfDay - ssLate).TotalMinutes));
+            // Опоздание в пределах допуска (LateToleranceMinutes) не засчитывается
+            lateMinutes = rawLate <= effectiveSchedule.LateToleranceMinutes ? 0 : rawLate;
         }
         if (!isDayOff && effectiveSchedule is not null && shiftEnd is TimeSpan ssEnd && last.HasValue)
         {
@@ -9048,6 +9237,7 @@ public sealed record CreateLeaveRequest(Guid EmployeeId, string LeaveType, bool 
 public sealed record UpdateLeaveRequest(string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
 public sealed record VaultSecondaryDbRequest(string? ConnectionString);
 public sealed record SmtpSettingsRequest(bool Enabled, string? Host, int Port, string? Username, string? Password, string? FromAddress, string? FromName, bool EnableSsl);
+public sealed record SmtpTestRequest(string? To);
 public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody);
 public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
 public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2);
@@ -9060,12 +9250,16 @@ public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub, INotifi
         await hub.Clients.All.SendAsync("DeviceStatusChanged", new DeviceStatusResponse(deviceId, deviceIdentifier, status, lastSeenUtc, statusMessage), cancellationToken);
 
         if (status == "offline")
+        {
+            static string Ns(string key, object? p = null) =>
+                System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
             _ = notificationService.CreateAsync(
                 NotificationTypes.DeviceOffline,
-                "Устройство недоступно",
-                $"Устройство «{deviceIdentifier}» потеряло связь.",
+                Ns("notifications.titles.deviceOffline"),
+                Ns("notifications.bodies.deviceOffline", new { device = deviceIdentifier }),
                 referenceId: deviceId.ToString(),
                 ct: cancellationToken);
+        }
     }
 }
 

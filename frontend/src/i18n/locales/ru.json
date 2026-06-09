@@ -929,6 +929,9 @@
     "terminated": "Уволен",
     "blocked": "Заблокирован",
     "noPeopleFound": "Никого не найдено",
+    "departmentLabel": "Отдел:",
+    "allDepartments": "Все отделы",
+    "pageOf": "Страница {{page}} из {{total}} (всего {{count}})",
     "credLine": "{{cards}} карт • {{faces}} лиц • {{fingerprints}} отпечатков • {{irises}} радужек",
     "validSubtitle": "Действует: {{from}} – {{to}} • {{creds}}",
     "importFromDevices": "Импорт с устройств",
@@ -1784,6 +1787,8 @@
     "countEarlyArrivalDesc": "Если выключено — при входе до начала смены общие часы считаются от начала смены (раннее время не учитывается как переработка).",
     "overtimeDailyThreshold": "Дневной порог переработки (минуты)",
     "overtimeDailyThresholdDesc": "Если за день переработка меньше этого порога — она не учитывается ни в учёте времени, ни в зарплате. 0 = без порога.",
+    "lateToleranceMinutes": "Допустимое опоздание (минуты)",
+    "lateToleranceMinutesDesc": "Приход в пределах этого числа минут после начала смены не засчитывается как опоздание в отчётах и расчёте зарплаты. 0 = без допуска.",
     "lunchBreakDeduction": "Вычитать обеденный перерыв",
     "lunchBreakDeductionDesc": "Если включено — из фактически отработанного времени вычитается длительность обеда.",
     "lunchBreakMinutes": "Длительность обеда (минуты)",
@@ -1877,6 +1882,7 @@
       "updateModeFailed": "Не удалось обновить режим",
       "backupFailed": "Резервное копирование не удалось",
       "testFailed": "Тест не удался",
+      "restoreFailed": "Восстановление не удалось",
       "resetFailed": "Не удалось сбросить",
       "previewFailed": "Не удалось получить предпросмотр",
       "deleteFailed": "Не удалось удалить",
@@ -1920,6 +1926,9 @@
       "backupNow": "Создать резервную копию",
       "snapshotCount": "{{count}} снимок(ов)",
       "noBackups": "Резервных копий ещё нет. Нажмите «Создать резервную копию», чтобы создать.",
+      "restoreNow": "Восстановить",
+      "uploadRestore": "Загрузить и восстановить",
+      "restoreConfirm": "Это действие перезапишет ВСЕ текущие данные выбранной резервной копией. Действие нельзя отменить. Продолжить?",
       "secondaryDb": "Вторичная / резервная БД",
       "secondaryDbDesc": "Строка подключения PostgreSQL для реплики или резервного сервера",
       "testConnection": "Проверить соединение"
@@ -1947,6 +1956,7 @@
       "fromName": "Имя отправителя",
       "enableSsl": "Включить SSL/TLS",
       "saveSettings": "Сохранить настройки",
+      "testRecipient": "Получатель тестового письма",
       "sendTestEmail": "Отправить тестовое письмо"
     },
     "templates": {
@@ -2065,7 +2075,26 @@
     "justNow": "только что",
     "minutesAgo": "{{count}} мин. назад",
     "hoursAgo": "{{count}} ч. назад",
-    "daysAgo": "{{count}} дн. назад"
+    "daysAgo": "{{count}} дн. назад",
+    "titles": {
+      "deviceOffline": "Устройство недоступно",
+      "approvalRequest": "Новая заявка на утверждение",
+      "approvalApproved": "Заявка одобрена",
+      "approvalRejected": "Заявка отклонена",
+      "leaveApproved": "Отпуск одобрен",
+      "leaveRejected": "Отпуск отклонён",
+      "dailyReport": "Ежедневный отчёт — {{date}}"
+    },
+    "bodies": {
+      "deviceOffline": "Устройство «{{device}}» потеряло связь.",
+      "approvalRequest": "{{name}} подал(а) заявку: {{type}}.",
+      "approvalApproved": "Ваша заявка «{{type}}» одобрена.",
+      "approvalRejected": "Ваша заявка «{{type}}» отклонена.{{comment}}",
+      "leaveApproved": "Ваш запрос на отпуск ({{leaveType}}, {{from}} – {{to}}) одобрен.",
+      "leaveRejected": "Ваш запрос на отпуск ({{leaveType}}, {{from}} – {{to}}) отклонён.{{reason}}",
+      "dailyReport": "Присутствовало: {{present}} из {{total}}. Отсутствовало: {{absent}}.{{onLeave}}",
+      "selfServiceLeaveRequest": "{{name}} запросил(а) {{leaveType}} с {{from}} по {{to}}."
+    }
   },
   "faces": {
     "noPhoto": "Нет фото",

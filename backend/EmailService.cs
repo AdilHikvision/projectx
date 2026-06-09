@@ -18,6 +18,8 @@ public sealed class EmailService(IServiceScopeFactory scopeFactory, ILogger<Emai
             return null;
         if (!map.TryGetValue("Smtp:Host", out var host) || string.IsNullOrWhiteSpace(host))
             return null;
+        if (!map.TryGetValue("Smtp:FromAddress", out var fromAddr) || string.IsNullOrWhiteSpace(fromAddr))
+            return null;
 
         return new SmtpSettings
         {
@@ -40,28 +42,35 @@ public sealed class EmailService(IServiceScopeFactory scopeFactory, ILogger<Emai
             return;
         }
 
-        using var client = BuildClient(cfg);
-        using var msg = new MailMessage
+        try
         {
-            From = new MailAddress(cfg.FromAddress, cfg.FromName),
-            Subject = subject,
-            Body = htmlBody,
-            IsBodyHtml = true
-        };
-        msg.To.Add(to);
+            using var client = BuildClient(cfg);
+            using var msg = new MailMessage
+            {
+                From = new MailAddress(cfg.FromAddress, cfg.FromName),
+                Subject = subject,
+                Body = htmlBody,
+                IsBodyHtml = true
+            };
+            msg.To.Add(to);
 
-        await client.SendMailAsync(msg, cancellationToken);
-        logger.LogInformation("Email sent to {To}: {Subject}", to, subject);
+            await client.SendMailAsync(msg, cancellationToken);
+            logger.LogInformation("Email sent to {To}: {Subject}", to, subject);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to send email to {To}: {Subject}", to, subject);
+            throw new InvalidOperationException($"Failed to send email: {ex.Message}", ex);
+        }
     }
 
-    public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> TestConnectionAsync(string to, CancellationToken cancellationToken = default)
     {
         var cfg = await LoadSettingsAsync(cancellationToken);
         if (cfg is null) return false;
         try
         {
             using var client = BuildClient(cfg);
-            // SmtpClient doesn't have a pure connect — send a test to FromAddress as smoke-test.
             using var msg = new MailMessage
             {
                 From = new MailAddress(cfg.FromAddress, cfg.FromName),
@@ -69,7 +78,7 @@ public sealed class EmailService(IServiceScopeFactory scopeFactory, ILogger<Emai
                 Body = "<p>SMTP connection test successful.</p>",
                 IsBodyHtml = true
             };
-            msg.To.Add(cfg.FromAddress);
+            msg.To.Add(to);
             await client.SendMailAsync(msg, cancellationToken);
             return true;
         }

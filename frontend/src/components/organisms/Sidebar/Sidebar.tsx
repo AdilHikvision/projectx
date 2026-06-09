@@ -49,8 +49,8 @@ const SYSTEM_NAV: NavConfig[] = [
 export function Sidebar() {
     const { hasAnyPermission } = useAuth();
     const { t } = useTranslation();
-    const { activeModule /*, openPicker */ } = useModule();
-    // const module = MODULES[activeModule]; // временно отключено вместе с карточкой выбора модуля
+    const { activeModule/*, openPicker*/ } = useModule();
+    // const module = MODULES[activeModule];
 
     const isAllowed = (item: NavConfig): boolean => {
         if (item.modules && !item.modules.includes(activeModule)) return false;
@@ -72,9 +72,7 @@ export function Sidebar() {
                 </div>
             </div>
 
-            {/* ─── Active module card (opens the module picker) — временно отключено ─── */}
-            {/*
-            <button
+            {/* <button
                 type="button"
                 onClick={openPicker}
                 title={t('modules.switch')}
@@ -88,8 +86,7 @@ export function Sidebar() {
                     <span className="block truncate text-sm font-bold text-text-dark">{t(module.nameKey)}</span>
                 </span>
                 <span className="material-symbols-outlined shrink-0 text-text-muted">unfold_more</span>
-            </button>
-            */}
+            </button> */}
 
             <nav className="flex-1 px-3 space-y-1">
                 {primary.map(item => (

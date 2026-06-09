@@ -309,6 +309,11 @@ export function SystemSettingsPage() {
     const [backupsLoading, setBackupsLoading] = useState(false)
     const [backingUp, setBackingUp] = useState(false)
     const [backupError, setBackupError] = useState<string | null>(null)
+    const [restoring, setRestoring] = useState<string | null>(null)
+    const [restoreError, setRestoreError] = useState<string | null>(null)
+    const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null)
+    const [uploadingRestore, setUploadingRestore] = useState(false)
+    const restoreFileRef = useRef<HTMLInputElement>(null)
     const [secondaryDb, setSecondaryDb] = useState('')
     const [secondaryDbSaving, setSecondaryDbSaving] = useState(false)
     const [secondaryDbTesting, setSecondaryDbTesting] = useState(false)
@@ -369,6 +374,49 @@ export function SystemSettingsPage() {
         document.body.removeChild(a); URL.revokeObjectURL(url)
     }
 
+    const restoreBackup = async (filename: string) => {
+        if (!token) return
+        if (!window.confirm(t('systemSettings.vault.restoreConfirm'))) return
+        setRestoring(filename)
+        setRestoreError(null)
+        setRestoreSuccess(null)
+        try {
+            const res = await apiRequest<{ message: string }>(
+                `/api/vault/backups/${encodeURIComponent(filename)}/restore`,
+                { method: 'POST', token }
+            )
+            setRestoreSuccess(res.message)
+        } catch (e) {
+            setRestoreError(e instanceof Error ? e.message : t('systemSettings.errors.restoreFailed'))
+        } finally { setRestoring(null) }
+    }
+
+    const uploadAndRestore = async (file: File) => {
+        if (!token) return
+        if (!window.confirm(t('systemSettings.vault.restoreConfirm'))) return
+        setUploadingRestore(true)
+        setRestoreError(null)
+        setRestoreSuccess(null)
+        const formData = new FormData()
+        formData.append('file', file)
+        try {
+            const res = await fetch(`${getApiBaseUrl()}/api/vault/upload-restore`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData,
+            })
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ message: 'Upload failed' })) as { message?: string }
+                throw new Error(err.message ?? 'Upload failed')
+            }
+            const data = await res.json() as { message: string }
+            setRestoreSuccess(data.message)
+            await loadBackups()
+        } catch (e) {
+            setRestoreError(e instanceof Error ? e.message : t('systemSettings.errors.restoreFailed'))
+        } finally { setUploadingRestore(false) }
+    }
+
     const saveSecondaryDb = async () => {
         if (!token) return
         setSecondaryDbSaving(true)
@@ -412,6 +460,7 @@ export function SystemSettingsPage() {
     const [smtpSaving, setSmtpSaving] = useState(false)
     const [smtpTesting, setSmtpTesting] = useState(false)
     const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+    const [smtpTestTo, setSmtpTestTo] = useState('')
 
     const loadSmtp = useCallback(async () => {
         if (!token) return
@@ -444,7 +493,7 @@ export function SystemSettingsPage() {
         setSmtpTesting(true)
         setSmtpTestResult(null)
         try {
-            const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', { method: 'POST', token })
+            const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', { method: 'POST', token, body: JSON.stringify({ to: smtpTestTo }) })
             setSmtpTestResult({ ok: true, message: res.message })
         } catch (e) {
             setSmtpTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.testFailed') })
@@ -1114,14 +1163,38 @@ export function SystemSettingsPage() {
                                                 <p className="text-xs font-black text-text-dark">{t('systemSettings.vault.databaseBackup')}</p>
                                                 <p className="text-[10px] font-bold text-text-light uppercase tracking-widest">{t('systemSettings.vault.databaseBackupDesc')}</p>
                                             </div>
-                                            <Button icon="backup" onClick={triggerBackup} isLoading={backingUp} disabled={backingUp} size="sm">
-                                                {t('systemSettings.vault.backupNow')}
-                                            </Button>
+                                            <div className="flex items-center gap-2">
+                                                <Button variant="outline" icon="upload" onClick={() => restoreFileRef.current?.click()} isLoading={uploadingRestore} disabled={uploadingRestore || !!restoring} size="sm">
+                                                    {t('systemSettings.vault.uploadRestore')}
+                                                </Button>
+                                                <input
+                                                    ref={restoreFileRef}
+                                                    type="file"
+                                                    accept=".sql"
+                                                    className="hidden"
+                                                    onChange={e => { const f = e.target.files?.[0]; if (f) { void uploadAndRestore(f); e.target.value = '' } }}
+                                                />
+                                                <Button icon="backup" onClick={triggerBackup} isLoading={backingUp} disabled={backingUp} size="sm">
+                                                    {t('systemSettings.vault.backupNow')}
+                                                </Button>
+                                            </div>
                                         </div>
 
                                         {backupError && (
                                             <div className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-700 font-bold">
                                                 {backupError}
+                                            </div>
+                                        )}
+                                        {restoreError && (
+                                            <div className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-700 font-bold flex items-center gap-2">
+                                                <span className="material-symbols-outlined text-base">error</span>
+                                                {restoreError}
+                                            </div>
+                                        )}
+                                        {restoreSuccess && (
+                                            <div className="rounded-2xl bg-green-50 border border-green-200 px-4 py-3 text-xs text-green-700 font-bold flex items-center gap-2">
+                                                <span className="material-symbols-outlined text-base">check_circle</span>
+                                                {restoreSuccess}
                                             </div>
                                         )}
 
@@ -1157,6 +1230,18 @@ export function SystemSettingsPage() {
                                                             </div>
                                                             <button type="button" onClick={() => downloadBackup(b.filename)} title={t('common.download')} className="text-text-muted hover:text-primary transition-colors shrink-0">
                                                                 <span className="material-symbols-outlined text-base">download</span>
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void restoreBackup(b.filename)}
+                                                                title={t('systemSettings.vault.restoreNow')}
+                                                                disabled={restoring === b.filename || uploadingRestore}
+                                                                className="text-text-muted hover:text-amber-600 transition-colors shrink-0 disabled:opacity-40"
+                                                            >
+                                                                {restoring === b.filename
+                                                                    ? <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+                                                                    : <span className="material-symbols-outlined text-base">settings_backup_restore</span>
+                                                                }
                                                             </button>
                                                             <button type="button" onClick={() => deleteBackup(b.filename)} title={t('common.delete')} className="text-text-muted hover:text-error-text transition-colors shrink-0">
                                                                 <span className="material-symbols-outlined text-base">delete</span>
@@ -1333,11 +1418,20 @@ export function SystemSettingsPage() {
                                         </div>
                                     )}
 
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemSettings.smtp.testRecipient')}</label>
+                                        <Input
+                                            type="email"
+                                            placeholder="test@example.com"
+                                            value={smtpTestTo}
+                                            onChange={e => setSmtpTestTo(e.target.value)}
+                                        />
+                                    </div>
                                     <div className="flex gap-3">
                                         <Button onClick={saveSmtp} isLoading={smtpSaving}>
                                             {t('systemSettings.smtp.saveSettings')}
                                         </Button>
-                                        <Button variant="outline" onClick={testSmtp} isLoading={smtpTesting}>
+                                        <Button variant="outline" onClick={testSmtp} isLoading={smtpTesting} disabled={!smtpTestTo.trim()}>
                                             {t('systemSettings.smtp.sendTestEmail')}
                                         </Button>
                                     </div>
