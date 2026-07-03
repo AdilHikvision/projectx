@@ -212,9 +212,9 @@ export function SystemStatusPage() {
               )}
 
               <div className="grid grid-cols-3 gap-2">
-                <Button fullWidth size="sm" onClick={() => controlMainService('start')} isLoading={isSubmitting} icon="play_arrow">{t('systemStatus.actions.start')}</Button>
-                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting} icon="stop">{t('systemStatus.actions.stop')}</Button>
-                <Button fullWidth size="sm" variant="outline" onClick={() => controlMainService('restart')} isLoading={isSubmitting} icon="restart_alt">{t('systemStatus.actions.reset')}</Button>
+                <Button fullWidth size="lg" className="py-2.5" onClick={() => controlMainService('start')} isLoading={isSubmitting} icon="play_arrow">{t('systemStatus.actions.start')}</Button>
+                <Button fullWidth size="lg" className="py-2.5" variant="outline" onClick={() => controlMainService('stop')} isLoading={isSubmitting} icon="stop">{t('systemStatus.actions.stop')}</Button>
+                <Button fullWidth size="lg" className="py-2.5" variant="outline" onClick={() => controlMainService('restart')} isLoading={isSubmitting} icon="restart_alt">{t('systemStatus.actions.reset')}</Button>
               </div>
             </div>
           </div>

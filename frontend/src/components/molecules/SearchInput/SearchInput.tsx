@@ -30,7 +30,7 @@ export function SearchInput({
                 <button
                     type="button"
                     onClick={() => onChange('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-dark hover:bg-slate-100 transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-text-light hover:text-text-dark hover:bg-slate-75 transition-colors"
                     aria-label={t('common.clear')}
                 >
                     <span className="material-symbols-outlined text-lg">close</span>

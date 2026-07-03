@@ -20,15 +20,15 @@ export function TabBar({
 }: TabBarProps) {
     if (variant === 'pill') {
         return (
-            <div className={`flex flex-wrap gap-2 ${className}`}>
+            <div className={`inline-flex flex-wrap gap-1 rounded-xl bg-slate-75 p-1 ${className}`}>
                 {tabs.map((t) => (
                     <button
                         key={t.value}
                         type="button"
                         onClick={() => onTabChange(t.value)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${activeTab === t.value
-                                ? 'bg-primary text-white'
-                                : 'bg-slate-75 text-text-muted hover:bg-slate-100 hover:text-text-dark'
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === t.value
+                                ? 'bg-white text-primary-dark shadow-card'
+                                : 'text-text-muted hover:text-text-dark'
                             }`}
                     >
                         {t.label}
@@ -45,12 +45,16 @@ export function TabBar({
                     key={t.value}
                     type="button"
                     onClick={() => onTabChange(t.value)}
-                    className={`pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest border-b-2 transition-colors ${activeTab === t.value
-                            ? 'border-primary text-primary'
-                            : 'border-transparent text-text-muted hover:text-text-dark'
+                    className={`relative pb-2.5 text-xs font-bold whitespace-nowrap uppercase tracking-widest transition-colors ${activeTab === t.value
+                            ? 'text-primary-dark'
+                            : 'text-text-muted hover:text-text-dark'
                         }`}
                 >
                     {t.label}
+                    <span
+                        className={`absolute inset-x-0 -bottom-px h-[2.5px] rounded-full bg-brand-gradient transition-all duration-200 ${activeTab === t.value ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'}`}
+                        aria-hidden="true"
+                    />
                 </button>
             ))}
         </div>

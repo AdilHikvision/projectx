@@ -12,7 +12,7 @@ export function Card({
     noPadding = false
 }: CardProps) {
     return (
-        <div className={`bg-surface rounded-xl border border-border-base shadow-sm overflow-hidden ${!noPadding ? 'p-6' : ''} ${className}`}>
+        <div className={`bg-surface rounded-2xl border border-border-light shadow-card overflow-hidden ${!noPadding ? 'p-6' : ''} ${className}`}>
             {children}
         </div>
     );

@@ -35,6 +35,7 @@ export function ConfirmDialog({
                         variant={variant}
                         onClick={onConfirm}
                         isLoading={isLoading}
+                        className={variant === 'danger' ? 'bg-error-text! text-white! rounded-[10px] shadow hover:brightness-110' : ''}
                     >
                         {confirmText ?? t('common.confirm')}
                     </Button>

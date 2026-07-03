@@ -107,7 +107,20 @@
       "PowerShell(Stop-Process -Id 13244 -Force -ErrorAction SilentlyContinue; Get-Process -Name \"dotnet\" -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 2; Set-Location \"C:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\backend\"; dotnet build -c Release 2>&1 | Where-Object { $_ -match \"error CS|error MSB|Build succeeded|Build FAILED\" } | Select-Object -Last 8)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\backend\" -Recurse -Directory)",
       "Bash(Select-Object -First 50)",
-      "Bash(Format-Table FullName)"
+      "Bash(Format-Table FullName)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "PowerShell(cd \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\" && powershell -ExecutionPolicy Bypass -File \"scripts\\\\start-dev.ps1\")",
+      "Bash(grep -n \"^\\\\s*//.*app\\\\.\\\\|^\\\\s*//.*builder\\\\.\\\\|^\\\\s*//.*services\\\\.\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\backend\\\\Program.cs\")",
+      "Bash(grep -n \"^[[:space:]]*//[[:space:]]*[a-zA-Z_]\\\\|^[[:space:]]*//[[:space:]]*app\\\\.\\\\|^[[:space:]]*//[[:space:]]*builder\\\\.\\\\|^[[:space:]]*//[[:space:]]*services\\\\.\\\\|^[[:space:]]*//[[:space:]]*Map\\\\|^[[:space:]]*//[[:space:]]*Use\\\\|^[[:space:]]*//[[:space:]]*Add\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\backend\\\\Program.cs\")",
+      "Bash(grep -nE \"^\\\\s*//\\\\s*\\(app\\\\.|builder\\\\.|var\\\\s|services\\\\.|Map|Use|if|return|foreach\\)\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\backend\\\\Program.cs\")",
+      "Bash(grep -n \"/\\\\*\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\frontend\\\\src\\\\components\\\\organisms\\\\Sidebar\\\\Sidebar.tsx\")",
+      "Bash(grep -n \"/\\\\*\\\\|^\\\\s*//[^/]\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\frontend\\\\src\\\\App.tsx\")",
+      "Bash(grep -E \"^\\\\s*\\(//\\\\s+[<{]|//\\\\s+\\\\w+\\\\\\(|/\\\\*\\)\")",
+      "Bash(grep -n \"^\\\\s*//\\\\s\" \"c:\\\\Users\\\\adil\\\\OneDrive\\\\Desktop\\\\projectx\\\\frontend\\\\src\\\\App.tsx\")",
+      "Bash(grep -v \"^[[:space:]]*//\\\\s*[─-]\")",
+      "Bash(grep -v \"^[[:space:]]*//\\\\s*$\")",
+      "Bash(grep -v \"^[[:space:]]*//\\\\s*[A-Z][a-z]*\\\\s*components\")"
     ]
   }
 }

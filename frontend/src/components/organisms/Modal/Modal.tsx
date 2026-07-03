@@ -15,17 +15,17 @@ export function Modal({ isOpen, onClose, title, children, fullScreen, actions, c
     const { t } = useTranslation();
     if (!isOpen) return null;
 
-    const baseClasses = `relative flex flex-col shadow-xl overflow-hidden rounded-2xl border-none`;
+    const baseClasses = `relative flex flex-col shadow-float overflow-hidden rounded-2xl border border-border-light animate-pop`;
     const sizeClasses = fullScreen
         ? 'w-[calc(100%-2rem)] h-[calc(100%-2rem)]'
         : 'w-full max-w-lg max-h-[90vh]';
 
-    const bgClass = className.includes('bg-') ? '' : 'bg-surface';
+    const bgClass = className.includes('bg-') ? '' : 'bg-white';
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
-                className="absolute inset-0 bg-black/50 backdrop-blur-sm cursor-pointer"
+                className="absolute inset-0 bg-text-dark/30 backdrop-blur-sm cursor-pointer"
                 onClick={onClose}
                 aria-hidden
             />
@@ -35,7 +35,7 @@ export function Modal({ isOpen, onClose, title, children, fullScreen, actions, c
                 aria-modal="true"
                 aria-labelledby="modal-title"
             >
-                <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-divider-light">
+                <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-border-light">
                     <h2 id="modal-title" className="text-xl font-bold text-text-dark tracking-tight">
                         {title}
                     </h2>

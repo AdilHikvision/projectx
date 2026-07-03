@@ -19,11 +19,9 @@ export function LoadingOverlay({
 
     const bgClasses = variant === 'solid'
         ? 'bg-background-light'
-        : 'bg-black/50 backdrop-blur-sm';
+        : 'bg-white/70 backdrop-blur-sm';
 
-    const textClasses = variant === 'solid'
-        ? 'text-text-muted'
-        : 'text-white/90';
+    const textClasses = 'text-text-muted';
 
     return (
         <div

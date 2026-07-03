@@ -34,7 +34,7 @@ export function UserDropdown({
             <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
-                className="focus:outline-none focus:ring-2 focus:ring-primary/50 rounded-full"
+                className="rounded-full ring-2 ring-transparent hover:ring-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
             >
                 <Avatar
                     initials={initials}
@@ -43,14 +43,14 @@ export function UserDropdown({
                 />
             </button>
             {open && (
-                <div className="absolute right-0 top-full mt-2 py-2 w-48 bg-surface rounded-xl shadow-lg border border-border-base z-50">
+                <div className="absolute right-0 top-full mt-2 p-1.5 w-48 bg-white rounded-2xl shadow-float border border-border-light animate-pop z-50">
                     <button
                         type="button"
                         onClick={() => {
                             setOpen(false);
                             onLogout();
                         }}
-                        className="flex items-center gap-2 w-full px-4 py-2.5 text-left text-sm font-semibold text-text-dark hover:bg-slate-75 transition-colors"
+                        className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl text-left text-sm font-semibold text-error-text hover:bg-error-bg transition-colors"
                     >
                         <span className="material-symbols-outlined text-lg">logout</span>
                         {t('common.logout')}

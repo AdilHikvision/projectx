@@ -71,20 +71,20 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
             <button
                 type="button"
                 onClick={() => setOpen(v => !v)}
-                className="relative w-9 h-9 rounded-full border border-border-base bg-surface hover:bg-background-light transition-colors flex items-center justify-center"
+                className="relative w-9 h-9 rounded-xl hover:bg-slate-75 transition-colors flex items-center justify-center"
             >
                 <span className="material-symbols-outlined text-xl text-text-base">notifications</span>
                 {unreadCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] rounded-full bg-error-text text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] rounded-full bg-error-text text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none ring-2 ring-white">
                         {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                 )}
             </button>
 
             {open && (
-                <div className="absolute right-0 top-full mt-2 w-80 bg-surface rounded-2xl shadow-xl border border-border z-50 overflow-hidden flex flex-col max-h-[420px]">
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-float border border-border-light animate-pop z-50 overflow-hidden flex flex-col max-h-[420px]">
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border-light">
                         <span className="text-sm font-bold text-text-dark">{t('notifications.title')}</span>
                         {unreadCount > 0 && (
                             <button
@@ -110,7 +110,7 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
                                     key={n.id}
                                     type="button"
                                     onClick={() => { if (!n.isRead) onMarkRead(n.id); }}
-                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-b border-border last:border-0 ${n.isRead ? 'bg-surface hover:bg-background-light' : 'bg-primary/5 hover:bg-primary/10'}`}
+                                    className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-b border-border-light last:border-0 ${n.isRead ? 'bg-white hover:bg-slate-75' : 'bg-primary/4 hover:bg-primary/8'}`}
                                 >
                                     <span className={`material-symbols-outlined text-[20px] mt-0.5 shrink-0 ${TYPE_COLOR[n.type] ?? 'text-text-muted'}`}>
                                         {TYPE_ICON[n.type] ?? 'circle_notifications'}

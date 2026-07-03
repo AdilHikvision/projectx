@@ -5,4 +5,5 @@ export { Card } from './Card';
 export { Avatar } from './Avatar';
 export { Icon } from './Icon';
 export { Label } from './Label';
+export { Logo } from './Logo';
 export { Spinner } from './Spinner';

@@ -1,4 +1,5 @@
 import { UserDropdown, NotificationBell } from '../../molecules';
+import { Logo } from '../../atoms';
 import { useAuth } from '../../../auth/AuthContext';
 import { useNotifications } from '../../../hooks/useNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -83,6 +84,18 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
         return () => document.removeEventListener('mousedown', onMouseDown);
     }, []);
 
+    // Ctrl/Cmd + K focuses the command search from anywhere.
+    useEffect(() => {
+        function onKeyDown(e: KeyboardEvent) {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                inputRef.current?.focus();
+            }
+        }
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, []);
+
     function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
         if (!isOpen) return;
         if (e.key === 'ArrowDown') {
@@ -110,30 +123,30 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
     };
 
     return (
-        <header className="sticky top-0 z-20 shrink-0 bg-white/80 backdrop-blur-md shadow-md border-none">
+        <header className="sticky top-0 z-20 shrink-0 bg-white/85 backdrop-blur-xl border-b border-border-light">
             {/* Desktop Top Bar */}
             <div className="hidden md:flex items-center justify-between px-8 py-3 min-h-[64px]">
                 {/* Left: Breadcrumb / Title */}
                 <div className="flex items-center gap-3 text-sm">
                     {breadcrumb ? (
                         <div className="flex items-center gap-2">
-                            <Link to="/" className="text-text-light hover:text-primary transition-colors cursor-pointer no-underline">
+                            <Link to="/" className="text-text-light font-medium hover:text-primary transition-colors cursor-pointer no-underline">
                                 {breadcrumb}
                             </Link>
-                            <span className="material-symbols-outlined text-xs text-text-light">chevron_right</span>
-                            <span className="text-text-dark font-bold">{title}</span>
+                            <span className="material-symbols-outlined text-sm text-text-light/70">chevron_right</span>
+                            <span className="text-text-dark font-bold tracking-tight">{title}</span>
                         </div>
                     ) : (
-                        <span className="text-xl font-bold text-text-dark">{title}</span>
+                        <span className="text-xl font-bold tracking-tight text-text-dark">{title}</span>
                     )}
                 </div>
 
                 {/* Right: Search, Bell, Avatar */}
                 <div className="flex items-center gap-4 flex-1 justify-end">
                     {/* Search with dropdown */}
-                    <div ref={containerRef} className="relative w-full max-w-[300px]">
-                        <div className="relative">
-                            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-text-muted pointer-events-none">search</span>
+                    <div ref={containerRef} className="relative w-full max-w-[320px]">
+                        <div className="relative group">
+                            <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[18px] text-text-light group-focus-within:text-primary transition-colors pointer-events-none">search</span>
                             <input
                                 ref={inputRef}
                                 type="text"
@@ -141,12 +154,15 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                                 onChange={e => setQuery(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 placeholder={searchPlaceholder || t('topBar.searchPages')}
-                                className="w-full pl-9 pr-3 py-2 text-sm rounded-xl border border-border bg-background-light text-text-dark placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+                                className="w-full pl-10 pr-16 py-2 text-sm rounded-xl border border-transparent bg-slate-75 text-text-dark placeholder:text-text-light focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40 focus:bg-white transition-all"
                             />
+                            <kbd className="absolute right-3 top-1/2 -translate-y-1/2 hidden lg:flex items-center gap-0.5 rounded-md border border-border-base bg-white px-1.5 py-0.5 text-[10px] font-bold text-text-light pointer-events-none">
+                                Ctrl K
+                            </kbd>
                         </div>
 
                         {isOpen && (
-                            <div className="absolute top-full mt-1.5 left-0 right-0 bg-white rounded-2xl shadow-xl border border-border z-50 overflow-hidden">
+                            <div className="animate-pop absolute top-full mt-2 left-0 right-0 bg-white rounded-2xl shadow-float border border-border-light z-50 overflow-hidden p-1.5">
                                 {results.map((item, i) => (
                                     <button
                                         key={item.path}
@@ -156,12 +172,15 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                                             setQuery('');
                                         }}
                                         onMouseEnter={() => setActiveIndex(i)}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${i === activeIndex ? 'bg-primary/8 text-primary' : 'text-text-dark hover:bg-background-light'}`}
+                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${i === activeIndex ? 'bg-primary/8 text-primary' : 'text-text-dark'}`}
                                     >
-                                        <span className={`material-symbols-outlined text-[18px] shrink-0 ${i === activeIndex ? 'text-primary' : 'text-text-muted'}`}>
+                                        <span className={`material-symbols-outlined text-[18px] shrink-0 ${i === activeIndex ? 'text-primary icon-fill' : 'text-text-muted'}`}>
                                             {item.icon}
                                         </span>
                                         <span className="text-sm font-semibold">{t(item.labelKey)}</span>
+                                        {i === activeIndex && (
+                                            <span className="material-symbols-outlined ml-auto text-[16px] text-primary/60">keyboard_return</span>
+                                        )}
                                     </button>
                                 ))}
                             </div>
@@ -183,18 +202,16 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
             {/* Mobile Top Bar */}
             <div className="md:hidden flex items-center justify-between px-6 py-4 min-h-[72px]">
                 <div className="flex items-center">
-                    <div className="w-10 h-10 flex items-center justify-center bg-primary/10 rounded-xl text-primary-dark">
-                        <span className="material-symbols-outlined text-2xl !fill-1">shield</span>
-                    </div>
+                    <Logo size={40} />
                 </div>
                 <div className="flex-1 text-center">
-                    <h1 className="text-lg font-black text-text-dark tracking-tight leading-none">{title}</h1>
+                    <h1 className="text-lg font-extrabold text-text-dark tracking-tight leading-none">{title}</h1>
                 </div>
                 <div className="flex items-center justify-end">
                     {actionIcon || onAction ? (
                         <button
                             onClick={onAction}
-                            className="w-10 h-10 flex items-center justify-center bg-primary text-white rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
+                            className="w-10 h-10 flex items-center justify-center bg-brand-gradient text-white rounded-xl shadow-primary hover:scale-105 active:scale-95 transition-all"
                         >
                             <span className="material-symbols-outlined text-2xl">{actionIcon || 'add'}</span>
                         </button>

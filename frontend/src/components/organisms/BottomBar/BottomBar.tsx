@@ -31,7 +31,7 @@ export function BottomBar() {
     );
 
     return (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface border-t border-border-light flex items-center justify-around px-2 z-50">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-xl border-t border-border-light flex items-center justify-around px-2 z-50">
             {items.map((item) => (
                 <NavLink
                     key={item.to}
@@ -42,12 +42,16 @@ export function BottomBar() {
                         transition-colors duration-200
                     `}
                 >
-                    <span className={`material-symbols-outlined text-xl transition-transform duration-200`}>
-                        {item.icon}
-                    </span>
-                    <span className="text-[9px] font-black tracking-widest uppercase">
-                        {t(item.labelKey)}
-                    </span>
+                    {({ isActive }) => (
+                        <>
+                            <span className={`material-symbols-outlined text-xl transition-transform duration-200 ${isActive ? 'icon-fill' : ''}`}>
+                                {item.icon}
+                            </span>
+                            <span className="text-[9px] font-extrabold tracking-[0.14em] uppercase">
+                                {t(item.labelKey)}
+                            </span>
+                        </>
+                    )}
                 </NavLink>
             ))}
         </nav>

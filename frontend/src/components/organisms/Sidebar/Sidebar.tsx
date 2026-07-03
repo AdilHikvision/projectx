@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next';
 import { NavItem } from '../../molecules';
+import { Logo } from '../../atoms';
 import { useAuth } from '../../../auth/AuthContext';
 import { useModule } from '../../../context/ModuleContext';
-import { /* MODULES, */ type ModuleKey } from '../../../config/modules';
+import { MODULES, type ModuleKey } from '../../../config/modules';
 
 interface NavConfig {
     to: string;
@@ -49,8 +50,8 @@ const SYSTEM_NAV: NavConfig[] = [
 export function Sidebar() {
     const { hasAnyPermission } = useAuth();
     const { t } = useTranslation();
-    const { activeModule/*, openPicker*/ } = useModule();
-    // const module = MODULES[activeModule];
+    const { activeModule, openPicker } = useModule();
+    const module = MODULES[activeModule];
 
     const isAllowed = (item: NavConfig): boolean => {
         if (item.modules && !item.modules.includes(activeModule)) return false;
@@ -62,41 +63,39 @@ export function Sidebar() {
     const system = SYSTEM_NAV.filter(isAllowed);
 
     return (
-        <aside className="hidden md:flex flex-col w-[260px] bg-surface shadow-md py-6 shrink-0 h-full border-none">
-            <div className="px-6 mb-8 flex items-center gap-3">
-                <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined text-2xl !fill-1">person_filled</span>
-                </div>
+        <aside className="hidden md:flex flex-col w-[264px] bg-surface border-r border-border-light py-6 shrink-0 h-full">
+            <div className="px-5 mb-7 flex items-center gap-3">
+                <Logo size={40} />
                 <div>
-                    <h1 className="text-sm font-bold leading-tight text-text-dark">{t('common.appName')}</h1>
+                    <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('common.appName')}</h1>
                 </div>
             </div>
 
-            {/* <button
+            <button
                 type="button"
                 onClick={openPicker}
                 title={t('modules.switch')}
-                className="mx-3 mb-5 flex items-center gap-3 rounded-xl border border-border-base bg-slate-75 p-2.5 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+                className="group mx-3 mb-5 flex items-center gap-3 rounded-2xl border border-border-base bg-slate-75/60 p-2.5 text-left transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-card"
             >
-                <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-linear-to-br ${module.gradient} text-white`}>
+                <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-linear-to-br ${module.gradient} text-white shadow-inner-soft`}>
                     <img src={module.image} alt="" className="h-full w-full object-cover" />
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] font-bold uppercase tracking-widest text-text-light">{t('modules.label')}</span>
+                    <span className="block text-[9px] font-extrabold uppercase tracking-[0.16em] text-text-light">{t('modules.label')}</span>
                     <span className="block truncate text-sm font-bold text-text-dark">{t(module.nameKey)}</span>
                 </span>
-                <span className="material-symbols-outlined shrink-0 text-text-muted">unfold_more</span>
-            </button> */}
+                <span className="material-symbols-outlined shrink-0 text-lg text-text-light transition-colors group-hover:text-primary">unfold_more</span>
+            </button>
 
-            <nav className="flex-1 px-3 space-y-1">
+            <nav className="flex-1 overflow-y-auto px-3 space-y-1">
                 {primary.map(item => (
                     <NavItem key={item.to} to={item.to} icon={item.icon} label={t(item.labelKey)} end={item.end} />
                 ))}
             </nav>
 
             {system.length > 0 && (
-                <div className="px-6 py-4 mb-2">
-                    <p className="text-[10px] font-extrabold text-text-muted tracking-widest uppercase mb-3">{t('nav.system')}</p>
+                <div className="px-3 pt-4 mt-2 mb-2 border-t border-border-light">
+                    <p className="px-3 text-[9px] font-extrabold text-text-light tracking-[0.18em] uppercase mb-2">{t('nav.system')}</p>
                     <nav className="space-y-1">
                         {system.map(item => (
                             <NavItem key={item.to} to={item.to} icon={item.icon} label={t(item.labelKey)} />
@@ -105,7 +104,7 @@ export function Sidebar() {
                 </div>
             )}
 
-            <div className="px-6 pt-1 text-[10px] font-bold uppercase tracking-widest text-text-light/60">
+            <div className="px-6 pt-2 text-[10px] font-bold uppercase tracking-[0.14em] text-text-light/60">
                 v{__APP_VERSION__}
             </div>
 

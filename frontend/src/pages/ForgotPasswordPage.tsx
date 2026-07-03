@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useLoading } from '../context/LoadingContext'
-import { Button, Input } from '../components/atoms'
+import { Button, Input, Logo } from '../components/atoms'
 import { apiRequest } from '../lib/api'
 
 interface ForgotPasswordResponse {
@@ -47,30 +47,28 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center p-6 sm:p-12 overflow-hidden bg-background-light font-sans antialiased text-text-dark">
-      <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-5%] w-[40%] h-[40%] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
+    <div className="min-h-screen relative flex items-center justify-center p-6 sm:p-12 overflow-hidden bg-background-light dot-background font-sans antialiased text-text-dark">
+      <div className="absolute top-[-10%] left-[-5%] w-[45%] h-[45%] bg-primary/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-5%] w-[45%] h-[45%] bg-primary-light/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="w-full max-w-[440px] relative z-10 animate-in fade-in zoom-in-95 duration-500">
-        <div className="bg-surface rounded-[2.5rem] shadow-2xl p-8 sm:p-10 space-y-8 relative overflow-hidden group border-none">
+      <div className="w-full max-w-[440px] relative z-10 animate-fade-up">
+        <div className="bg-white rounded-3xl shadow-float border border-border-light p-8 sm:p-10 space-y-8 relative overflow-hidden">
 
           <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-sm">
-              <span className="material-symbols-outlined text-3xl">lock_reset</span>
-            </div>
+            <Logo size={48} />
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.forgotPasswordTitle')}</h1>
-              <p className="text-text-light text-[10px] font-black uppercase tracking-widest">{t('auth.forgotPasswordSubtitle')}</p>
+              <h1 className="text-2xl font-extrabold tracking-tight text-text-dark">{t('auth.forgotPasswordTitle')}</h1>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-text-light">{t('auth.forgotPasswordSubtitle')}</p>
             </div>
           </div>
 
           {success && !success.token ? (
             <div className="space-y-6">
-              <div className="p-4 bg-emerald-500/10 text-emerald-700 rounded-2xl text-sm font-medium text-center">
+              <div className="p-4 bg-success-bg text-success-text rounded-xl text-sm font-medium text-center animate-pop">
                 {success.message}
               </div>
               <Link to="/login" className="block">
-                <Button fullWidth size="lg" className="rounded-2xl font-black uppercase tracking-widest h-12">
+                <Button fullWidth size="lg" className="h-12 rounded-xl text-sm">
                   {t('auth.backToSignInPlain')}
                 </Button>
               </Link>
@@ -78,7 +76,7 @@ export function ForgotPasswordPage() {
           ) : (
             <form className="space-y-6" onSubmit={handleSubmit}>
               {error && (
-                <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest text-center animate-in shake duration-500">
+                <div className="p-3.5 bg-error-bg text-error-text rounded-xl text-xs font-semibold text-center animate-pop">
                   <div className="flex items-center justify-center gap-2">
                     <span className="material-symbols-outlined text-sm">error</span>
                     {error}
@@ -87,14 +85,15 @@ export function ForgotPasswordPage() {
               )}
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.email')}</label>
+                <label className="block text-[10px] font-extrabold text-text-light uppercase tracking-[0.14em] ml-1">{t('auth.email')}</label>
                 <div className="relative">
                   <Input
                     type="email"
                     placeholder={t('auth.emailPlaceholder')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                    size="lg"
+                    className="pl-12"
                     required
                   />
                   <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">alternate_email</span>
@@ -106,7 +105,7 @@ export function ForgotPasswordPage() {
                 isLoading={isLoading}
                 fullWidth
                 size="lg"
-                className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
+                className="h-12 rounded-xl text-sm"
               >
                 {t('auth.send')}
               </Button>
@@ -114,7 +113,7 @@ export function ForgotPasswordPage() {
           )}
 
           <div className="pt-4 text-center">
-            <Link to="/login" className="text-[10px] font-black text-primary hover:underline uppercase tracking-widest">
+            <Link to="/login" className="text-[10px] font-extrabold text-primary hover:underline uppercase tracking-[0.14em]">
               {t('auth.backToSignIn')}
             </Link>
           </div>

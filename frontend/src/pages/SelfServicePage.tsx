@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Button } from '../components/atoms'
+import { Button, Logo } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { SelfServiceCalendar } from './SelfServiceCalendar'
@@ -364,9 +364,7 @@ export function SelfServicePage() {
       <div className="bg-surface border-b border-border sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-xl">badge</span>
-            </div>
+            <Logo size={36} />
             <div>
               <p className="font-black text-text-dark text-sm">{me.firstName} {me.lastName}</p>
               <p className="text-text-light text-xs">{me.department ?? t('selfService.noDepartment')}</p>

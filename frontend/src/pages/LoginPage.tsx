@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { useLoading } from '../context/LoadingContext'
-import { Button, Input } from '../components/atoms'
+import { Button, Input, Logo } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest, consumeSessionExpiredFlag } from '../lib/api'
 
@@ -100,13 +100,13 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center p-6 sm:p-12 overflow-hidden bg-background-light font-sans antialiased text-text-dark">
-      <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-5%] w-[40%] h-[40%] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
+    <div className="min-h-screen relative flex items-center justify-center p-6 sm:p-12 overflow-hidden bg-background-light dot-background font-sans antialiased text-text-dark">
+      <div className="absolute top-[-10%] left-[-5%] w-[45%] h-[45%] bg-primary/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-5%] w-[45%] h-[45%] bg-primary-light/10 rounded-full blur-3xl pointer-events-none" />
 
       <Modal isOpen={showSessionExpiredDialog} onClose={() => setShowSessionExpiredDialog(false)} title={t('auth.sessionExpiredTitle')}>
         <div className="space-y-6 py-2 text-center">
-          <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2">
+          <div className="w-16 h-16 bg-warning-bg text-warning-text rounded-full flex items-center justify-center mx-auto mb-2">
             <span className="material-symbols-outlined text-3xl">timer_off</span>
           </div>
           <p className="text-sm font-medium text-text-dark leading-relaxed">
@@ -116,26 +116,24 @@ export function LoginPage() {
         </div>
       </Modal>
 
-      <div className="w-full max-w-[440px] relative z-10 animate-in fade-in zoom-in-95 duration-500">
-        <div className="bg-surface rounded-[2.5rem] shadow-2xl p-8 sm:p-10 space-y-6 relative overflow-hidden group border-none">
+      <div className="w-full max-w-[440px] relative z-10 animate-fade-up">
+        <div className="bg-white rounded-3xl shadow-float border border-border-light p-8 sm:p-10 space-y-6 relative overflow-hidden">
 
           {/* Branding */}
           <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shadow-sm">
-              <span className="material-symbols-outlined text-3xl">shield_lock</span>
-            </div>
+            <Logo size={48} />
             <div className="space-y-1">
-              <h1 className="text-2xl font-black text-text-dark tracking-tight uppercase">{t('auth.signInUpper')}</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight text-text-dark">{t('auth.signInUpper')}</h1>
             </div>
           </div>
 
           {/* Tab Bar */}
-          <div className="flex rounded-2xl bg-background-light p-1 gap-1">
+          <div className="flex rounded-xl bg-slate-75 p-1 gap-1">
             <button
               type="button"
               onClick={() => { setTab('staff'); setError(null) }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                tab === 'staff' ? 'bg-surface text-primary shadow-sm' : 'text-text-light hover:text-text-dark'
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-[10px] text-[10px] font-extrabold uppercase tracking-[0.14em] transition-all ${
+                tab === 'staff' ? 'bg-white text-primary shadow-card' : 'text-text-light hover:text-text-dark'
               }`}
             >
               <span className="material-symbols-outlined text-base">admin_panel_settings</span>
@@ -144,8 +142,8 @@ export function LoginPage() {
             <button
               type="button"
               onClick={() => { setTab('self-service'); setSsError(null) }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                tab === 'self-service' ? 'bg-surface text-primary shadow-sm' : 'text-text-light hover:text-text-dark'
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-[10px] text-[10px] font-extrabold uppercase tracking-[0.14em] transition-all ${
+                tab === 'self-service' ? 'bg-white text-primary shadow-card' : 'text-text-light hover:text-text-dark'
               }`}
             >
               <span className="material-symbols-outlined text-base">badge</span>
@@ -157,7 +155,7 @@ export function LoginPage() {
           {tab === 'staff' && (
             <form className="space-y-5" onSubmit={handleSubmit}>
               {error && (
-                <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest text-center animate-in shake duration-500">
+                <div className="p-3.5 bg-error-bg text-error-text rounded-xl text-xs font-semibold text-center animate-pop">
                   <div className="flex items-center justify-center gap-2">
                     <span className="material-symbols-outlined text-sm">error</span>
                     {error}
@@ -166,14 +164,15 @@ export function LoginPage() {
               )}
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.emailAddress')}</label>
+                  <label className="block text-[10px] font-extrabold text-text-light uppercase tracking-[0.14em] ml-1">{t('auth.emailAddress')}</label>
                   <div className="relative">
                     <Input
                       type="email"
                       placeholder={t('auth.emailPlaceholder')}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      size="lg"
+                      className="pl-12"
                       required
                     />
                     <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">alternate_email</span>
@@ -181,8 +180,8 @@ export function LoginPage() {
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center px-1">
-                    <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('auth.password')}</label>
-                    <Link to="/forgot-password" className="text-[9px] font-black text-primary hover:underline uppercase tracking-widest transition-colors">{t('auth.forgot')}</Link>
+                    <label className="block text-[10px] font-extrabold text-text-light uppercase tracking-[0.14em]">{t('auth.password')}</label>
+                    <Link to="/forgot-password" className="text-[9px] font-extrabold text-primary hover:underline uppercase tracking-[0.14em] transition-colors">{t('auth.forgot')}</Link>
                   </div>
                   <div className="relative">
                     <Input
@@ -190,7 +189,8 @@ export function LoginPage() {
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      size="lg"
+                      className="pl-12 pr-12"
                       required
                     />
                     <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">lock</span>
@@ -209,7 +209,7 @@ export function LoginPage() {
                 isLoading={isLoading}
                 fullWidth
                 size="lg"
-                className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
+                className="h-12 rounded-xl text-sm"
               >
                 {t('auth.signIn')}
               </Button>
@@ -220,7 +220,7 @@ export function LoginPage() {
           {tab === 'self-service' && (
             <form className="space-y-5" onSubmit={handleSelfServiceLogin}>
               {ssError && (
-                <div className="p-4 bg-error-bg text-error-text rounded-2xl text-[10px] font-black uppercase tracking-widest text-center animate-in shake duration-500">
+                <div className="p-3.5 bg-error-bg text-error-text rounded-xl text-xs font-semibold text-center animate-pop">
                   <div className="flex items-center justify-center gap-2">
                     <span className="material-symbols-outlined text-sm">error</span>
                     {ssError}
@@ -229,28 +229,30 @@ export function LoginPage() {
               )}
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.email')}</label>
+                  <label className="block text-[10px] font-extrabold text-text-light uppercase tracking-[0.14em] ml-1">{t('auth.email')}</label>
                   <div className="relative">
                     <Input
                       type="email"
                       placeholder={t('auth.selfServiceEmailPlaceholder')}
                       value={ssEmail}
                       onChange={(e) => setSsEmail(e.target.value)}
-                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 pl-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      size="lg"
+                      className="pl-12"
                       required
                     />
                     <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">alternate_email</span>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest ml-1">{t('auth.password')}</label>
+                  <label className="block text-[10px] font-extrabold text-text-light uppercase tracking-[0.14em] ml-1">{t('auth.password')}</label>
                   <div className="relative">
                     <Input
                       type={ssShowPassword ? 'text' : 'password'}
                       placeholder="••••••••"
                       value={ssPassword}
                       onChange={(e) => setSsPassword(e.target.value)}
-                      className="bg-white border-none shadow-sm text-text-dark text-sm py-3 px-12 rounded-2xl focus:ring-2 focus:ring-primary/20 transition-all font-bold"
+                      size="lg"
+                      className="pl-12 pr-12"
                       required
                     />
                     <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-text-light text-xl">lock</span>
@@ -269,7 +271,7 @@ export function LoginPage() {
                 isLoading={ssLoading}
                 fullWidth
                 size="lg"
-                className="rounded-2xl font-black uppercase tracking-widest h-12 shadow-lg shadow-primary/20 active:scale-[0.98]"
+                className="h-12 rounded-xl text-sm"
               >
                 {t('auth.signIn')}
               </Button>
