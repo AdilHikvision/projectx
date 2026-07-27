@@ -16,7 +16,7 @@ function formatLocalDate(d: Date): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-type SettingsTab = 'global' | 'devices' | 'company' | 'logSync' | 'email' | 'templates' | 'users' | 'roles' | 'debugLogs'
+type SettingsTab = 'global' | 'devices' | 'company' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
 
 export function SystemSettingsPage() {
     const { t, i18n } = useTranslation()
@@ -28,6 +28,7 @@ export function SystemSettingsPage() {
             : tabParam === 'company' ? 'company'
             : tabParam === 'log-sync' ? 'logSync'
             : tabParam === 'email' ? 'email'
+            : tabParam === 'assistant' ? 'assistant'
             : tabParam === 'templates' ? 'templates'
             : tabParam === 'users' ? 'users'
             : tabParam === 'roles' ? 'roles'
@@ -51,6 +52,7 @@ export function SystemSettingsPage() {
         else if (tab === 'log-sync') setActiveTab('logSync')
         else if (tab === 'global') setActiveTab('global')
         else if (tab === 'email') setActiveTab('email')
+        else if (tab === 'assistant') setActiveTab('assistant')
         else if (tab === 'templates') setActiveTab('templates')
         else if (tab === 'users') setActiveTab('users')
         else if (tab === 'roles') setActiveTab('roles')
@@ -500,6 +502,56 @@ export function SystemSettingsPage() {
         } finally { setSmtpTesting(false) }
     }
 
+    // ─── AI Assistant Settings ────────────────────────────────────────────────
+    const [assistant, setAssistant] = useState({
+        enabled: false,
+        apiKey: '',
+        model: '',
+        baseUrl: '',
+    })
+    const [assistantLoading, setAssistantLoading] = useState(false)
+    const [assistantSaving, setAssistantSaving] = useState(false)
+    const [assistantTesting, setAssistantTesting] = useState(false)
+    const [assistantTestResult, setAssistantTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+    const loadAssistant = useCallback(async () => {
+        if (!token) return
+        setAssistantLoading(true)
+        try {
+            const data = await apiRequest<typeof assistant>('/api/settings/assistant', { token })
+            setAssistant(data)
+        } catch { /* ignore */ } finally { setAssistantLoading(false) }
+    }, [token])
+
+    useEffect(() => {
+        if (!token || activeTab !== 'assistant') return
+        void loadAssistant()
+    }, [token, activeTab, loadAssistant])
+
+    const saveAssistant = async () => {
+        if (!token) return
+        setAssistantSaving(true)
+        setAssistantTestResult(null)
+        try {
+            await apiRequest('/api/settings/assistant', { method: 'PUT', token, body: JSON.stringify(assistant) })
+            setAssistantTestResult({ ok: true, message: t('settingsAssistant.saved') })
+        } catch (e) {
+            setAssistantTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.saveFailed') })
+        } finally { setAssistantSaving(false) }
+    }
+
+    const testAssistant = async () => {
+        if (!token) return
+        setAssistantTesting(true)
+        setAssistantTestResult(null)
+        try {
+            const res = await apiRequest<{ message: string }>('/api/settings/assistant/test', { method: 'POST', token, body: JSON.stringify(assistant) })
+            setAssistantTestResult({ ok: true, message: res.message })
+        } catch (e) {
+            setAssistantTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.testFailed') })
+        } finally { setAssistantTesting(false) }
+    }
+
     // ─── Email Templates ──────────────────────────────────────────────────────
     interface EmailTemplate {
         key: string
@@ -945,6 +997,13 @@ export function SystemSettingsPage() {
                                 }`}
                         >
                             {t('systemSettings.tabs.email')}
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('assistant')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'assistant' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            {t('settingsAssistant.tab')}
                         </button>
                         <button
                             onClick={() => setActiveTab('templates')}
@@ -1433,6 +1492,75 @@ export function SystemSettingsPage() {
                                         </Button>
                                         <Button variant="outline" onClick={testSmtp} isLoading={smtpTesting} disabled={!smtpTestTo.trim()}>
                                             {t('systemSettings.smtp.sendTestEmail')}
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : activeTab === 'assistant' ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-2xl space-y-8">
+                            <div className="flex items-center gap-3 px-2">
+                                <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                    <span className="material-symbols-outlined text-lg">auto_awesome</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">{t('settingsAssistant.tab')}</h3>
+                                </div>
+                            </div>
+
+                            {assistantLoading ? (
+                                <p className="text-sm text-text-light px-2">{t('common.loading')}</p>
+                            ) : (
+                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-6 border-none">
+                                    {/* Enable toggle */}
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-xs font-black text-text-dark">{t('settingsAssistant.enabled')}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setAssistant(s => ({ ...s, enabled: !s.enabled }))}
+                                            className={`relative w-12 h-6 rounded-full transition-colors ${assistant.enabled ? 'bg-primary' : 'bg-slate-200'}`}
+                                        >
+                                            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${assistant.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-5">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('settingsAssistant.apiKey')}</label>
+                                            <Input type="password" placeholder="sk-or-..." value={assistant.apiKey} onChange={e => setAssistant(s => ({ ...s, apiKey: e.target.value }))} />
+                                            <p className="text-[10px] text-text-muted">{t('settingsAssistant.apiKeyHint')}</p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('settingsAssistant.model')}</label>
+                                            <Input placeholder="anthropic/claude-sonnet-4.5" list="assistant-model-suggestions" value={assistant.model} onChange={e => setAssistant(s => ({ ...s, model: e.target.value }))} />
+                                            <datalist id="assistant-model-suggestions">
+                                                <option value="anthropic/claude-sonnet-4.5" />
+                                                <option value="anthropic/claude-opus-4.5" />
+                                                <option value="anthropic/claude-haiku-4.5" />
+                                                <option value="openai/gpt-4o-mini" />
+                                                <option value="google/gemini-2.5-flash" />
+                                            </datalist>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('settingsAssistant.baseUrl')}</label>
+                                            <Input placeholder="https://openrouter.ai/api/v1" value={assistant.baseUrl} onChange={e => setAssistant(s => ({ ...s, baseUrl: e.target.value }))} />
+                                        </div>
+                                    </div>
+
+                                    {assistantTestResult && (
+                                        <div className={`rounded-2xl px-4 py-3 text-xs font-bold flex items-center gap-2 ${assistantTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                                            <span className="material-symbols-outlined text-sm">{assistantTestResult.ok ? 'check_circle' : 'error'}</span>
+                                            {assistantTestResult.message}
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-3">
+                                        <Button onClick={saveAssistant} isLoading={assistantSaving}>
+                                            {t('common.save')}
+                                        </Button>
+                                        <Button variant="outline" onClick={testAssistant} isLoading={assistantTesting}>
+                                            {t('settingsAssistant.test')}
                                         </Button>
                                     </div>
                                 </div>

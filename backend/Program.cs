@@ -138,10 +138,36 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+// Миграции применяются автоматически при каждом старте. На сервере БД может
+// подниматься позже приложения (порядок служб, перезагрузка) — поэтому не падаем,
+// а ждём БД и повторяем до 5 минут. Ошибка самой миграции (не связи) падает сразу.
 {
-    var initializer = scope.ServiceProvider.GetRequiredService<IDatabaseInitializer>();
-    await initializer.InitializeAsync();
+    const int maxAttempts = 60;
+    static bool IsDbUnavailable(Exception? ex) =>
+        ex is not null &&
+        (ex is NpgsqlException { IsTransient: true }
+         || ex is System.Net.Sockets.SocketException
+         || ex is TimeoutException
+         || IsDbUnavailable(ex.InnerException));
+
+    for (var attempt = 1; ; attempt++)
+    {
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            var initializer = scope.ServiceProvider.GetRequiredService<IDatabaseInitializer>();
+            await initializer.InitializeAsync();
+            if (attempt > 1)
+                Log.Information("Database migrations applied after {Attempts} attempt(s)", attempt);
+            break;
+        }
+        catch (Exception ex) when (attempt < maxAttempts && IsDbUnavailable(ex))
+        {
+            Log.Warning("Database is not reachable yet (attempt {Attempt}/{Max}): {Message}. Retrying in 5s…",
+                attempt, maxAttempts, ex.Message);
+            await Task.Delay(TimeSpan.FromSeconds(5));
+        }
+    }
 }
 
 if (app.Environment.IsDevelopment())
@@ -8439,6 +8465,8 @@ app.MapGet("/api/parking/zones/{zoneId:guid}/scheme", async (Guid zoneId, AppDbC
         }),
     });
 }).RequireAuthorization();
+
+app.MapAssistantChat();
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
 if (File.Exists(indexHtmlPath))

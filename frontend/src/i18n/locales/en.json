@@ -99,8 +99,13 @@
     "deleteTitle": "Delete",
     "deletePrefix": "Delete",
     "deleteCascade": "All nested items will be removed.",
-    "nav": { "management": "Parking management" },
-    "tabs": { "manage": "Management", "scheme": "Parking scheme" },
+    "nav": {
+      "management": "Parking management"
+    },
+    "tabs": {
+      "manage": "Management",
+      "scheme": "Parking scheme"
+    },
     "zones": {
       "title": "Zones",
       "new": "New zone",
@@ -108,7 +113,12 @@
       "empty": "No parking zones yet",
       "spaceCount_one": "{{count}} space",
       "spaceCount_other": "{{count}} spaces",
-      "fields": { "name": "Name", "code": "Code", "description": "Description", "active": "Active" }
+      "fields": {
+        "name": "Name",
+        "code": "Code",
+        "description": "Description",
+        "active": "Active"
+      }
     },
     "floors": {
       "title": "Floors",
@@ -117,7 +127,11 @@
       "empty": "No floors in this zone",
       "selectZone": "Select a zone to see its floors",
       "level": "Level",
-      "fields": { "name": "Name", "level": "Level", "active": "Active" }
+      "fields": {
+        "name": "Name",
+        "level": "Level",
+        "active": "Active"
+      }
     },
     "rows": {
       "title": "Rows & spaces",
@@ -125,7 +139,9 @@
       "edit": "Edit row",
       "empty": "No rows on this floor",
       "selectFloor": "Select a floor to see its rows",
-      "fields": { "name": "Name" }
+      "fields": {
+        "name": "Name"
+      }
     },
     "spaces": {
       "new": "Add space",
@@ -135,8 +151,18 @@
       "bulkTitle": "Bulk add spaces",
       "bulkCreate": "Create spaces",
       "bulkPreview": "Preview",
-      "fields": { "code": "Space number", "type": "Type", "notes": "Notes", "active": "Active" },
-      "bulkFields": { "prefix": "Prefix", "count": "Count", "startNumber": "Start number", "pad": "Number padding" }
+      "fields": {
+        "code": "Space number",
+        "type": "Type",
+        "notes": "Notes",
+        "active": "Active"
+      },
+      "bulkFields": {
+        "prefix": "Prefix",
+        "count": "Count",
+        "startNumber": "Start number",
+        "pad": "Number padding"
+      }
     },
     "types": {
       "Regular": "Regular",
@@ -145,7 +171,9 @@
       "Electric": "Electric vehicle",
       "Motorcycle": "Motorcycle"
     },
-    "scheme": { "empty": "Nothing to display yet" }
+    "scheme": {
+      "empty": "Nothing to display yet"
+    }
   },
   "gym": {
     "underDevelopment": "This section is under development and will be available soon.",
@@ -154,7 +182,11 @@
       "subtitle": "Gym business overview — members, subscriptions, revenue and visits",
       "from": "From",
       "to": "To",
-      "groupBy": { "day": "Day", "month": "Month", "year": "Year" },
+      "groupBy": {
+        "day": "Day",
+        "month": "Month",
+        "year": "Year"
+      },
       "kpi": {
         "revenue": "Revenue",
         "payments": "{{count}} payments",
@@ -171,7 +203,11 @@
       "revenueTrend": "Revenue trend",
       "byTariff": "Active memberships by tariff",
       "byMethod": "Revenue by payment method",
-      "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" },
+      "methods": {
+        "Cash": "Cash",
+        "Card": "Card",
+        "Transfer": "Transfer"
+      },
       "noData": "No data for the selected period."
     },
     "nav": {
@@ -206,8 +242,19 @@
         "notes": "Notes",
         "active": "Active"
       },
-      "genders": { "Male": "Male", "Female": "Female", "unset": "Not set" },
-      "columns": { "name": "Name", "contact": "Contact", "gender": "Gender", "status": "Status", "memberships": "Memberships", "visits": "Visits" }
+      "genders": {
+        "Male": "Male",
+        "Female": "Female",
+        "unset": "Not set"
+      },
+      "columns": {
+        "name": "Name",
+        "contact": "Contact",
+        "gender": "Gender",
+        "status": "Status",
+        "memberships": "Memberships",
+        "visits": "Visits"
+      }
     },
     "wizard": {
       "title": "New customer",
@@ -216,7 +263,13 @@
       "finish": "Finish",
       "skip": "Skip",
       "creating": "Creating…",
-      "steps": { "info": "Details", "subscription": "Subscription", "credentials": "Biometrics & card", "payment": "Payment", "access": "Access" },
+      "steps": {
+        "info": "Details",
+        "subscription": "Subscription",
+        "credentials": "Biometrics & card",
+        "payment": "Payment",
+        "access": "Access"
+      },
       "subscription": {
         "select": "Choose a tariff",
         "none": "No active tariffs. You can skip and add a subscription later.",
@@ -242,7 +295,11 @@
         "amount": "Amount",
         "note": "Note",
         "skipNote": "Optional — skip if not paying now.",
-        "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" }
+        "methods": {
+          "Cash": "Cash",
+          "Card": "Card",
+          "Transfer": "Transfer"
+        }
       },
       "accessStep": {
         "select": "Grant access on devices",
@@ -315,7 +372,12 @@
       "transferTo": "Transfer to customer",
       "transferSelf": "Current owner",
       "noOtherCustomers": "No other customers to transfer to.",
-      "statuses": { "Active": "Active", "Frozen": "Frozen", "Expired": "Expired", "Cancelled": "Cancelled" }
+      "statuses": {
+        "Active": "Active",
+        "Frozen": "Frozen",
+        "Expired": "Expired",
+        "Cancelled": "Cancelled"
+      }
     },
     "inventory": {
       "title": "Warehouse",
@@ -356,11 +418,28 @@
         "movements": "History",
         "receipt": "Receipt",
         "writeoff": "Write-off",
-        "columns": { "name": "Name", "sku": "SKU", "category": "Category", "stock": "Stock", "min": "Min", "price": "Price", "supplier": "Supplier" },
+        "columns": {
+          "name": "Name",
+          "sku": "SKU",
+          "category": "Category",
+          "stock": "Stock",
+          "min": "Min",
+          "price": "Price",
+          "supplier": "Supplier"
+        },
         "fields": {
-          "name": "Name", "sku": "SKU", "barcode": "Barcode", "category": "Category", "unit": "Unit",
-          "salePrice": "Sale price", "cost": "Cost", "currency": "Currency", "minStock": "Min stock",
-          "openingStock": "Opening stock", "supplier": "Supplier", "active": "Active"
+          "name": "Name",
+          "sku": "SKU",
+          "barcode": "Barcode",
+          "category": "Category",
+          "unit": "Unit",
+          "salePrice": "Sale price",
+          "cost": "Cost",
+          "currency": "Currency",
+          "minStock": "Min stock",
+          "openingStock": "Opening stock",
+          "supplier": "Supplier",
+          "active": "Active"
         }
       },
       "receipts": {
@@ -382,7 +461,13 @@
         "for": "Stock history — {{name}}",
         "empty": "No movements yet.",
         "balanceAfter": "Balance",
-        "types": { "Receipt": "Receipt", "WriteOff": "Write-off", "Stocktake": "Stocktake", "Purchase": "Purchase", "Sale": "Sale" }
+        "types": {
+          "Receipt": "Receipt",
+          "WriteOff": "Write-off",
+          "Stocktake": "Stocktake",
+          "Purchase": "Purchase",
+          "Sale": "Sale"
+        }
       },
       "lowStock": {
         "title": "Low stock",
@@ -397,8 +482,21 @@
         "deleteTitle": "Delete supplier",
         "deletePrefix": "Delete supplier",
         "inactive": "Inactive",
-        "columns": { "name": "Name", "contact": "Contact", "phone": "Phone", "email": "Email" },
-        "fields": { "name": "Name", "contactName": "Contact person", "phone": "Phone", "email": "Email", "address": "Address", "notes": "Notes", "active": "Active" }
+        "columns": {
+          "name": "Name",
+          "contact": "Contact",
+          "phone": "Phone",
+          "email": "Email"
+        },
+        "fields": {
+          "name": "Name",
+          "contactName": "Contact person",
+          "phone": "Phone",
+          "email": "Email",
+          "address": "Address",
+          "notes": "Notes",
+          "active": "Active"
+        }
       },
       "purchases": {
         "new": "New purchase",
@@ -415,8 +513,20 @@
         "cancel": "Cancel",
         "cancelConfirm": "Cancel this purchase?",
         "deleteConfirm": "Delete this purchase?",
-        "columns": { "number": "Number", "supplier": "Supplier", "items": "Items", "total": "Total", "status": "Status", "date": "Date" },
-        "statuses": { "Draft": "Draft", "Ordered": "Ordered", "Received": "Received", "Cancelled": "Cancelled" }
+        "columns": {
+          "number": "Number",
+          "supplier": "Supplier",
+          "items": "Items",
+          "total": "Total",
+          "status": "Status",
+          "date": "Date"
+        },
+        "statuses": {
+          "Draft": "Draft",
+          "Ordered": "Ordered",
+          "Received": "Received",
+          "Cancelled": "Cancelled"
+        }
       },
       "stocktakes": {
         "new": "New stocktake",
@@ -433,8 +543,17 @@
         "cancel": "Cancel",
         "cancelConfirm": "Cancel this stocktake?",
         "deleteConfirm": "Delete this stocktake?",
-        "columns": { "number": "Number", "items": "Items", "status": "Status", "date": "Date" },
-        "statuses": { "Draft": "Draft", "Completed": "Completed", "Cancelled": "Cancelled" }
+        "columns": {
+          "number": "Number",
+          "items": "Items",
+          "status": "Status",
+          "date": "Date"
+        },
+        "statuses": {
+          "Draft": "Draft",
+          "Completed": "Completed",
+          "Cancelled": "Cancelled"
+        }
       }
     },
     "finance": {
@@ -450,37 +569,109 @@
         "analytics": "Analytics"
       },
       "common": {
-        "date": "Date", "category": "Category", "account": "Account", "counterparty": "Counterparty",
-        "amount": "Amount", "from": "From", "to": "To", "total": "Total",
-        "uncategorized": "Uncategorized", "noData": "No data for this period."
+        "date": "Date",
+        "category": "Category",
+        "account": "Account",
+        "counterparty": "Counterparty",
+        "amount": "Amount",
+        "from": "From",
+        "to": "To",
+        "total": "Total",
+        "uncategorized": "Uncategorized",
+        "noData": "No data for this period."
       },
       "kpi": {
-        "income": "Income", "expense": "Expenses", "profit": "Profit", "balance": "Total balance",
-        "cashBalance": "Cash balance", "bankBalance": "Bank balance",
-        "incomeByCategory": "Income by category", "expenseByCategory": "Expenses by category"
+        "income": "Income",
+        "expense": "Expenses",
+        "profit": "Profit",
+        "balance": "Total balance",
+        "cashBalance": "Cash balance",
+        "bankBalance": "Bank balance",
+        "incomeByCategory": "Income by category",
+        "expenseByCategory": "Expenses by category"
       },
       "fields": {
-        "amount": "Amount", "date": "Date", "account": "Account", "selectAccount": "Select account…",
-        "category": "Category", "counterparty": "Counterparty", "description": "Description",
-        "name": "Name", "currency": "Currency", "openingBalance": "Opening balance",
-        "bankName": "Bank", "accountNumber": "Account number", "active": "Active"
+        "amount": "Amount",
+        "date": "Date",
+        "account": "Account",
+        "selectAccount": "Select account…",
+        "category": "Category",
+        "counterparty": "Counterparty",
+        "description": "Description",
+        "name": "Name",
+        "currency": "Currency",
+        "openingBalance": "Opening balance",
+        "bankName": "Bank",
+        "accountNumber": "Account number",
+        "active": "Active"
       },
       "inactive": "Inactive",
       "deletePrefix": "Delete",
       "deleteConfirm": "Delete this transaction?",
-      "income": { "title": "Income", "subtitle": "Money coming in", "new": "New income", "edit": "Edit income", "empty": "No income recorded yet." },
-      "expense": { "title": "Expenses", "subtitle": "Money going out", "new": "New expense", "edit": "Edit expense", "empty": "No expenses recorded yet." },
-      "cash": { "title": "Cash registers", "subtitle": "Cash on hand", "new": "New cash register", "edit": "Edit cash register", "deleteTitle": "Delete cash register", "empty": "No cash registers yet — add your first one." },
-      "bank": { "title": "Bank accounts", "subtitle": "Money in the bank", "new": "New bank account", "edit": "Edit bank account", "deleteTitle": "Delete bank account", "empty": "No bank accounts yet — add your first one." },
-      "transfer": { "action": "Transfer", "title": "Transfer between accounts", "from": "From account", "to": "To account", "sameAccount": "Choose two different accounts." },
-      "categories": { "manage": "Categories", "title": "Income & expense categories", "namePlaceholder": "Category name", "empty": "No categories yet." },
-      "reports": { "groupBy": "Group by", "day": "Day", "month": "Month", "year": "Year", "period": "Period" },
-      "analytics": { "income12m": "Income (12m)", "expense12m": "Expenses (12m)", "profit12m": "Profit (12m)", "trend": "Income vs expenses" }
+      "income": {
+        "title": "Income",
+        "subtitle": "Money coming in",
+        "new": "New income",
+        "edit": "Edit income",
+        "empty": "No income recorded yet."
+      },
+      "expense": {
+        "title": "Expenses",
+        "subtitle": "Money going out",
+        "new": "New expense",
+        "edit": "Edit expense",
+        "empty": "No expenses recorded yet."
+      },
+      "cash": {
+        "title": "Cash registers",
+        "subtitle": "Cash on hand",
+        "new": "New cash register",
+        "edit": "Edit cash register",
+        "deleteTitle": "Delete cash register",
+        "empty": "No cash registers yet — add your first one."
+      },
+      "bank": {
+        "title": "Bank accounts",
+        "subtitle": "Money in the bank",
+        "new": "New bank account",
+        "edit": "Edit bank account",
+        "deleteTitle": "Delete bank account",
+        "empty": "No bank accounts yet — add your first one."
+      },
+      "transfer": {
+        "action": "Transfer",
+        "title": "Transfer between accounts",
+        "from": "From account",
+        "to": "To account",
+        "sameAccount": "Choose two different accounts."
+      },
+      "categories": {
+        "manage": "Categories",
+        "title": "Income & expense categories",
+        "namePlaceholder": "Category name",
+        "empty": "No categories yet."
+      },
+      "reports": {
+        "groupBy": "Group by",
+        "day": "Day",
+        "month": "Month",
+        "year": "Year",
+        "period": "Period"
+      },
+      "analytics": {
+        "income12m": "Income (12m)",
+        "expense12m": "Expenses (12m)",
+        "profit12m": "Profit (12m)",
+        "trend": "Income vs expenses"
+      }
     },
     "pos": {
       "title": "POS / Checkout",
       "subtitle": "Sell products, take payment and update stock",
-      "tabs": { "checkout": "Checkout", "history": "Sales history" },
+      "tabs": {
+        "checkout": "Checkout",
+        "history": "Sales history"
+      },
       "searchProducts": "Search products by name, SKU or category",
       "noProducts": "No products in the warehouse yet.",
       "notFound": "Nothing found.",
@@ -493,7 +684,11 @@
       "discount": "Discount",
       "total": "Total",
       "paymentMethod": "Payment method",
-      "methods": { "Cash": "Cash", "Card": "Card", "Transfer": "Transfer" },
+      "methods": {
+        "Cash": "Cash",
+        "Card": "Card",
+        "Transfer": "Transfer"
+      },
       "account": "Deposit to account",
       "noAccount": "Don't record income",
       "customer": "Customer",
@@ -505,10 +700,24 @@
       "receipt": "Receipt {{number}}",
       "refund": "Refund",
       "refundConfirm": "Refund this sale? Stock and income will be reversed.",
-      "columns": { "number": "Number", "date": "Date", "customer": "Customer", "items": "Items", "method": "Method", "total": "Total", "status": "Status" },
-      "statuses": { "Completed": "Completed", "Refunded": "Refunded" }
+      "columns": {
+        "number": "Number",
+        "date": "Date",
+        "customer": "Customer",
+        "items": "Items",
+        "method": "Method",
+        "total": "Total",
+        "status": "Status"
+      },
+      "statuses": {
+        "Completed": "Completed",
+        "Refunded": "Refunded"
+      }
     },
-    "tabs": { "tariffs": "Tariffs", "gifts": "Gift certificates" },
+    "tabs": {
+      "tariffs": "Tariffs",
+      "gifts": "Gift certificates"
+    },
     "gifts": {
       "title": "Gift certificates",
       "new": "Issue certificate",
@@ -531,8 +740,18 @@
       "noCustomers": "No customers. Add a customer first.",
       "redeemedShort": "Redeemed",
       "noExpiry": "No expiry",
-      "columns": { "code": "Code", "tariff": "Tariff", "validUntil": "Redeem by", "status": "Status" },
-      "statuses": { "Issued": "Issued", "Redeemed": "Redeemed", "Cancelled": "Cancelled", "Expired": "Expired" }
+      "columns": {
+        "code": "Code",
+        "tariff": "Tariff",
+        "validUntil": "Redeem by",
+        "status": "Status"
+      },
+      "statuses": {
+        "Issued": "Issued",
+        "Redeemed": "Redeemed",
+        "Cancelled": "Cancelled",
+        "Expired": "Expired"
+      }
     },
     "tariffs": {
       "title": "Subscription tariffs",
@@ -551,8 +770,16 @@
       "visitsUnlimited": "Unlimited visits",
       "visits_one": "{{count}} visit",
       "visits_other": "{{count}} visits",
-      "kinds": { "Membership": "Membership", "GiftCertificate": "Gift certificate" },
-      "durations": { "Day": "Day", "Week": "Week", "Month": "Month", "Year": "Year" },
+      "kinds": {
+        "Membership": "Membership",
+        "GiftCertificate": "Gift certificate"
+      },
+      "durations": {
+        "Day": "Day",
+        "Week": "Week",
+        "Month": "Month",
+        "Year": "Year"
+      },
       "fields": {
         "name": "Name",
         "description": "Description",
@@ -572,7 +799,15 @@
         "transfer": "Allow transfer",
         "active": "Active"
       },
-      "days": { "mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun" }
+      "days": {
+        "mon": "Mon",
+        "tue": "Tue",
+        "wed": "Wed",
+        "thu": "Thu",
+        "fri": "Fri",
+        "sat": "Sat",
+        "sun": "Sun"
+      }
     }
   },
   "nav": {
@@ -2084,5 +2319,28 @@
   "faces": {
     "noPhoto": "No photo",
     "faceAlt": "Face"
+  },
+  "assistant": {
+    "title": "AI Assistant",
+    "subtitle": "ProjectX Copilot",
+    "placeholder": "Type a command…",
+    "thinking": "Thinking…",
+    "error": "Something went wrong",
+    "clear": "Clear chat",
+    "intro": "I can search people, configure work schedules and build reports.",
+    "example1": "Find employee Anar",
+    "example2": "Set 15 min late tolerance for the Office schedule",
+    "example3": "Attendance report for this month",
+    "notConfigured": "Not configured yet — add an OpenRouter API key in Settings → AI Assistant."
+  },
+  "settingsAssistant": {
+    "tab": "AI Assistant",
+    "enabled": "Enable assistant",
+    "apiKey": "OpenRouter API key",
+    "apiKeyHint": "Get a key at openrouter.ai/keys",
+    "model": "Model",
+    "baseUrl": "Base URL",
+    "test": "Test connection",
+    "saved": "Settings saved"
   }
 }

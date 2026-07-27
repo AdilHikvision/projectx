@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Sidebar, TopBar, BottomBar } from '../../organisms';
+import { Sidebar, TopBar, BottomBar, AssistantChat } from '../../organisms';
 
 interface AppLayoutProps {
     children: ReactNode;
@@ -78,6 +78,9 @@ export function AppLayout({ children, onAction }: AppLayoutProps) {
 
                 {/* ─── Mobile Bottom Navigation ─── */}
                 <BottomBar />
+
+                {/* ─── AI Assistant ─── */}
+                <AssistantChat />
             </main>
         </div>
     );
