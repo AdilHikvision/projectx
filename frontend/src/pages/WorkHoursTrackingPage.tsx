@@ -6,6 +6,222 @@ import { PageHeader, Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import { useExportReport } from '../hooks/useExportReport'
+import './monthly-hours.css'
+
+/* ═══════════════════════════════════════════════════════════════
+   MONTHLY HOURS tab — "Aylıq Tabel" (arkoz.html dizaynı birebir)
+   SCOPED stil: monthly-hours.css (.wf-mh-root, wf-mh- prefiks).
+   YALNIZ real backend datası (/api/reports/work-hours/monthly, projectx_dev).
+   Mok/demo YOXDUR. "Tab. №" sütunu işçinin ExternalId-ni göstərir.
+   ═══════════════════════════════════════════════════════════════ */
+interface MhShift { code: string; label: string; hours: number; pill: string }
+const MH_CODES: MhShift[] = [
+  { code: '8', label: '8 saatlıq iş günü', hours: 8, pill: 'cw' },
+  { code: '9', label: '9 saatlıq iş günü', hours: 9, pill: 'cw' },
+  { code: '11', label: '11 saatlıq növbə', hours: 11, pill: 'cw' },
+  { code: '7', label: 'Qısaldılmış iş günü', hours: 7, pill: 'cw' },
+  { code: '12', label: '12 saatlıq növbə', hours: 12, pill: 'c12' },
+  { code: '3', label: '3 saatlıq / yarımnövbə', hours: 3, pill: 'c3' },
+  { code: 'i', label: 'İstirahət günü', hours: 0, pill: 'ci' },
+  { code: 'm', label: 'Məzuniyyət', hours: 0, pill: 'cm' },
+  { code: 'x', label: 'İşə çıxmayıb', hours: 0, pill: 'cx' },
+  { code: 'b', label: 'Bayram günü', hours: 0, pill: 'cb' },
+]
+const MH_MAP: Record<string, MhShift> = {}
+MH_CODES.forEach((c) => { MH_MAP[c.code] = c })
+const MH_SW: Record<string, { bg: string; fg: string }> = {
+  cw: { bg: 'var(--wf-mh-cw)', fg: 'var(--wf-mh-cwT)' }, c3: { bg: 'var(--wf-mh-c3)', fg: 'var(--wf-mh-c3T)' },
+  c12: { bg: 'var(--wf-mh-c12)', fg: 'var(--wf-mh-c12T)' }, cx: { bg: 'var(--wf-mh-cx)', fg: 'var(--wf-mh-cxT)' },
+  ci: { bg: 'var(--wf-mh-ci)', fg: 'var(--wf-mh-ciT)' }, cm: { bg: 'var(--wf-mh-cm)', fg: 'var(--wf-mh-cmT)' },
+  cb: { bg: 'var(--wf-mh-cb)', fg: 'var(--wf-mh-cbT)' },
+}
+
+interface MhDayCell { hours: number; criterionKey: string }
+interface MhEmp { no: string; externalId: string; fullname: string; position: string; department: string; days: Record<string, MhDayCell>; totalDays: string; totalHours: string; extraDays: string; extraHours: string }
+const MH_DEFAULT_MONTH = '2026-05'
+interface MhApiResponse { month: string; employees: MhEmp[] }
+
+/* ─── Davamiyyət kriteriyaları (attendance criteria, GET /api/attendance-criteria) ─── */
+interface AttCriterion { key: string; label: string; letter: string; color: string; enabled: boolean; sortOrder: number; displayMode: string }
+const MH_CRIT_DEFAULTS: AttCriterion[] = [
+  { key: 'normal', label: 'Normal', letter: '', color: '#2E7D32', enabled: true, sortOrder: 0, displayMode: 'hours' },
+  { key: 'undertime', label: 'Natamam', letter: 'x', color: '#E8A33D', enabled: true, sortOrder: 1, displayMode: 'hours' },
+  { key: 'overtime', label: 'Əlavə iş', letter: '', color: '#2563EB', enabled: true, sortOrder: 2, displayMode: 'hours' },
+  { key: 'late', label: 'Gecikmə', letter: '', color: '#EA6A47', enabled: true, sortOrder: 3, displayMode: 'hours' },
+  { key: 'early_leave', label: 'Erkən çıxış', letter: '', color: '#8B5CF6', enabled: true, sortOrder: 4, displayMode: 'hours' },
+  { key: 'dayoff', label: 'İstirahət', letter: 'İ', color: '#94A3B8', enabled: true, sortOrder: 5, displayMode: 'letter' },
+]
+// Subtle tinted background from a #rrggbb hex (append alpha).
+function mhTint(hex: string): string { return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex + '22' : 'transparent' }
+// Hours without trailing .0 → 8, 7.5
+function mhFmtHours(h: number): string { const n = Math.round(h * 100) / 100; return String(n) }
+
+function mhDaysInMonth(ym: string): number { const p = ym.split('-'); return new Date(+p[0], +p[1], 0).getDate() }
+function mhWeekend(ym: string, day: number): boolean { const p = ym.split('-'); const dow = new Date(+p[0], +p[1] - 1, day).getDay(); return dow === 0 || dow === 6 }
+function mhAzMonth(ym: string): string { const names = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun', 'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr']; const p = ym.split('-'); return names[+p[1] - 1] + ' ' + p[0] }
+
+function MonthlyHoursTable() {
+  const { token } = useAuth()
+  const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
+  const [mhDept, setMhDept] = useState('')
+  const [mhName, setMhName] = useState('')
+  const [mhData, setMhData] = useState<MhEmp[]>([])
+  const [mhLoading, setMhLoading] = useState(true)
+  const [mhError, setMhError] = useState('')
+  const [mhCrit, setMhCrit] = useState<AttCriterion[]>(() => {
+    try { const c = localStorage.getItem('projectx.attCriteria'); if (c) { const p = JSON.parse(c); if (Array.isArray(p) && p.length) return p } } catch { /* noop */ }
+    return MH_CRIT_DEFAULTS
+  })
+
+  // Davamiyyət kriteriyaları — bir dəfə çək, localStorage-a keşlə (grid rəng/hərf mənbəyi).
+  useEffect(() => {
+    let cancelled = false
+    apiRequest<AttCriterion[]>('/api/attendance-criteria', { token })
+      .then((res) => {
+        if (cancelled || !Array.isArray(res) || !res.length) return
+        setMhCrit(res)
+        try { localStorage.setItem('projectx.attCriteria', JSON.stringify(res)) } catch { /* noop */ }
+      })
+      .catch(() => { /* defaults qalır */ })
+    return () => { cancelled = true }
+  }, [token])
+
+  // Yalnız real backend datası (/api/reports/work-hours/monthly). Mok/demo YOXDUR —
+  // backend əlçatmazsa xəta mesajı, data yoxdursa boş-hal göstərilir (saxta sətir yox).
+  useEffect(() => {
+    let cancelled = false
+    setMhLoading(true)
+    setMhError('')
+    apiRequest<MhApiResponse>(`/api/reports/work-hours/monthly?month=${mhMonth}`, { token })
+      .then((res) => {
+        if (cancelled) return
+        setMhData(Array.isArray(res?.employees) ? res.employees : [])
+      })
+      .catch(() => {
+        if (cancelled) return
+        setMhData([])
+        setMhError('Məlumat yüklənmədi — backend əlçatmır. Yenidən cəhd edin.')
+      })
+      .finally(() => { if (!cancelled) setMhLoading(false) })
+    return () => { cancelled = true }
+  }, [mhMonth, token])
+
+  const nDays = mhDaysInMonth(mhMonth)
+  const nameLc = mhName.toLowerCase().trim()
+  const source = mhData
+  const rows = source.filter((e) => (!mhDept || e.department === mhDept) && (!nameLc || e.fullname.toLowerCase().indexOf(nameLc) >= 0 || (e.no || '').toLowerCase().indexOf(nameLc) >= 0 || (e.externalId || '').toLowerCase().indexOf(nameLc) >= 0))
+  const depts = Array.from(new Set(source.map((e) => e.department).filter(Boolean))).sort()
+  const sumHours = rows.reduce((s, e) => s + (parseInt(e.totalHours, 10) || 0), 0)
+  const dayNums = Array.from({ length: nDays }, (_, k) => k + 1)
+  const critMap = new Map<string, AttCriterion>()
+  mhCrit.forEach((c) => critMap.set(c.key, c))
+
+  return (
+    <div className="wf-mh-root">
+      <div className="wf-mh-filter">
+        <input className="wf-mh-input" type="month" value={mhMonth} onChange={(e) => setMhMonth(e.target.value)} title="Dövr" style={{ width: 150 }} />
+        <select className="wf-mh-input" value={mhDept} onChange={(e) => setMhDept(e.target.value)}>
+          <option value="">Bütün şöbələr</option>
+          {depts.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <input className="wf-mh-input" type="text" placeholder="İşçi axtar — ad və ya tabel №" value={mhName} onChange={(e) => setMhName(e.target.value)} style={{ minWidth: 240 }} />
+        <div className="wf-mh-spacer" style={{ display: 'flex', gap: 8 }}>
+          <button className="wf-mh-btn excel" onClick={() => window.alert('Excel export — backend inteqrasiyası növbəti mərhələdə')}>⬇ Excel</button>
+          <button className="wf-mh-btn pdf" onClick={() => window.print()}>⬇ PDF</button>
+        </div>
+      </div>
+
+      <div className="wf-mh-panel">
+        <div className="wf-mh-caption">
+          <div>
+            <div className="t1">İş vaxtının aylıq uçotu — Tabel</div>
+            <div className="t2">{mhAzMonth(mhMonth)} · {mhDept || 'Bütün şöbələr'} · kodlar: iş saatı / i / m / x / b</div>
+          </div>
+          <div className="wf-mh-summary">
+            <div><div className="lbl">İşçi sayı</div><div className="val">{rows.length}</div></div>
+            <div><div className="lbl">Cəmi saat</div><div className="val acc">{sumHours}</div></div>
+          </div>
+        </div>
+
+        <div className="wf-mh-scroll">
+          {mhLoading ? (
+            <div className="wf-mh-empty">Yüklənir…</div>
+          ) : mhError ? (
+            <div className="wf-mh-empty">{mhError}</div>
+          ) : rows.length === 0 ? (
+            <div className="wf-mh-empty">Məlumat yoxdur.</div>
+          ) : (
+            <table className="wf-mh-table">
+              <thead>
+                <tr>
+                  <th className="stick wf-mh-c-ss" rowSpan={2}>S/S</th>
+                  <th className="stick wf-mh-c-no" rowSpan={2}>Tab. №</th>
+                  <th className="stick wf-mh-c-name" rowSpan={2}>Soyadı, adı, atasının adı</th>
+                  <th className="wf-mh-c-pos" rowSpan={2}>Vəzifəsi</th>
+                  <th className="wf-mh-c-dept" rowSpan={2}>Struktur bölməsi</th>
+                  <th colSpan={nDays}>Ayın günləri</th>
+                  <th className="wf-mh-total" rowSpan={2}>Cəmi gün</th>
+                  <th className="wf-mh-total" rowSpan={2}>Cəmi saat</th>
+                  <th className="wf-mh-total" rowSpan={2}>Əlavə gün</th>
+                  <th className="wf-mh-total" rowSpan={2}>Əlavə saat</th>
+                </tr>
+                <tr>
+                  {dayNums.map((d) => <th key={d} className={'wf-mh-day' + (mhWeekend(mhMonth, d) ? ' we' : '')}>{d}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((e, i) => (
+                  <tr key={e.no || e.externalId || i}>
+                    <td className="stick wf-mh-c-ss">{i + 1}</td>
+                    <td className="stick wf-mh-c-no">{e.externalId || '—'}</td>
+                    <td className="stick wf-mh-c-name">{e.fullname}</td>
+                    <td className="wf-mh-c-pos">{e.position}</td>
+                    <td className="wf-mh-c-dept">{e.department}</td>
+                    {dayNums.map((dd) => {
+                      const cell = e.days[String(dd)]
+                      const we = mhWeekend(mhMonth, dd) ? ' we' : ''
+                      // Gün map-də yoxdursa → boş xana (bugünkü davranış).
+                      if (cell == null) return <td key={dd} className={'wf-mh-day' + we} />
+                      const crit = critMap.get(cell.criterionKey)
+                      const hrs = typeof cell.hours === 'number' ? cell.hours : 0
+                      // Kriteriyanın göstərilmə rejiminə görə: 'hours' → işlənmiş saat (rəqəm), 'letter' → kriteriya hərfi. Hər iki halda kriteriya rəngi.
+                      const mode = crit?.displayMode === 'hours' ? 'hours' : 'letter'
+                      const content = mode === 'hours'
+                        ? (hrs > 0 ? mhFmtHours(hrs) : (crit ? crit.letter : ''))
+                        : (crit ? crit.letter : (hrs > 0 ? mhFmtHours(hrs) : ''))
+                      const title = crit ? cell.criterionKey + ' — ' + crit.label : cell.criterionKey
+                      const style = crit ? { color: crit.color, background: mhTint(crit.color), fontWeight: 700 as const } : undefined
+                      return (
+                        <td key={dd} className={'wf-mh-day' + we}>
+                          <span className="pill" style={style} title={title}>{content}</span>
+                        </td>
+                      )
+                    })}
+                    <td className="wf-mh-total">{e.totalDays}</td>
+                    <td className="wf-mh-total">{e.totalHours}</td>
+                    <td className="wf-mh-total">{e.extraDays}</td>
+                    <td className="wf-mh-total">{e.extraHours}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="wf-mh-legend">
+          <span className="lg-lbl">Kodların izahı:</span>
+          {MH_CODES.map((c) => (
+            <span key={c.code} className="wf-mh-chip">
+              <span className="sw" style={{ background: MH_SW[c.pill].bg, color: MH_SW[c.pill].fg }}>{c.code}</span>
+              {c.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 interface Employee {
   id: string
@@ -16,7 +232,7 @@ interface Employee {
 
 
 
-type PageTab = 'daily' | 'weekly' | 'monthly' | 'schedules' | 'leaves'
+type PageTab = 'daily' | 'weekly' | 'monthly' | 'monthlyHours' | 'schedules' | 'leaves'
 
 interface LeaveRow {
   id: string
@@ -807,6 +1023,7 @@ useEffect(() => {
               monthly: t('workHours.tabMonthly'),
               schedules: t('workHours.tabSchedules'),
               leaves: t('workHours.tabLeaves'),
+              monthlyHours: 'Monthly Hours',
             }
             const btnBase = 'flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap'
             const btnActive = 'bg-primary text-white shadow-sm'
@@ -815,7 +1032,7 @@ useEffect(() => {
               <div className="bg-surface rounded-2xl shadow-sm p-1 w-fit max-w-full">
                 {/* Main tabs row */}
                 <div className="flex gap-1">
-                  {(['daily', 'weekly', 'monthly', 'schedules', 'leaves'] as PageTab[]).map(tt => (
+                  {(['daily', 'weekly', 'monthly', 'monthlyHours', 'schedules', 'leaves'] as PageTab[]).map(tt => (
                     <button
                       key={tt}
                       type="button"
@@ -1039,6 +1256,8 @@ useEffect(() => {
           )}
 
           {/* Daily Report — one day, only employees with assigned schedule */}
+          {tab === 'monthlyHours' && <MonthlyHoursTable />}
+
           {tab === 'daily' && (() => {
             const filteredDaily = daily.filter(d => {
               if (d.isDayOff) return subTab === 'all'

@@ -13,3 +13,12 @@ Thumbs.db
 linuxSDK
 winSDK
 artifacts
+_bak*/
+**/_bak*/
+*.bak
+*.bak-*
+dist-installer/
+publish/
+publish_stage/
+artifacts/installer/
+_bak*

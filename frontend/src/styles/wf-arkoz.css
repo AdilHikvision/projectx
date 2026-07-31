@@ -1,0 +1,170 @@
+/* ═══════════════════════════════════════════════════════════════
+   wf-arkoz — Workforce modulunu Arkoz Davamiyyət dizaynına salır
+   SCOPED: yalnız <div class="wf-arkoz"> sarğısı altında işləyir
+   (AppLayout-da activeModule === 'workforce' olduqda əlavə olunur).
+   GLOBAL @theme tokenlərinə TOXUNMUR → parking/gym/digər modullar
+   təsirlənmir. Bütün override-lar utility class-ları hədəf alır.
+
+   Arkoz imzası: neytral-boz accent #374151 (bənövşəyi DEYİL),
+   fon #f5f5f5, kart #fff, radius 8px/düymə 6px, yumşaq kölgə.
+   ═══════════════════════════════════════════════════════════════ */
+
+.wf-arkoz {
+  --wf-accent: #374151;
+  --wf-accent-hover: #1f2937;
+  --wf-accent-light: #f9fafb;
+  --wf-bg: #f5f5f5;
+  --wf-card: #fff;
+  --wf-text: #1a1a1a;
+  --wf-muted: #6b7280;
+  --wf-border: #e5e7eb;
+  --wf-success: #059669;
+  --wf-warning: #d97706;
+  --wf-danger: #dc2626;
+  --wf-shadow: 0 1px 3px rgba(0, 0, 0, .06);
+  --wf-shadow-md: 0 4px 12px rgba(0, 0, 0, .08);
+  background: var(--wf-bg) !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif !important;
+}
+
+/* ─── Fon səthləri ─── */
+.wf-arkoz .bg-background-light { background-color: var(--wf-bg) !important; }
+.wf-arkoz .bg-surface { background-color: var(--wf-card) !important; }
+.wf-arkoz .bg-slate-75,
+.wf-arkoz .bg-slate-75\/60,
+.wf-arkoz .bg-slate-50 { background-color: var(--wf-accent-light) !important; }
+
+/* ─── Accent = tünd-boz (əvvəl bənövşəyi primary) ─── */
+.wf-arkoz .bg-primary { background-color: var(--wf-accent) !important; }
+.wf-arkoz .bg-primary\/4 { background-color: rgba(55, 65, 81, .04) !important; }
+.wf-arkoz .bg-primary\/5 { background-color: rgba(55, 65, 81, .05) !important; }
+.wf-arkoz .bg-primary\/8 { background-color: rgba(55, 65, 81, .08) !important; }
+.wf-arkoz .bg-primary\/10 { background-color: rgba(55, 65, 81, .10) !important; }
+.wf-arkoz .bg-primary\/15 { background-color: rgba(55, 65, 81, .13) !important; }
+
+/* Bənövşəyi/indigo ailəsi → neytral boz tint */
+.wf-arkoz .bg-indigo-50,
+.wf-arkoz .bg-violet-50 { background-color: var(--wf-accent-light) !important; }
+.wf-arkoz .bg-violet-500\/10,
+.wf-arkoz .bg-violet-500\/10 { background-color: rgba(55, 65, 81, .10) !important; }
+
+/* ─── Mətn rəngləri ─── */
+.wf-arkoz .text-primary { color: var(--wf-accent) !important; }
+.wf-arkoz .text-primary-dark { color: var(--wf-accent-hover) !important; }
+.wf-arkoz .text-primary\/60 { color: rgba(55, 65, 81, .60) !important; }
+.wf-arkoz .text-primary\/40 { color: rgba(55, 65, 81, .40) !important; }
+.wf-arkoz .text-indigo-600,
+.wf-arkoz .text-indigo-700,
+.wf-arkoz .text-indigo-800,
+.wf-arkoz .text-violet-600,
+.wf-arkoz .text-violet-700,
+.wf-arkoz .text-purple-700 { color: var(--wf-accent) !important; }
+.wf-arkoz .text-text-dark { color: var(--wf-text) !important; }
+.wf-arkoz .text-text-muted { color: var(--wf-muted) !important; }
+
+/* ─── Sərhədlər ─── */
+.wf-arkoz .border-primary { border-color: var(--wf-accent) !important; }
+.wf-arkoz .border-primary\/40 { border-color: rgba(55, 65, 81, .40) !important; }
+.wf-arkoz .border-primary\/35 { border-color: rgba(55, 65, 81, .35) !important; }
+.wf-arkoz .border-primary\/30 { border-color: rgba(55, 65, 81, .30) !important; }
+.wf-arkoz .border-primary\/20 { border-color: rgba(55, 65, 81, .20) !important; }
+.wf-arkoz .border-border-base,
+.wf-arkoz .border-border,
+.wf-arkoz .border-indigo-200 { border-color: var(--wf-border) !important; }
+
+/* ─── Hover halları ─── */
+.wf-arkoz .hover\:bg-primary:hover { background-color: var(--wf-accent) !important; }
+.wf-arkoz .hover\:bg-primary\/90:hover { background-color: var(--wf-accent-hover) !important; }
+.wf-arkoz .hover\:bg-primary\/85:hover { background-color: var(--wf-accent-hover) !important; }
+.wf-arkoz .hover\:bg-primary\/80:hover { background-color: var(--wf-accent-hover) !important; }
+.wf-arkoz .hover\:bg-primary\/15:hover { background-color: rgba(55, 65, 81, .13) !important; }
+.wf-arkoz .hover\:bg-primary\/8:hover { background-color: rgba(55, 65, 81, .08) !important; }
+.wf-arkoz .hover\:bg-primary\/5:hover { background-color: rgba(55, 65, 81, .05) !important; }
+.wf-arkoz .hover\:bg-primary\/4:hover { background-color: rgba(55, 65, 81, .04) !important; }
+.wf-arkoz .hover\:text-primary:hover { color: var(--wf-accent) !important; }
+.wf-arkoz .hover\:text-primary-dark:hover { color: var(--wf-accent-hover) !important; }
+.wf-arkoz .hover\:text-indigo-900:hover { color: var(--wf-accent-hover) !important; }
+.wf-arkoz .hover\:bg-slate-75:hover { background-color: var(--wf-accent-light) !important; }
+.wf-arkoz .hover\:bg-background-light:hover { background-color: var(--wf-bg) !important; }
+.wf-arkoz .hover\:bg-violet-100:hover,
+.wf-arkoz .hover\:bg-indigo-100:hover { background-color: rgba(55, 65, 81, .08) !important; }
+.wf-arkoz .group:hover .group-hover\:bg-primary\/20 { background-color: rgba(55, 65, 81, .16) !important; }
+
+/* ─── Focus ring (accent glow) ─── */
+.wf-arkoz .focus\:ring-primary:focus { --tw-ring-color: rgba(55, 65, 81, .40) !important; }
+.wf-arkoz .focus\:ring-primary\/10:focus { --tw-ring-color: rgba(55, 65, 81, .12) !important; }
+.wf-arkoz .focus\:ring-primary\/20:focus { --tw-ring-color: rgba(55, 65, 81, .20) !important; }
+.wf-arkoz .focus\:ring-primary\/25:focus { --tw-ring-color: rgba(55, 65, 81, .22) !important; }
+.wf-arkoz .focus\:ring-primary\/30:focus { --tw-ring-color: rgba(55, 65, 81, .28) !important; }
+.wf-arkoz .focus\:ring-primary\/50:focus { --tw-ring-color: rgba(55, 65, 81, .45) !important; }
+.wf-arkoz .focus\:border-primary\/40:focus { border-color: var(--wf-accent) !important; }
+.wf-arkoz .ring-primary { --tw-ring-color: var(--wf-accent) !important; }
+.wf-arkoz .ring-primary\/15 { --tw-ring-color: rgba(55, 65, 81, .15) !important; }
+.wf-arkoz .ring-primary\/20 { --tw-ring-color: rgba(55, 65, 81, .20) !important; }
+.wf-arkoz .ring-primary\/30 { --tw-ring-color: rgba(55, 65, 81, .28) !important; }
+.wf-arkoz .ring-primary\/60 { --tw-ring-color: rgba(55, 65, 81, .55) !important; }
+.wf-arkoz .ring-border-base { --tw-ring-color: var(--wf-border) !important; }
+
+/* Base-layer input/select/textarea (qlobal @apply) override */
+.wf-arkoz input,
+.wf-arkoz select,
+.wf-arkoz textarea {
+  background-color: var(--wf-accent-light) !important;
+  border-color: var(--wf-border) !important;
+  border-radius: 6px !important;
+}
+.wf-arkoz input:focus,
+.wf-arkoz select:focus,
+.wf-arkoz textarea:focus {
+  border-color: var(--wf-accent) !important;
+  --tw-ring-color: rgba(55, 65, 81, .25) !important;
+  box-shadow: 0 0 0 3px rgba(55, 65, 81, .15) !important;
+}
+
+/* ─── Radius: arkoz kart 8px, düymə/kiçik 6px ─── */
+.wf-arkoz .rounded-3xl,
+.wf-arkoz .rounded-2xl,
+.wf-arkoz .rounded-xl,
+.wf-arkoz .rounded-\[10px\] { border-radius: 8px !important; }
+.wf-arkoz .rounded-lg { border-radius: 6px !important; }
+/* rounded-full (avatar/pill), rounded-md (6px), rounded-sm toxunulmur */
+
+/* ─── Kölgə: çox yumşaq ─── */
+.wf-arkoz .shadow-sm,
+.wf-arkoz .shadow-card,
+.wf-arkoz .shadow-md,
+.wf-arkoz .shadow-lg { box-shadow: var(--wf-shadow) !important; }
+.wf-arkoz .shadow-float,
+.wf-arkoz .shadow-xl,
+.wf-arkoz .shadow-2xl { box-shadow: var(--wf-shadow-md) !important; }
+.wf-arkoz .shadow-primary,
+.wf-arkoz .shadow-primary\/30,
+.wf-arkoz .shadow-primary\/10 { box-shadow: 0 4px 12px rgba(55, 65, 81, .20) !important; }
+
+/* ─── Qradiyentlər (bənövşəyi → boz tint) ─── */
+.wf-arkoz .from-primary,
+.wf-arkoz .from-primary\/70,
+.wf-arkoz .from-primary\/12,
+.wf-arkoz .from-primary\/10,
+.wf-arkoz .from-violet-500 { --tw-gradient-from: rgba(55, 65, 81, .12) !important; }
+.wf-arkoz .to-primary,
+.wf-arkoz .to-primary\/5,
+.wf-arkoz .to-primary\/4,
+.wf-arkoz .to-indigo-600 { --tw-gradient-to: rgba(55, 65, 81, .05) !important; }
+
+/* ─── Cədvəl başlıqları (arkoz thead: açıq boz fon) ─── */
+.wf-arkoz table thead th,
+.wf-arkoz table thead tr {
+  background-color: var(--wf-accent-light);
+}
+
+/* ─── Davamiyyət rəng-kodları (WorkHours aylıq/həftəlik) ─── */
+/* İş = yaşıl, gecə = sarı, yox = çəhrayı, məzuniyyət = boz, bayram = narıncı */
+.wf-arkoz .wf-cd-work { background-color: #e8f5e9 !important; }
+.wf-arkoz .wf-cd-night { background-color: #fff8e1 !important; }
+.wf-arkoz .wf-cd-absent { background-color: #fce4ec !important; }
+.wf-arkoz .wf-cd-leave { background-color: #f3f4f6 !important; }
+.wf-arkoz .wf-cd-holiday { background-color: #ffe9d6 !important; }
+
+/* Loading spinner accent */
+.wf-arkoz .animate-spin.text-primary { color: var(--wf-accent) !important; }

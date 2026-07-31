@@ -17,9 +17,13 @@ function readAppVersion(): string {
   }
 }
 
+// DEV instance: backend runs on :5057, Vite dev server serves the SPA on :5056
+// (boss-facing URL stays http://192.168.88.143:5056). All API/websocket traffic
+// is proxied to the backend so the app calls the same origin it was served from.
+const BACKEND = 'http://127.0.0.1:5057'
 const apiProxy = {
-  '/api': { target: 'http://127.0.0.1:5154', changeOrigin: true },
-  '/hubs': { target: 'http://127.0.0.1:5154', changeOrigin: true, ws: true },
+  '/api': { target: BACKEND, changeOrigin: true },
+  '/hubs': { target: BACKEND, changeOrigin: true, ws: true },
 }
 
 // https://vite.dev/config/
@@ -31,12 +35,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Split large third-party libs into their own cacheable chunks so the
-        // main bundle stays small and rarely-used libs (maps, qr) load on demand.
         manualChunks(id) {
           if (!id.includes('node_modules')) return
           if (id.includes('@microsoft/signalr')) return 'signalr'
-          if (id.includes('leaflet')) return 'leaflet' // also matches react-leaflet
+          if (id.includes('leaflet')) return 'leaflet'
           if (id.includes('qrcode')) return 'qrcode'
           if (id.includes('react-router')) return 'router'
           if (id.includes('i18next')) return 'i18n'
@@ -46,11 +48,12 @@ export default defineConfig({
       },
     },
   },
-  // host: true — все интерфейсы (доступ с LAN по IP сервера). Порт 80 на Windows часто нужны права администратора.
   server: {
-    host: true,
-    port: 5173,
-    strictPort: false,
+    host: '0.0.0.0',
+    port: 5056,
+    strictPort: true,
+    allowedHosts: ['192.168.88.143', 'localhost'],
+    hmr: { host: '192.168.88.143', protocol: 'ws', clientPort: 5056 },
     proxy: apiProxy,
   },
   preview: {

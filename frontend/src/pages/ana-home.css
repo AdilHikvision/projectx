@@ -1,0 +1,135 @@
+/* ═══════════════════════════════════════════════════════════════
+   Ana səhifə (workforce home) — arkoz.html Ana səhifəsi BİREBİR portu.
+   DESIGN-SYSTEM.md-yə HƏRFİ riayət: Plus Jakarta Sans, #6C5CE7 palitrası,
+   kart radius 18px KÖLGƏSİZ, KPI ikon 54px, grid cədvəl, status çipləri.
+   SCOPED: hər selektor .ana-root altında (prefiks ana-) → qlobal
+   index.css/@theme/Tailwind TOXUNULMUR.
+   ═══════════════════════════════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+.ana-root{
+  --ana-accent:#6C5CE7; --ana-accent-hover:#5548C8; --ana-tint:#EFECFD; --ana-nav:#F1F0FB;
+  --ana-text:#252641; --ana-text2:#4A4B6B; --ana-text3:#7A7B99; --ana-muted:#8B8CA7; --ana-faint:#A0A1B8;
+  --ana-bg-soft:#FAFAFD; --ana-hero:#F1F0FB; --ana-border:#EFEFF5; --ana-border2:#E6E6F0; --ana-row:#F4F4F9;
+  --ana-green:#1E9B62; --ana-green-bg:#EAF8F0; --ana-green-card:#F5FBF7; --ana-green-bd:#E4F2E9;
+  --ana-orange:#D98324; --ana-orange-bg:#FEF4E6; --ana-orange-card:#FEF9F3; --ana-orange-bd:#F6E7D5;
+  --ana-red:#D9534A; --ana-red-bg:#FDECEA; --ana-red-card:#FEF7F6; --ana-red-bd:#F7E2E0;
+  font-family:'Plus Jakarta Sans',system-ui,sans-serif; color:var(--ana-text);
+  display:flex; flex-direction:column; gap:20px; padding:4px 2px 8px;
+}
+.ana-root *{box-sizing:border-box}
+.ana-root h1,.ana-root h2,.ana-root h3,.ana-root p{margin:0}
+
+/* ═══ HERO ═══ */
+.ana-root .ana-hero{position:relative;background:var(--ana-hero);border-radius:20px;padding:30px 32px;min-height:268px;display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;overflow:hidden}
+.ana-root .ana-hero-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;display:block;z-index:0}
+.ana-root .ana-hero::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(244,243,252,.96) 0%,rgba(244,243,252,.78) 30%,rgba(244,243,252,.28) 52%,rgba(244,243,252,0) 66%);z-index:1;pointer-events:none}
+.ana-root .ana-hero-text{position:relative;z-index:2}
+.ana-root .ana-hero::after{content:'';position:absolute;right:-40px;top:-40px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(108,92,231,.14),transparent 70%);z-index:1;pointer-events:none}
+.ana-root .ana-hero h1{font-size:21px;font-weight:800;letter-spacing:-.6px}
+.ana-root .ana-hero p{font-size:13px;color:var(--ana-text2);margin-top:7px;font-weight:500}
+.ana-root .ana-hero-cards{display:flex;gap:12px;flex-wrap:wrap;position:relative;z-index:2}
+.ana-root .ana-float{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid var(--ana-border);border-radius:14px;padding:12px 15px;min-width:190px}
+.ana-root .ana-float .ic{width:38px;height:38px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+.ana-root .ana-float .l1{font-size:14px;font-weight:800;letter-spacing:-.3px;line-height:1.1}
+.ana-root .ana-float .l2{font-size:11.5px;color:var(--ana-text3);margin-top:2px}
+
+/* ═══ KPI ═══ */
+.ana-root .ana-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.ana-root .ana-kpi{border:1px solid var(--ana-border);border-radius:18px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;background:#fff}
+.ana-root .ana-kpi.green{background:var(--ana-green-card);border-color:var(--ana-green-bd)}
+.ana-root .ana-kpi.orange{background:var(--ana-orange-card);border-color:var(--ana-orange-bd)}
+.ana-root .ana-kpi.red{background:var(--ana-red-card);border-color:var(--ana-red-bd)}
+.ana-root .ana-kpi-top{display:flex;align-items:center;justify-content:space-between}
+.ana-root .ana-kpi-ic{width:54px;height:54px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.ana-root .ana-kpi-lbl{font-size:12.5px;font-weight:600;color:var(--ana-text2)}
+.ana-root .ana-kpi-num{font-size:29px;font-weight:800;letter-spacing:-1.2px;line-height:1}
+.ana-root .ana-kpi-sub{font-size:12px;color:var(--ana-text3);font-weight:500;margin-top:4px}
+
+/* ═══ 3-sütun grid ═══ */
+.ana-root .ana-grid3{display:grid;grid-template-columns:0.9fr 1.35fr 0.9fr;gap:20px;align-items:start}
+.ana-root .ana-card{border:1px solid var(--ana-border);border-radius:18px;padding:22px 24px;background:#fff}
+.ana-root .ana-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.ana-root .ana-card-h .t{font-size:16px;font-weight:700;letter-spacing:-.4px}
+.ana-root .ana-link{font-size:12.5px;font-weight:600;color:var(--ana-accent);cursor:pointer;display:inline-flex;align-items:center;gap:4px;background:none;border:none;font-family:inherit;padding:0}
+
+/* Donut */
+.ana-root .ana-donut-wrap{display:flex;flex-direction:column;align-items:center;gap:18px}
+.ana-root .ana-donut{position:relative;width:168px;height:168px;border-radius:50%}
+.ana-root .ana-donut .hole{position:absolute;inset:26px;background:#fff;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ana-root .ana-donut .hole .n{font-size:27px;font-weight:800;letter-spacing:-1.1px;line-height:1}
+.ana-root .ana-donut .hole .c{font-size:11px;color:var(--ana-text3);margin-top:3px}
+.ana-root .ana-legend{display:flex;flex-direction:column;gap:11px;width:100%}
+.ana-root .ana-lg{display:flex;align-items:center;gap:10px;font-size:12.5px}
+.ana-root .ana-lg .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.ana-root .ana-lg .nm{color:var(--ana-text2);font-weight:500}
+.ana-root .ana-lg .vl{margin-left:auto;font-weight:700;color:var(--ana-text)}
+.ana-root .ana-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--ana-accent);color:#fff;border:none;border-radius:13px;padding:13px 20px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s;width:100%}
+.ana-root .ana-btn:hover{background:var(--ana-accent-hover)}
+.ana-root .ana-btn.ghost{background:var(--ana-tint);color:var(--ana-accent)}
+.ana-root .ana-btn.ghost:hover{background:#E3DFFA}
+
+/* Son giriş edənlər — grid cədvəl (table YOX) */
+.ana-root .ana-thead{display:grid;grid-template-columns:1.6fr 88px 96px;padding-bottom:10px;font-size:11px;color:var(--ana-faint);letter-spacing:.4px;text-transform:uppercase}
+.ana-root .ana-thead .r{text-align:right}
+.ana-root .ana-trow{display:grid;grid-template-columns:1.6fr 88px 96px;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--ana-row)}
+.ana-root .ana-person{display:flex;align-items:center;gap:11px;min-width:0}
+.ana-root .ana-av{width:36px;height:36px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.ana-root .ana-av.sm{width:34px;height:34px;font-size:11.5px}
+.ana-root .ana-person .nm{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ana-root .ana-person .ps{font-size:11.5px;color:var(--ana-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ana-root .ana-time{font-size:13px;font-weight:600;color:var(--ana-text2);font-variant-numeric:tabular-nums}
+.ana-root .ana-chip{justify-self:end;font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:999px;white-space:nowrap}
+.ana-root .ana-chip.green{background:var(--ana-green-bg);color:var(--ana-green)}
+.ana-root .ana-chip.orange{background:var(--ana-orange-bg);color:var(--ana-orange)}
+.ana-root .ana-chip.red{background:var(--ana-red-bg);color:var(--ana-red)}
+
+/* Yeni əməkdaş kartı */
+.ana-root .ana-add{display:flex;flex-direction:column;gap:16px}
+.ana-root .ana-add .desc{font-size:12.5px;color:var(--ana-text3);line-height:1.5}
+.ana-root .ana-add .illus{background:var(--ana-bg-soft);border:1px dashed var(--ana-border2);border-radius:14px;height:120px;display:flex;align-items:center;justify-content:center;color:var(--ana-faint);font-size:12px}
+
+/* ═══ ALT SIRA — 4 sütun ═══ */
+.ana-root .ana-grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;align-items:start}
+.ana-root .ana-col{display:flex;flex-direction:column}
+.ana-root .ana-list{display:flex;flex-direction:column;gap:6px}
+
+/* Məzuniyyət müraciətləri */
+.ana-root .ana-leave{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--ana-row)}
+.ana-root .ana-leave:first-child{border-top:none;padding-top:2px}
+.ana-root .ana-leave-mid{flex:1;min-width:0}
+.ana-root .ana-leave-mid .nm{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ana-root .ana-leave-mid .ps{font-size:11.5px;color:var(--ana-text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.ana-root .ana-link.foot{margin-top:auto;padding-top:14px;align-self:flex-start}
+
+/* Bugünkü növbələr */
+.ana-root .ana-shift{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--ana-row)}
+.ana-root .ana-shift:first-child{border-top:none;padding-top:2px}
+.ana-root .ana-sq{width:38px;height:38px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+.ana-root .ana-shift-mid{flex:1;min-width:0}
+.ana-root .ana-shift-mid .nm{font-size:13px;font-weight:600}
+.ana-root .ana-shift-mid .ps{font-size:11.5px;color:var(--ana-text3);margin-top:2px;font-variant-numeric:tabular-nums}
+.ana-root .ana-shift-cnt{font-size:12.5px;font-weight:700;color:var(--ana-text2);white-space:nowrap}
+
+/* Sürətli əməliyyatlar */
+.ana-root .ana-action{display:flex;align-items:center;gap:12px;padding:11px 10px;border:none;border-radius:13px;background:none;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s;width:100%}
+.ana-root .ana-action:hover{background:var(--ana-nav)}
+.ana-root .ana-action-mid{flex:1;min-width:0}
+.ana-root .ana-action-mid .nm{font-size:13px;font-weight:600;color:var(--ana-text)}
+.ana-root .ana-action-mid .ps{font-size:11px;color:var(--ana-text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ana-root .ana-chev{color:var(--ana-faint);font-size:18px;flex:0 0 auto}
+
+/* Bu həftəlik statistika */
+.ana-root .ana-chart{display:flex;gap:12px;height:180px}
+.ana-root .ana-yaxis{display:flex;flex-direction:column;justify-content:space-between;font-size:10.5px;color:var(--ana-faint);padding-bottom:20px;text-align:right}
+.ana-root .ana-bars{flex:1;display:flex;align-items:stretch;gap:8px}
+.ana-root .ana-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px}
+.ana-root .ana-bar-track{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center}
+.ana-root .ana-bar{width:100%;max-width:22px;border-radius:8px;min-height:6px}
+.ana-root .ana-bar-lbl{font-size:10.5px;color:var(--ana-faint)}
+
+@media(max-width:1200px){
+  .ana-root .ana-kpis{grid-template-columns:repeat(2,1fr)}
+  .ana-root .ana-grid3{grid-template-columns:1fr}
+  .ana-root .ana-grid4{grid-template-columns:repeat(2,1fr)}
+}

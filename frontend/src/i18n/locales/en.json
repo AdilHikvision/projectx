@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "ProjectX",
+    "appName": "Attendance",
     "appSubtitle": "Security Platform",
     "save": "Save",
     "saveChanges": "Save Changes",
@@ -2322,7 +2322,7 @@
   },
   "assistant": {
     "title": "AI Assistant",
-    "subtitle": "ProjectX Copilot",
+    "subtitle": "Attendance Copilot",
     "placeholder": "Type a command…",
     "thinking": "Thinking…",
     "error": "Something went wrong",

@@ -16,7 +16,23 @@ function formatLocalDate(d: Date): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-type SettingsTab = 'global' | 'devices' | 'company' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
+// ─── AktivParking scoped restyle (page-only, prefixed .stg-*) ───────────────────
+const STG_RESTYLE = `
+.stg-page{--ap-acc:#6C5CE7;--ap-acc-soft:#EEECFB;--ap-acc-softer:#F3F1FC;--ap-bg:#F6F6FB;--ap-panel:#fff;--ap-line:#ECECF3;--ap-ink:#252641;--ap-ink2:#4A4B6B;--ap-muted:#8B8CA7;--ap-shadow:0 1px 2px rgba(37,38,65,.04),0 8px 24px rgba(37,38,65,.05);background:var(--ap-bg)}
+.stg-page .rounded-3xl{border-radius:16px!important}
+.stg-page .rounded-2xl{border-radius:12px!important}
+.stg-page .shadow-md,.stg-page .shadow-sm,.stg-page .shadow{box-shadow:var(--ap-shadow)!important}
+.stg-page h2,.stg-page h3{letter-spacing:-.3px}
+.stg-page table thead th{font-size:12px;letter-spacing:.4px;color:var(--ap-muted)!important}
+.stg-page table tbody tr:hover{background:var(--ap-acc-softer)!important}
+.stg-page input:focus,.stg-page select:focus,.stg-page textarea:focus{border-color:var(--ap-acc)!important;box-shadow:0 0 0 3px var(--ap-acc-soft)!important}
+.stg-page .shadow-primary{box-shadow:0 6px 16px rgba(108,92,231,.28)!important}
+`
+
+type SettingsTab = 'global' | 'criteria' | 'devices' | 'company' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
+
+// Davamiyyət kriteriyaları (GET/PUT /api/attendance-criteria)
+interface AttCriterion { key: string; label: string; letter: string; color: string; enabled: boolean; sortOrder: number; displayMode: string }
 
 export function SystemSettingsPage() {
     const { t, i18n } = useTranslation()
@@ -33,6 +49,7 @@ export function SystemSettingsPage() {
             : tabParam === 'users' ? 'users'
             : tabParam === 'roles' ? 'roles'
             : tabParam === 'debug-logs' ? 'debugLogs'
+            : tabParam === 'criteria' ? 'criteria'
             : 'global'
 
     const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
@@ -57,6 +74,7 @@ export function SystemSettingsPage() {
         else if (tab === 'users') setActiveTab('users')
         else if (tab === 'roles') setActiveTab('roles')
         else if (tab === 'debug-logs') setActiveTab('debugLogs')
+        else if (tab === 'criteria') setActiveTab('criteria')
     }, [location.search])
 
     // ─── Localization & Runtime: time/timezone push to devices ───
@@ -320,6 +338,40 @@ export function SystemSettingsPage() {
     const [secondaryDbSaving, setSecondaryDbSaving] = useState(false)
     const [secondaryDbTesting, setSecondaryDbTesting] = useState(false)
     const [secondaryDbTestResult, setSecondaryDbTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+    // ─── Davamiyyət kriteriyaları (Tabel qaydaları) ───
+    const [attCrit, setAttCrit] = useState<AttCriterion[]>([])
+    const [attCritLoading, setAttCritLoading] = useState(false)
+    const [attCritSaving, setAttCritSaving] = useState(false)
+    const [attCritSaved, setAttCritSaved] = useState(false)
+    const [attCritError, setAttCritError] = useState<string | null>(null)
+
+    const loadAttCrit = useCallback(async () => {
+        if (!token) return
+        setAttCritLoading(true); setAttCritError(null)
+        try {
+            const res = await apiRequest<AttCriterion[]>('/api/attendance-criteria', { token })
+            setAttCrit(Array.isArray(res) ? [...res].sort((a, b) => a.sortOrder - b.sortOrder) : [])
+        } catch { setAttCritError('Kriteriyalar yüklənmədi.') } finally { setAttCritLoading(false) }
+    }, [token])
+
+    const updateAttCrit = (key: string, patch: Partial<AttCriterion>) => {
+        setAttCrit((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)))
+        setAttCritSaved(false)
+    }
+
+    const saveAttCrit = useCallback(async () => {
+        if (!token) return
+        setAttCritSaving(true); setAttCritError(null)
+        try {
+            const body = attCrit.map((c) => ({ Key: c.key, Label: c.label, Letter: c.letter, Color: c.color, Enabled: c.enabled, SortOrder: c.sortOrder, DisplayMode: c.displayMode }))
+            const res = await apiRequest<AttCriterion[]>('/api/attendance-criteria', { method: 'PUT', token, body: JSON.stringify(body) })
+            const next = Array.isArray(res) ? [...res].sort((a, b) => a.sortOrder - b.sortOrder) : attCrit
+            setAttCrit(next)
+            try { localStorage.setItem('projectx.attCriteria', JSON.stringify(next)) } catch { /* noop */ }
+            setAttCritSaved(true); setTimeout(() => setAttCritSaved(false), 2500)
+        } catch { setAttCritError('Yadda saxlanmadı.') } finally { setAttCritSaving(false) }
+    }, [attCrit, token])
 
     const loadBackups = useCallback(async () => {
         if (!token) return
@@ -774,6 +826,10 @@ export function SystemSettingsPage() {
         if (activeTab === 'roles') { void loadRoles() }
     }, [token, isAdmin, activeTab, loadUsers, loadRoles])
 
+    useEffect(() => {
+        if (activeTab === 'criteria') void loadAttCrit()
+    }, [activeTab, loadAttCrit])
+
     const openCreateUser = () => {
         setEditingUser(null)
         setUserForm({ email: '', password: '', firstName: '', lastName: '', roles: [] })
@@ -953,7 +1009,8 @@ export function SystemSettingsPage() {
 
     return (
         <AppLayout onAction={handleAction}>
-            <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+            <style>{STG_RESTYLE}</style>
+            <div className="stg-page flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
                 <div className="p-6 md:p-10 space-y-8">
                     <PageHeader
                         className="hidden md:flex"
@@ -969,6 +1026,13 @@ export function SystemSettingsPage() {
                                 }`}
                         >
                             {t('systemSettings.tabs.global')}
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('criteria')}
+                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'criteria' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                }`}
+                        >
+                            Tabel qaydaları
                         </button>
                         <button
                             onClick={() => setActiveTab('company')}
@@ -1395,6 +1459,87 @@ export function SystemSettingsPage() {
                                 </div>
                             </div>
                         </div>
+                    ) : activeTab === 'criteria' ? (
+                        <div className="max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            {/* Tabel qaydaları / Davamiyyət kriteriyaları */}
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-3 px-2">
+                                    <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                        <span className="material-symbols-outlined text-lg">event_available</span>
+                                    </div>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Tabel qaydaları / Davamiyyət kriteriyaları</h3>
+                                </div>
+
+                                <div className="bg-surface rounded-3xl shadow-md p-8 space-y-5 border-none text-text-light">
+                                    <p className="text-[11px] font-bold text-text-light">Aylıq tabeldə hər gün üçün rəng və hərf kodları. Rəng — xanaların rənglənməsi; hərf — 0 saatlıq günlərdə göstərilən işarə (məs. İstirahət → “İ”).</p>
+
+                                    {attCritLoading ? (
+                                        <p className="text-xs font-bold text-text-light py-4">Yüklənir…</p>
+                                    ) : attCrit.length === 0 ? (
+                                        <p className="text-xs font-bold text-text-light py-4">{attCritError || 'Məlumat yoxdur.'}</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {attCrit.map((c) => (
+                                                <div key={c.key} className="flex items-center gap-3 rounded-2xl bg-slate-50 border border-border-light px-4 py-3">
+                                                    <span className="w-6 h-6 rounded-lg shrink-0 border border-black/10" style={{ background: c.color }} />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs font-black text-text-dark truncate">{c.label}</p>
+                                                        <p className="text-[9px] font-bold text-text-light uppercase tracking-widest">{c.key}</p>
+                                                    </div>
+                                                    <label className="flex items-center gap-1.5 text-[9px] font-bold text-text-light uppercase tracking-widest cursor-pointer" title="Aktiv">
+                                                        <input type="checkbox" checked={c.enabled} onChange={(e) => updateAttCrit(c.key, { enabled: e.target.checked })} className="w-4 h-4 accent-primary" />
+                                                        Aktiv
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={c.letter}
+                                                        maxLength={8}
+                                                        onChange={(e) => updateAttCrit(c.key, { letter: e.target.value })}
+                                                        placeholder="Hərf"
+                                                        title="Hərf işarəsi (0 saatlıq gün)"
+                                                        className="w-16 bg-white border border-border-light rounded-xl px-2 py-2 text-center text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20"
+                                                    />
+                                                    <select
+                                                        value={c.displayMode === 'hours' ? 'hours' : 'letter'}
+                                                        onChange={(e) => updateAttCrit(c.key, { displayMode: e.target.value })}
+                                                        title="Xanada göstərilmə: Hərf yoxsa Saat"
+                                                        className="shrink-0 bg-white border border-border-light rounded-xl px-2 py-2 text-xs font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                                                    >
+                                                        <option value="letter">Hərf</option>
+                                                        <option value="hours">Saat</option>
+                                                    </select>
+                                                    <input
+                                                        type="color"
+                                                        value={/^#[0-9a-fA-F]{6}$/.test(c.color) ? c.color : '#94A3B8'}
+                                                        onChange={(e) => updateAttCrit(c.key, { color: e.target.value })}
+                                                        title="Rəng"
+                                                        className="w-10 h-10 shrink-0 rounded-xl border border-border-light cursor-pointer bg-white p-0.5"
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div className="flex items-center gap-3 pt-1">
+                                        <button
+                                            onClick={() => void saveAttCrit()}
+                                            disabled={attCritSaving || attCritLoading || attCrit.length === 0}
+                                            className="px-5 py-2.5 rounded-2xl bg-primary text-white text-[11px] font-black uppercase tracking-widest shadow-primary disabled:opacity-50 transition-all"
+                                        >
+                                            {attCritSaving ? 'Saxlanılır…' : 'Yadda saxla'}
+                                        </button>
+                                        {attCritSaved && (
+                                            <span className="text-[11px] font-black text-green-600 flex items-center gap-1">
+                                                <span className="material-symbols-outlined text-sm">check_circle</span> Yadda saxlandı
+                                            </span>
+                                        )}
+                                        {attCritError && !attCritLoading && (
+                                            <span className="text-[11px] font-black text-red-600">{attCritError}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     ) : activeTab === 'company' ? (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <CompanyTab />
@@ -1456,7 +1601,7 @@ export function SystemSettingsPage() {
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemSettings.smtp.fromName')}</label>
-                                            <Input placeholder="ProjectX" value={smtp.fromName} onChange={e => setSmtp(s => ({ ...s, fromName: e.target.value }))} />
+                                            <Input placeholder="Attendance" value={smtp.fromName} onChange={e => setSmtp(s => ({ ...s, fromName: e.target.value }))} />
                                         </div>
                                     </div>
 

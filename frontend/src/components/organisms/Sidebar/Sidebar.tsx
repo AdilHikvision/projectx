@@ -8,7 +8,9 @@ import { MODULES, type ModuleKey } from '../../../config/modules';
 interface NavConfig {
     to: string;
     icon: string;
-    labelKey: string;
+    labelKey?: string;
+    /** Literal label — used when there is no i18n key (e.g. embedded Aktiv Parking tabs). */
+    label?: string;
     end?: boolean;
     /** Show item if user has at least one of these permissions. Omit/empty = always show (e.g. Dashboard). */
     anyOf?: string[];
@@ -18,7 +20,8 @@ interface NavConfig {
 
 // Top section — feature pages. Dashboard is visible in every module; the rest are Workforce-only.
 const PRIMARY_NAV: NavConfig[] = [
-    { to: '/', icon: 'grid_view', labelKey: 'nav.dashboard', end: true },
+    { to: '/dashboard', icon: 'grid_view', labelKey: 'nav.dashboard', modules: ['workforce'] },
+    { to: '/', icon: 'grid_view', labelKey: 'nav.dashboard', end: true, modules: ['gym', 'parking'] },
     { to: '/people', icon: 'group', labelKey: 'nav.people', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce'] },
     { to: '/monitoring', icon: 'monitor_heart', labelKey: 'nav.monitoring', anyOf: ['Devices.View'], modules: ['workforce'] },
     { to: '/access-levels', icon: 'admin_panel_settings', labelKey: 'nav.accessLevels', anyOf: ['AccessLevels.View'], modules: ['workforce'] },
@@ -38,6 +41,11 @@ const PRIMARY_NAV: NavConfig[] = [
 
     // ─── Parking Management ───
     { to: '/parking/management', icon: 'local_parking', labelKey: 'parking.nav.management', modules: ['parking'] },
+
+    // ─── Aktiv Parking (embedded building-management pages — additive tabs) ───
+    // "Ana Səhifə" Dashboard tabında göstərilir (parking modulunda), ona görə burada ayrıca yoxdur.
+    { to: '/parking/ap-permits', icon: 'verified_user', label: 'Giriş icazələri', modules: ['parking'] },
+    { to: '/parking/ap-reports', icon: 'bar_chart', label: 'Hesabatlar', modules: ['parking'] },
 ];
 
 // System section — admin / settings pages.
@@ -65,10 +73,27 @@ export function Sidebar() {
     return (
         <aside className="hidden md:flex flex-col w-[264px] bg-surface border-r border-border-light py-6 shrink-0 h-full">
             <div className="px-5 mb-7 flex items-center gap-3">
-                <Logo size={40} />
-                <div>
-                    <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('common.appName')}</h1>
-                </div>
+                {activeModule === 'parking' ? (
+                    <>
+                        <span
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white text-xl font-extrabold"
+                            style={{ background: '#6C5CE7' }}
+                        >
+                            P
+                        </span>
+                        <div>
+                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">Aktiv Parking</h1>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <Logo size={40} />
+                        <div>
+                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('common.appName')}</h1>
+                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">Davamiyyət sistemi</p>
+                        </div>
+                    </>
+                )}
             </div>
 
             <button
@@ -89,7 +114,7 @@ export function Sidebar() {
 
             <nav className="flex-1 overflow-y-auto px-3 space-y-1">
                 {primary.map(item => (
-                    <NavItem key={item.to} to={item.to} icon={item.icon} label={t(item.labelKey)} end={item.end} />
+                    <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label ?? (item.labelKey ? t(item.labelKey) : '')} end={item.end} />
                 ))}
             </nav>
 
@@ -98,7 +123,7 @@ export function Sidebar() {
                     <p className="px-3 text-[9px] font-extrabold text-text-light tracking-[0.18em] uppercase mb-2">{t('nav.system')}</p>
                     <nav className="space-y-1">
                         {system.map(item => (
-                            <NavItem key={item.to} to={item.to} icon={item.icon} label={t(item.labelKey)} />
+                            <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label ?? (item.labelKey ? t(item.labelKey) : '')} />
                         ))}
                     </nav>
                 </div>

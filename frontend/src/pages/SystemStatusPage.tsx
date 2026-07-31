@@ -40,6 +40,22 @@ interface SdkHealthResponse {
 
 type TFn = (key: string, opts?: Record<string, unknown>) => string
 
+// ─── AktivParking scoped restyle (page-only, prefixed .sts-*) ───────────────────
+const STS_RESTYLE = `
+.sts-page{--ap-acc:#6C5CE7;--ap-acc-soft:#EEECFB;--ap-acc-softer:#F3F1FC;--ap-bg:#F6F6FB;--ap-panel:#fff;--ap-line:#ECECF3;--ap-ink:#252641;--ap-muted:#8B8CA7;--ap-shadow:0 1px 2px rgba(37,38,65,.04),0 8px 24px rgba(37,38,65,.05);background:var(--ap-bg)}
+.sts-page .rounded-3xl{border-radius:16px!important}
+.sts-page .rounded-2xl{border-radius:12px!important}
+.sts-page .rounded-xl{border-radius:12px!important}
+.sts-page .shadow-md,.sts-page .shadow-sm,.sts-page .shadow{box-shadow:var(--ap-shadow)!important}
+.sts-page h2,.sts-page h3{letter-spacing:-.3px}
+.sts-page input:focus,.sts-page select:focus,.sts-page textarea:focus{border-color:var(--ap-acc)!important;box-shadow:0 0 0 3px var(--ap-acc-soft)!important}
+.sts-page .shadow-primary{box-shadow:0 6px 16px rgba(108,92,231,.28)!important}
+/* AktivParking KPI tile */
+.sts-page .sts-kpi{background:var(--ap-panel)!important;box-shadow:var(--ap-shadow)!important;padding:16px 18px!important}
+.sts-page .sts-kpi .sts-kpi-val{font-size:20px!important;line-height:1.1;font-weight:800!important;letter-spacing:-.5px;color:var(--ap-ink)!important}
+`
+
+
 function formatSdkError(sdk: SdkHealthResponse, t: TFn): { summary: string; detail: string } {
   if (!sdk.lastErrorCode) return { summary: t('systemStatus.sdkError.noErrors'), detail: '' }
   const cat = sdk.lastErrorCategory || 'other'
@@ -141,7 +157,8 @@ export function SystemStatusPage() {
 
   return (
     <AppLayout onAction={() => loadStatus(true)}>
-      <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+      <style>{STS_RESTYLE}</style>
+      <div className="sts-page flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
@@ -200,12 +217,12 @@ export function SystemStatusPage() {
                     { label: t('systemStatus.metrics.database'), value: status.dbStatus, icon: 'database' },
                     { label: t('systemStatus.metrics.checkIn'), value: new Date(status.utc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }), icon: 'schedule' },
                   ].map((item) => (
-                    <div key={item.label} className="p-3 bg-background-light rounded-2xl shadow-sm border-none">
+                    <div key={item.label} className="sts-kpi p-3 bg-background-light rounded-2xl shadow-sm border-none">
                       <div className="flex items-center gap-2 mb-1 opacity-50">
                         <span className="material-symbols-outlined text-[14px]">{item.icon}</span>
                         <span className="text-[9px] font-black uppercase tracking-widest">{item.label}</span>
                       </div>
-                      <p className="text-xs font-bold text-text-dark truncate">{item.value}</p>
+                      <p className="sts-kpi-val text-xs font-bold text-text-dark truncate">{item.value}</p>
                     </div>
                   ))}
                 </div>

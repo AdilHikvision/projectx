@@ -7,6 +7,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute'
 import './App.css'
 
 import { useAuth } from './auth/AuthContext'
+import { useModule } from './context/ModuleContext'
 
 // Route components are code-split: each page (and its heavy deps — maps, charts,
 // signalr) loads on demand, keeping the initial bundle small.
@@ -28,6 +29,7 @@ const SchedulePlannerPage = lazy(() => named(import('./pages/SchedulePlannerPage
 const AttendanceApprovalsPage = lazy(() => named(import('./pages/AttendanceApprovalsPage'), 'AttendanceApprovalsPage'))
 const GeoZonesPage = lazy(() => named(import('./pages/GeoZonesPage'), 'GeoZonesPage'))
 const DashboardPage = lazy(() => named(import('./pages/DashboardPage'), 'DashboardPage'))
+const AnaHomePage = lazy(() => named(import('./pages/AnaHomePage'), 'AnaHomePage'))
 const SelfServicePage = lazy(() => named(import('./pages/SelfServicePage'), 'SelfServicePage'))
 const GymCustomersPage = lazy(() => named(import('./pages/gym'), 'GymCustomersPage'))
 const GymSubscriptionsPage = lazy(() => named(import('./pages/gym'), 'GymSubscriptionsPage'))
@@ -36,6 +38,26 @@ const GymFinancePage = lazy(() => named(import('./pages/gym'), 'GymFinancePage')
 const GymAnalyticsPage = lazy(() => named(import('./pages/gym'), 'GymAnalyticsPage'))
 const GymPosPage = lazy(() => named(import('./pages/gym'), 'GymPosPage'))
 const ParkingManagementPage = lazy(() => named(import('./pages/parking'), 'ParkingManagementPage'))
+
+// ─── Aktiv Parking (embedded building-management app) ───
+const ApHomePage = lazy(() => named(import('./pages/aktivparking'), 'ApHomePage'))
+const ApPermitsPage = lazy(() => named(import('./pages/aktivparking'), 'ApPermitsPage'))
+const ApReportsPage = lazy(() => named(import('./pages/aktivparking'), 'ApReportsPage'))
+
+// Dashboard route: Parking modulunda AktivParking "Ana Səhifə"-sini göstərir
+// (adı "Dashboard" qalır); Workforce-da "Dashboard" əsas səhifə (AnaHomePage)
+// məzmununu göstərir; digər modullarda normal ProjectX dashboard.
+function DashboardRoute() {
+  const { activeModule } = useModule()
+  return activeModule === 'parking' ? <ApHomePage /> : activeModule === 'workforce' ? <AnaHomePage /> : <DashboardPage />
+}
+
+// /dashboard route: Workforce modulunda əsas səhifə məzmununu (AnaHomePage) göstərir,
+// adı "Dashboard" qalır; parking/gym üçün toxunulmadan DashboardPage qalır.
+function DashboardMain() {
+  const { activeModule } = useModule()
+  return activeModule === 'workforce' ? <AnaHomePage /> : <DashboardPage />
+}
 
 function App() {
   const { isLoading: globalLoading } = useLoading()
@@ -60,8 +82,10 @@ function App() {
         <Route path="/self-service" element={<SelfServicePage />} />
 
         <Route element={<ProtectedRoute />}>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/" element={<DashboardRoute />} />
+          <Route path="/dashboard" element={<DashboardMain />} />
+          {/* Köhnə "Ana səhifə" linki qırılmasın — /dashboard-a yönləndir */}
+          <Route path="/home" element={<Navigate to="/dashboard" replace />} />
 
           <Route path="/people" element={<PeopleManagementPage />} />
           <Route path="/people/:type/:id" element={<PersonDetailPage />} />
@@ -83,6 +107,11 @@ function App() {
 
           {/* ─── Parking Management module ─── */}
           <Route path="/parking/management" element={<ParkingManagementPage />} />
+
+          {/* ─── Aktiv Parking (embedded) — additive tabs, existing untouched ─── */}
+          <Route path="/parking/ap-home" element={<ApHomePage />} />
+          <Route path="/parking/ap-permits" element={<ApPermitsPage />} />
+          <Route path="/parking/ap-reports" element={<ApReportsPage />} />
 
           <Route path="/settings" element={<SystemSettingsPage />} />
           <Route path="/status" element={<SystemStatusPage />} />

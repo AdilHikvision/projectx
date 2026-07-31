@@ -10,6 +10,7 @@ interface AppLayoutProps {
 
 const routeMeta: Record<string, { title: string; breadcrumb?: string; actionText?: string; actionIcon?: string; searchPlaceholder: string }> = {
     '/': { title: 'Dashboard', breadcrumb: 'Main Site', searchPlaceholder: 'Search dashboard...' },
+    '/home': { title: 'Ana səhifə', breadcrumb: 'Davamiyyət', searchPlaceholder: 'Axtar...' },
     '/devices': { title: 'Devices', breadcrumb: 'Main Site', actionText: 'Add Device', actionIcon: 'add', searchPlaceholder: 'Search devices...' },
     '/monitoring': { title: 'Monitoring', breadcrumb: 'Main Site', searchPlaceholder: 'Search monitoring...' },
     '/people': { title: 'People Management', breadcrumb: 'Main Site', actionText: 'Add User', actionIcon: 'person_add', searchPlaceholder: 'Search Users & Visitors...' },
@@ -51,7 +52,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 <div className="px-6 mb-8 flex items-center gap-3">
                     <Logo size={40} />
                     <div>
-                        <h1 className="text-sm font-bold leading-tight text-text-dark">ProjectX</h1>
+                        <h1 className="text-sm font-bold leading-tight text-text-dark">Attendance</h1>
                     </div>
                 </div>
 

@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "ProjectX",
+    "appName": "Attendance",
     "appSubtitle": "Təhlükəsizlik platforması",
     "save": "Yadda saxla",
     "saveChanges": "Dəyişiklikləri yadda saxla",
@@ -2314,7 +2314,7 @@
   },
   "assistant": {
     "title": "AI köməkçi",
-    "subtitle": "ProjectX köməkçisi",
+    "subtitle": "Attendance köməkçisi",
     "placeholder": "Əmr yazın…",
     "thinking": "Düşünürəm…",
     "error": "Xəta baş verdi",

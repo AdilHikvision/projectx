@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "ProjectX",
+    "appName": "Attendance",
     "appSubtitle": "Платформа безопасности",
     "save": "Сохранить",
     "saveChanges": "Сохранить изменения",
@@ -2337,7 +2337,7 @@
   },
   "assistant": {
     "title": "ИИ-ассистент",
-    "subtitle": "Помощник ProjectX",
+    "subtitle": "Помощник Attendance",
     "placeholder": "Введите команду…",
     "thinking": "Думаю…",
     "error": "Что-то пошло не так",

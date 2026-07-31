@@ -43,6 +43,7 @@ interface PersonDetail {
   firstName: string
   lastName: string
   documentNumber?: string | null
+  externalId?: string | null
   gender?: string | null
   validFromUtc?: string | null
   validToUtc?: string | null
@@ -252,6 +253,7 @@ export function PersonDetailPage() {
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
+    externalId: '',
     gender: '',
     validFrom: '',
     validTo: '',
@@ -586,6 +588,7 @@ export function PersonDetailPage() {
     setFormData({
       firstName: detail.firstName,
       lastName: detail.lastName,
+      externalId: (detail as PersonDetail & { externalId?: string | null }).externalId ?? '',
       gender: (detail as PersonDetail & { gender?: string }).gender ?? '',
       validFrom,
       validTo,
@@ -1030,6 +1033,7 @@ export function PersonDetailPage() {
           body: JSON.stringify({
             firstName: formData.firstName.trim(),
             lastName: formData.lastName.trim(),
+            externalId: formData.externalId.trim(),
             gender: formData.gender.trim() || null,
             validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
             validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
@@ -1200,6 +1204,15 @@ export function PersonDetailPage() {
                 </div>
                 {type === 'employee' ? (
                   <>
+                    <div>
+                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">ID</label>
+                      <Input
+                        value={formData.externalId}
+                        onChange={(e) => setFormData((p) => ({ ...p, externalId: e.target.value }))}
+                        placeholder="ID / таб. №"
+                        className="bg-white"
+                      />
+                    </div>
                     <div>
                       <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('personDetail.gender')}</label>
                       <select

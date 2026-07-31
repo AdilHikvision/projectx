@@ -101,6 +101,7 @@ function getDeviceIcon(deviceType: string): string {
   if (deviceType === 'Intercom') return 'videocam'
   if (deviceType === 'ElevatorController') return 'elevator'
   if (deviceType === 'EnrollerStation') return 'how_to_reg'
+  if (deviceType === 'AnprCamera') return 'photo_camera'
   return 'devices'
 }
 
@@ -110,6 +111,7 @@ function getDeviceTypeLabel(deviceType: string, t: (k: string) => string): strin
   if (deviceType === 'AttendanceTerminal') return t('devicesTab.deviceTypeLabels.AttendanceTerminal')
   if (deviceType === 'ElevatorController') return t('devicesTab.deviceTypeLabels.ElevatorController')
   if (deviceType === 'EnrollerStation') return t('devicesTab.deviceTypeLabels.EnrollerStation')
+  if (deviceType === 'AnprCamera') return 'ANPR Camera'
   return deviceType
 }
 
@@ -797,6 +799,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
               <option value={3}>{t('devicesTab.deviceTypeLabels.AttendanceTerminal')}</option>
               <option value={4}>{t('devicesTab.deviceTypeLabels.ElevatorController')}</option>
               <option value={5}>{t('devicesTab.deviceTypeLabels.EnrollerStation')}</option>
+              <option value={6}>ANPR Camera</option>
             </select>
           </div>
 

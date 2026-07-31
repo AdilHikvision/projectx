@@ -29,28 +29,12 @@ export const MODULE_LIST: ModuleDef[] = [
         available: true,
     },
     {
-        key: 'gym',
-        nameKey: 'modules.gym',
-        image: '/modules/gym.svg',
-        icon: 'fitness_center',
-        gradient: 'from-emerald-500 to-teal-600',
-        available: false,
-    },
-    {
         key: 'parking',
         nameKey: 'modules.parking',
         image: '/modules/parking.svg',
         icon: 'local_parking',
         gradient: 'from-amber-500 to-orange-600',
         available: true,
-    },
-    {
-        key: 'housing',
-        nameKey: 'modules.housing',
-        image: '/modules/housing.svg',
-        icon: 'holiday_village',
-        gradient: 'from-sky-500 to-blue-600',
-        available: false,
     },
 ]
 

@@ -105,6 +105,7 @@ function getDeviceIcon(deviceType: string): string {
   if (deviceType === 'Intercom') return 'videocam'
   if (deviceType === 'ElevatorController') return 'elevator'
   if (deviceType === 'EnrollerStation') return 'how_to_reg'
+  if (deviceType === 'AnprCamera') return 'photo_camera'
   return 'devices'
 }
 
@@ -162,6 +163,7 @@ export function DevicesPage() {
   const { startLoading, stopLoading, isLoading } = useLoading()
 
   const getDeviceTypeLabel = useCallback((deviceType: string): string => {
+    if (deviceType === 'AnprCamera') return 'ANPR Camera'
     const key = getDeviceTypeLabelKey(deviceType)
     return key ? t(key) : deviceType
   }, [t])
@@ -808,6 +810,7 @@ export function DevicesPage() {
               <option value={3}>{t('devices.deviceTypeAttendanceTerminal')}</option>
               <option value={4}>{t('devices.deviceTypeElevatorController')}</option>
               <option value={5}>{t('devices.deviceTypeEnrollerStation')}</option>
+              <option value={6}>ANPR Camera</option>
             </select>
           </div>
 

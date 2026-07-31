@@ -61,6 +61,24 @@ interface Scheme {
 
 const SPACE_TYPES: SpaceType[] = ['Regular', 'Vip', 'Disabled', 'Electric', 'Motorcycle']
 
+// ─── AktivParking scoped restyle (page-only, prefixed .pk-*) ────────────────────
+const PK_RESTYLE = `
+.pk-page{--ap-acc:#6C5CE7;--ap-acc-d:#5a4bd4;--ap-acc-soft:#EEECFB;--ap-acc-softer:#F3F1FC;--ap-bg:#F6F6FB;--ap-panel:#fff;--ap-line:#ECECF3;--ap-ink:#252641;--ap-ink2:#4A4B6B;--ap-muted:#8B8CA7;--ap-shadow:0 1px 2px rgba(37,38,65,.04),0 8px 24px rgba(37,38,65,.05);background:var(--ap-bg)}
+.pk-page .rounded-3xl{border-radius:16px!important}
+.pk-page .rounded-2xl{border-radius:12px!important}
+.pk-page .rounded-xl{border-radius:12px!important}
+.pk-page .shadow-md,.pk-page .shadow-sm,.pk-page .shadow{box-shadow:var(--ap-shadow)!important}
+.pk-page h2,.pk-page h3{letter-spacing:-.3px}
+.pk-page table thead th{font-size:12px;letter-spacing:.4px;color:var(--ap-muted)!important}
+.pk-page table tbody tr:hover{background:var(--ap-acc-softer)!important}
+.pk-page input:focus,.pk-page select:focus,.pk-page textarea:focus{border-color:var(--ap-acc)!important;box-shadow:0 0 0 3px var(--ap-acc-soft)!important}
+.pk-page .shadow-primary{box-shadow:0 6px 16px rgba(108,92,231,.28)!important}
+/* AktivParking panel: soft shadow + hairline top accent feel */
+.pk-page .ap-panel{box-shadow:var(--ap-shadow)!important;border-color:var(--ap-line)!important}
+.pk-page .ap-panel:hover{box-shadow:0 2px 6px rgba(37,38,65,.05),0 12px 30px rgba(37,38,65,.07)!important}
+`
+
+
 const TYPE_STYLE: Record<SpaceType, { icon: string; chip: string; dot: string }> = {
     Regular: { icon: 'local_parking', chip: 'bg-slate-100 text-slate-700 border-slate-200', dot: 'bg-slate-400' },
     Vip: { icon: 'star', chip: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
@@ -74,6 +92,15 @@ export function ParkingManagementPage() {
     const { token } = useAuth()
 
     const [view, setView] = useState<'manage' | 'scheme'>('manage')
+    // Parkinq iş rejimi: ödənişli və ya pulsuz (ümumi parking məntiqi) — system-settings `parking.mode`
+    const [parkingMode, setParkingMode] = useState<'Paid' | 'Free'>('Free')
+    const [savingMode, setSavingMode] = useState(false)
+    // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
+    const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
+    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null }[]>([])
+    const [newPlate, setNewPlate] = useState('')
+    const [newPlateList, setNewPlateList] = useState<'Allow' | 'Block'>('Allow')
+    const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
     const [zones, setZones] = useState<Zone[]>([])
     const [floors, setFloors] = useState<Floor[]>([])
     const [rows, setRows] = useState<Row[]>([])
@@ -120,6 +147,54 @@ export function ParkingManagementPage() {
     }
 
     useEffect(() => { void loadZones() }, [token])
+    // Parkinq rejimini yüklə (yoxdursa default Pulsuz)
+    useEffect(() => {
+        if (!token) return
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
+            .then((r) => { if (r?.value === 'Paid' || r?.value === 'Free') setParkingMode(r.value) })
+            .catch(() => { /* 404 = hələ təyin olunmayıb → Pulsuz qalır */ })
+    }, [token])
+    const changeParkingMode = async (mode: 'Paid' | 'Free') => {
+        if (mode === parkingMode || savingMode) return
+        const prev = parkingMode
+        setParkingMode(mode)
+        setSavingMode(true)
+        try {
+            await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.mode', value: mode }) })
+        } catch {
+            setParkingMode(prev)
+        } finally {
+            setSavingMode(false)
+        }
+    }
+    // Alt-rejim + nömrə siyahıları + tutum yüklə
+    const reloadPlates = () => apiRequest<typeof plates>('/api/parking/plates', { token }).then(setPlates).catch(() => { })
+    const reloadOccupancy = () => apiRequest<NonNullable<typeof occupancy>>('/api/parking/occupancy', { token }).then(setOccupancy).catch(() => { })
+    useEffect(() => {
+        if (!token) return
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeSubMode', { token })
+            .then((r) => { if (r?.value === 'List' || r?.value === 'Capacity') setFreeSubMode(r.value) })
+            .catch(() => { })
+        void reloadPlates()
+        void reloadOccupancy()
+    }, [token])
+    const changeFreeSubMode = async (m: 'List' | 'Capacity') => {
+        if (m === freeSubMode) return
+        const prev = freeSubMode
+        setFreeSubMode(m)
+        try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.freeSubMode', value: m }) }) }
+        catch { setFreeSubMode(prev) }
+    }
+    const addPlate = async () => {
+        const p = newPlate.trim()
+        if (!p) return
+        try { await apiRequest('/api/parking/plates', { method: 'POST', token, body: JSON.stringify({ plate: p, listType: newPlateList }) }); setNewPlate(''); await reloadPlates() }
+        catch { /* ignore */ }
+    }
+    const delPlate = async (id: string) => {
+        try { await apiRequest(`/api/parking/plates/${id}`, { method: 'DELETE', token }); setPlates((ps) => ps.filter((x) => x.id !== id)) }
+        catch { /* ignore */ }
+    }
     useEffect(() => {
         if (!selectedZoneId) { setFloors([]); setSelectedFloorId(null); return }
         void loadFloors(selectedZoneId)
@@ -157,7 +232,8 @@ export function ParkingManagementPage() {
 
     return (
         <AppLayout>
-            <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+            <style>{PK_RESTYLE}</style>
+            <div className="pk-page flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
                 <div className="p-6 md:p-10 space-y-6">
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                         <PageHeader
@@ -170,6 +246,102 @@ export function ParkingManagementPage() {
                                 {t('parking.zones.new')}
                             </Button>
                         )}
+                    </div>
+
+                    {/* Parkinq rejimi — ödənişli / pulsuz (app hansı moddə işləyir) */}
+                    <div className="ap-panel flex flex-col gap-4 rounded-2xl border border-border-base bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-start gap-3">
+                            <span className="material-symbols-outlined text-2xl text-primary">{parkingMode === 'Paid' ? 'paid' : 'money_off'}</span>
+                            <div>
+                                <div className="text-sm font-bold text-text-dark">Parkinq rejimi</div>
+                                <div className="mt-0.5 text-xs text-text-muted">
+                                    {parkingMode === 'Paid'
+                                        ? 'Ödənişli — tarif və ödəniş üzrə işləyir (sessiya/ödəniş)'
+                                        : 'Pulsuz — ödəniş yoxdur, sərbəst giriş/çıxış'}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="inline-flex shrink-0 rounded-xl border border-border-base bg-slate-75 p-1">
+                            {(['Free', 'Paid'] as const).map((m) => (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    disabled={savingMode}
+                                    onClick={() => changeParkingMode(m)}
+                                    className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${parkingMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}
+                                >
+                                    {m === 'Paid' ? 'Ödənişli' : 'Pulsuz'}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Giriş məntiqi: alt-rejim + tutum + nömrə siyahıları */}
+                    <div className="ap-panel space-y-5 rounded-2xl border border-border-base bg-surface p-5">
+                        {parkingMode === 'Free' && (
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <div className="text-sm font-bold text-text-dark">Pulsuz alt-rejim</div>
+                                    <div className="mt-0.5 text-xs text-text-muted">
+                                        {freeSubMode === 'List'
+                                            ? '«Siyahı» — yalnız ağ siyahıdakı nömrələr keçir'
+                                            : '«Tutum» — boş yer olduqca bütün nömrələr keçir'}
+                                    </div>
+                                </div>
+                                <div className="inline-flex shrink-0 rounded-xl border border-border-base bg-slate-75 p-1">
+                                    {(['List', 'Capacity'] as const).map((m) => (
+                                        <button key={m} type="button" onClick={() => changeFreeSubMode(m)}
+                                            className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${freeSubMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}>
+                                            {m === 'List' ? 'Siyahı' : 'Tutum'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {occupancy && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="rounded-xl border border-border-base p-3">
+                                    <div className="text-xs text-text-muted">Ümumi yerlər (boş / cəmi)</div>
+                                    <div className="text-lg font-extrabold text-text-dark">{occupancy.commonFree}<span className="text-sm font-medium text-text-muted"> / {occupancy.commonCapacity}</span></div>
+                                </div>
+                                <div className="rounded-xl border border-border-base p-3">
+                                    <div className="text-xs text-text-muted">VIP yerlər (boş / cəmi)</div>
+                                    <div className="text-lg font-extrabold text-text-dark">{occupancy.vipFree}<span className="text-sm font-medium text-text-muted"> / {occupancy.vipCapacity}</span></div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div>
+                            <div className="mb-2 text-sm font-bold text-text-dark">Nömrə siyahıları (ağ / qara)</div>
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <Input value={newPlate} onChange={(e) => setNewPlate(e.target.value)} placeholder="10-AA-100" />
+                                <select value={newPlateList} onChange={(e) => setNewPlateList(e.target.value as 'Allow' | 'Block')}
+                                    className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
+                                    <option value="Allow">Ağ siyahı</option>
+                                    <option value="Block">Qara siyahı</option>
+                                </select>
+                                <Button icon="add" onClick={addPlate}>Əlavə et</Button>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                {(['Allow', 'Block'] as const).map((lt) => (
+                                    <div key={lt} className="rounded-xl border border-border-base p-3">
+                                        <div className={`mb-2 text-xs font-bold uppercase tracking-wider ${lt === 'Allow' ? 'text-success-text' : 'text-error-text'}`}>
+                                            {lt === 'Allow' ? 'Ağ siyahı — keçir' : 'Qara siyahı — bloklanır'}
+                                        </div>
+                                        <div className="space-y-1">
+                                            {plates.filter((p) => p.listType === lt).length === 0 && <div className="text-xs text-text-light">Boşdur</div>}
+                                            {plates.filter((p) => p.listType === lt).map((p) => (
+                                                <div key={p.id} className="flex items-center justify-between rounded-lg bg-slate-75 px-3 py-1.5">
+                                                    <span className="font-mono text-sm font-bold text-text-dark">{p.plate}</span>
+                                                    <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text">close</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
 
                     {/* View tabs */}
@@ -340,7 +512,7 @@ function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
             ) : (
                 <div className="space-y-6">
                     {scheme.floors.map((f) => (
-                        <div key={f.id} className="rounded-3xl border border-border-base bg-surface p-6 shadow-sm">
+                        <div key={f.id} className="ap-panel rounded-3xl border border-border-base bg-surface p-6 shadow-sm transition-shadow">
                             <div className="mb-4 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-text-light">layers</span>
                                 <h3 className="text-base font-black text-text-dark">{f.name}</h3>
@@ -404,9 +576,7 @@ function ZoneModal({ modal, token, onClose, onSaved }: {
                     <div className="col-span-2"><Field label={t('parking.zones.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field></div>
                     <Field label={t('parking.zones.fields.code')}><Input value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} maxLength={32} /></Field>
                 </div>
-                <Field label={t('parking.zones.fields.description')}><Input value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} /></Field>
-                <Field label={t('parking.sortOrder')}><Input type="number" value={String(form.sortOrder)} onChange={(e) => setForm((p) => ({ ...p, sortOrder: parseInt(e.target.value, 10) || 0 }))} /></Field>
-                <Check label={t('parking.zones.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
+                <Field label={t('parking.zones.fields.description')}><Input value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} /></Field>                <Check label={t('parking.zones.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
                 {error && <p className="text-xs font-medium text-error-text">{error}</p>}
                 <ModalActions saving={saving} disabled={!form.name.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
             </div>
@@ -439,10 +609,7 @@ function FloorModal({ modal, zoneId, token, onClose, onSaved }: {
         <Modal isOpen onClose={onClose} title={modal.mode === 'create' ? t('parking.floors.new') : t('parking.floors.edit')}>
             <div className="space-y-4 pt-2">
                 <Field label={t('parking.floors.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-                <div className="grid grid-cols-2 gap-3">
-                    <Field label={t('parking.floors.fields.level')}><Input type="number" value={String(form.level)} onChange={(e) => setForm((p) => ({ ...p, level: parseInt(e.target.value, 10) || 0 }))} /></Field>
-                    <Field label={t('parking.sortOrder')}><Input type="number" value={String(form.sortOrder)} onChange={(e) => setForm((p) => ({ ...p, sortOrder: parseInt(e.target.value, 10) || 0 }))} /></Field>
-                </div>
+                <Field label={t('parking.floors.fields.level')}><Input type="number" value={String(form.level)} onChange={(e) => setForm((p) => ({ ...p, level: parseInt(e.target.value, 10) || 0 }))} /></Field>
                 <Check label={t('parking.floors.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
                 {error && <p className="text-xs font-medium text-error-text">{error}</p>}
                 <ModalActions saving={saving} disabled={!form.name.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
@@ -475,9 +642,7 @@ function RowModal({ modal, floorId, token, onClose, onSaved }: {
     return (
         <Modal isOpen onClose={onClose} title={modal.mode === 'create' ? t('parking.rows.new') : t('parking.rows.edit')}>
             <div className="space-y-4 pt-2">
-                <Field label={t('parking.rows.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
-                <Field label={t('parking.sortOrder')}><Input type="number" value={String(form.sortOrder)} onChange={(e) => setForm((p) => ({ ...p, sortOrder: parseInt(e.target.value, 10) || 0 }))} /></Field>
-                {error && <p className="text-xs font-medium text-error-text">{error}</p>}
+                <Field label={t('parking.rows.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>                {error && <p className="text-xs font-medium text-error-text">{error}</p>}
                 <ModalActions saving={saving} disabled={!form.name.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
             </div>
         </Modal>
@@ -586,7 +751,7 @@ function BulkSpaceModal({ rowId, token, onClose, onSaved }: { rowId: string; tok
 // ─── Small presentational helpers ───────────────────────────────────────────────
 function Panel({ title, count, action, children }: { title: string; count: number; action?: ReactNode; children: ReactNode }) {
     return (
-        <div className="rounded-3xl border border-border-base bg-surface p-4 shadow-sm">
+        <div className="ap-panel rounded-3xl border border-border-base bg-surface p-4 shadow-sm transition-shadow">
             <div className="mb-3 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{title} · {count}</p>
                 {action}

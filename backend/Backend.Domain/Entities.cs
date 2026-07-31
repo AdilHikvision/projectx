@@ -15,7 +15,9 @@ public enum DeviceType
     /// <summary>Контроллер лифта (этажи ISAPI = doorID, вызов — RemoteControl).</summary>
     ElevatorController = 4,
     /// <summary>Энроллер-станция (DS-K1F…): захват лиц/карт/отпечатков по ISAPI Enroller; без онлайн UserInfo как у дверного терминала.</summary>
-    EnrollerStation = 5
+    EnrollerStation = 5,
+    /// <summary>ANPR (nömrə tanıma) kamera — parking giriş/çıxış; ISAPI Vehicle Access.</summary>
+    AnprCamera = 6
 }
 
 public sealed class DeviceStatus : BaseEntity
@@ -109,6 +111,8 @@ public sealed class Employee : BaseEntity
     public string LastName { get; set; } = string.Empty;
     /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Генерируется системой автоматически из Id.</summary>
     public string? EmployeeNo { get; set; }
+    /// <summary>Пользовательский внешний идентификатор (таб. №), редактируется вручную в UI (метка «ID»). Не путать с внутренним Id или EmployeeNo. Nullable, необязательный, неуникальный.</summary>
+    public string? ExternalId { get; set; }
     /// <summary>Пол: male, female, unknown.</summary>
     public string? Gender { get; set; }
     /// <summary>Начало периода действия (для ISAPI Valid).</summary>
@@ -1086,6 +1090,35 @@ public sealed class ParkingSpace : BaseEntity
     public string? Notes { get; set; }
 }
 
+/// <summary>Тип списка номеров доступа на парковку.</summary>
+public enum ParkingPlateList
+{
+    Allow = 1,
+    Block = 2
+}
+
+/// <summary>Номер в белом/чёрном списке доступа на парковку.</summary>
+public sealed class ParkingPlate : BaseEntity
+{
+    public string Plate { get; set; } = string.Empty;
+    public string PlateNormalized { get; set; } = string.Empty;
+    public ParkingPlateList ListType { get; set; }
+    public string? Note { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>Сессия парковки (машина внутри) — для подсчёта занятости.</summary>
+public sealed class ParkingSession : BaseEntity
+{
+    public string Plate { get; set; } = string.Empty;
+    public string PlateNormalized { get; set; } = string.Empty;
+    public Guid? ZoneId { get; set; }
+    public ParkingSpaceType SpaceType { get; set; } = ParkingSpaceType.Regular;
+    public DateTime EnteredUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ExitedUtc { get; set; }
+    public bool IsPaid { get; set; }
+}
+
 /// <summary>Системный аудит-лог. Кто, что, когда сделал. Пишется middleware-ом + точечными вызовами.</summary>
 public sealed class AuditLogEntry
 {
@@ -1101,4 +1134,17 @@ public sealed class AuditLogEntry
     public string? IpAddress { get; set; }
     public string? Description { get; set; }         // Free text — extra context (e.g. target email)
     public bool Success { get; set; } = true;
+}
+
+/// <summary>Настраиваемый критерий табеля (davamiyyət kriteriyası): каждый день попадает в один из
+/// key = normal|undertime|overtime|late|early_leave|dayoff. Пользователь задаёт букву и цвет отображения.</summary>
+public sealed class AttendanceCriteria : BaseEntity
+{
+    public string Key { get; set; } = string.Empty;   // normal|undertime|overtime|late|early_leave|dayoff
+    public string Label { get; set; } = string.Empty;
+    public string Letter { get; set; } = string.Empty; // istifadəçi dəyişir (короткая метка для часовых-нет дней)
+    public string Color { get; set; } = "#6B7280";     // hex, istifadəçi dəyişir
+    public string DisplayMode { get; set; } = "letter"; // letter|hours — xanada hərf yoxsa saat göstərilsin
+    public bool Enabled { get; set; } = true;
+    public int SortOrder { get; set; }
 }

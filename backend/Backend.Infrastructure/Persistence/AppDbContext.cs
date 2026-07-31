@@ -37,6 +37,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
     public DbSet<DeviceAuthLog> DeviceAuthLogs => Set<DeviceAuthLog>();
     public DbSet<AttendanceCorrection> AttendanceCorrections => Set<AttendanceCorrection>();
+    public DbSet<AttendanceCriteria> AttendanceCriterias => Set<AttendanceCriteria>();
     public DbSet<GeoZone> GeoZones => Set<GeoZone>();
     public DbSet<EmployeeDayPattern> EmployeeDayPatterns => Set<EmployeeDayPattern>();
     public DbSet<PayrollComponent> PayrollComponents => Set<PayrollComponent>();
@@ -72,6 +73,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ParkingFloor> ParkingFloors => Set<ParkingFloor>();
     public DbSet<ParkingRow> ParkingRows => Set<ParkingRow>();
     public DbSet<ParkingSpace> ParkingSpaces => Set<ParkingSpace>();
+    public DbSet<ParkingPlate> ParkingPlates => Set<ParkingPlate>();
+    public DbSet<ParkingSession> ParkingSessions => Set<ParkingSession>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -140,6 +143,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.FirstName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.EmployeeNo).HasMaxLength(32);
+            entity.Property(x => x.ExternalId).HasMaxLength(64).HasColumnName("ExternalId");
             entity.Property(x => x.Gender).HasMaxLength(16);
             entity.Property(x => x.SelfServiceEmail).HasMaxLength(256);
             entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
@@ -674,6 +678,25 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(x => x.IsActive);
         });
 
+        builder.Entity<ParkingPlate>(entity =>
+        {
+            entity.ToTable("parking_plates");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.HasIndex(x => new { x.PlateNormalized, x.ListType });
+        });
+
+        builder.Entity<ParkingSession>(entity =>
+        {
+            entity.ToTable("parking_sessions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.HasIndex(x => new { x.ZoneId, x.ExitedUtc });
+            entity.HasIndex(x => x.PlateNormalized);
+        });
+
         builder.Entity<ParkingFloor>(entity =>
         {
             entity.ToTable("parking_floors");
@@ -718,6 +741,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(x => x.TimestampUtc);
             entity.HasIndex(x => x.UserId);
             entity.HasIndex(x => x.Category);
+        });
+
+        builder.Entity<AttendanceCriteria>(entity =>
+        {
+            entity.ToTable("attendance_criteria");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Key).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Label).HasMaxLength(160).IsRequired();
+            entity.Property(x => x.Letter).HasMaxLength(8);
+            entity.Property(x => x.Color).HasMaxLength(16).IsRequired();
+            entity.Property(x => x.DisplayMode).HasMaxLength(16).IsRequired();
+            entity.HasIndex(x => x.Key).IsUnique();
         });
     }
 }
