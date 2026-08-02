@@ -97,9 +97,15 @@ export function ParkingManagementPage() {
     const [savingMode, setSavingMode] = useState(false)
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
-    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null }[]>([])
+    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null }[]>([])
     const [newPlate, setNewPlate] = useState('')
     const [newPlateList, setNewPlateList] = useState<'Allow' | 'Block'>('Allow')
+    const [newPlateCategory, setNewPlateCategory] = useState('')
+    const [newPlateValidTo, setNewPlateValidTo] = useState('')
+    const [newPlateTimeLimit, setNewPlateTimeLimit] = useState('')
+    // Pulsuz rejim parametrləri: pulsuz dayanmanın maksimum müddəti və təkrar girişə qadağa (dəq).
+    const [freeMaxMinutes, setFreeMaxMinutes] = useState('')
+    const [reentryMinutes, setReentryMinutes] = useState('')
     const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
     const [zones, setZones] = useState<Zone[]>([])
     const [floors, setFloors] = useState<Floor[]>([])
@@ -175,9 +181,18 @@ export function ParkingManagementPage() {
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeSubMode', { token })
             .then((r) => { if (r?.value === 'List' || r?.value === 'Capacity') setFreeSubMode(r.value) })
             .catch(() => { })
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeMaxMinutes', { token })
+            .then((r) => { if (r?.value) setFreeMaxMinutes(r.value) }).catch(() => { })
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.reentryMinutes', { token })
+            .then((r) => { if (r?.value) setReentryMinutes(r.value) }).catch(() => { })
         void reloadPlates()
         void reloadOccupancy()
     }, [token])
+
+    const saveFreeSetting = async (key: string, value: string) => {
+        try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key, value: value.trim() }) }) }
+        catch { /* ignore */ }
+    }
     const changeFreeSubMode = async (m: 'List' | 'Capacity') => {
         if (m === freeSubMode) return
         const prev = freeSubMode
@@ -188,7 +203,20 @@ export function ParkingManagementPage() {
     const addPlate = async () => {
         const p = newPlate.trim()
         if (!p) return
-        try { await apiRequest('/api/parking/plates', { method: 'POST', token, body: JSON.stringify({ plate: p, listType: newPlateList }) }); setNewPlate(''); await reloadPlates() }
+        try {
+            await apiRequest('/api/parking/plates', {
+                method: 'POST', token,
+                body: JSON.stringify({
+                    plate: p,
+                    listType: newPlateList,
+                    category: newPlateCategory || null,
+                    validTo: newPlateList === 'Allow' && newPlateValidTo ? newPlateValidTo : null,
+                    timeLimitMinutes: newPlateList === 'Allow' && newPlateTimeLimit ? Math.max(1, parseInt(newPlateTimeLimit, 10) || 0) : null,
+                }),
+            })
+            setNewPlate(''); setNewPlateCategory(''); setNewPlateValidTo(''); setNewPlateTimeLimit('')
+            await reloadPlates()
+        }
         catch { /* ignore */ }
     }
     const delPlate = async (id: string) => {
@@ -299,6 +327,27 @@ export function ParkingManagementPage() {
                             </div>
                         )}
 
+                        {parkingMode === 'Free' && (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-xl border border-border-base p-3">
+                                    <div className="text-xs text-text-muted mb-1.5">Pulsuz dayanma limiti (dəq, 0 = limitsiz)</div>
+                                    <input type="number" min={0}
+                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                        value={freeMaxMinutes}
+                                        onChange={(e) => setFreeMaxMinutes(e.target.value)}
+                                        onBlur={() => void saveFreeSetting('parking.freeMaxMinutes', freeMaxMinutes || '0')} />
+                                </div>
+                                <div className="rounded-xl border border-border-base p-3">
+                                    <div className="text-xs text-text-muted mb-1.5">Təkrar giriş qadağası (dəq, 0 = yoxdur)</div>
+                                    <input type="number" min={0}
+                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                        value={reentryMinutes}
+                                        onChange={(e) => setReentryMinutes(e.target.value)}
+                                        onBlur={() => void saveFreeSetting('parking.reentryMinutes', reentryMinutes || '0')} />
+                                </div>
+                            </div>
+                        )}
+
                         {occupancy && (
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="rounded-xl border border-border-base p-3">
@@ -316,11 +365,41 @@ export function ParkingManagementPage() {
                             <div className="mb-2 text-sm font-bold text-text-dark">Nömrə siyahıları (ağ / qara)</div>
                             <div className="mb-3 flex flex-wrap items-center gap-2">
                                 <Input value={newPlate} onChange={(e) => setNewPlate(e.target.value)} placeholder="10-AA-100" />
-                                <select value={newPlateList} onChange={(e) => setNewPlateList(e.target.value as 'Allow' | 'Block')}
+                                <select value={newPlateList} onChange={(e) => { setNewPlateList(e.target.value as 'Allow' | 'Block'); setNewPlateCategory('') }}
                                     className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
                                     <option value="Allow">Ağ siyahı</option>
                                     <option value="Block">Qara siyahı</option>
                                 </select>
+                                <select value={newPlateCategory} onChange={(e) => setNewPlateCategory(e.target.value)}
+                                    className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
+                                    {newPlateList === 'Allow' ? (
+                                        <>
+                                            <option value="">Kateqoriya —</option>
+                                            <option value="employee">Əməkdaş</option>
+                                            <option value="management">Rəhbərlik</option>
+                                            <option value="vip">VIP</option>
+                                            <option value="service">Xidməti</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="">Səbəb —</option>
+                                            <option value="unpaid">Ödənilməyib</option>
+                                            <option value="violator">Qayda pozucusu</option>
+                                            <option value="stolen">Oğurlanmış</option>
+                                            <option value="banned">Qadağan edilib</option>
+                                        </>
+                                    )}
+                                </select>
+                                {newPlateList === 'Allow' && (
+                                    <>
+                                        <input type="date" title="Buraxılışın bitmə tarixi"
+                                            className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                            value={newPlateValidTo} onChange={(e) => setNewPlateValidTo(e.target.value)} />
+                                        <input type="number" min={0} placeholder="Limit dəq" title="Dayanma limiti (dəq)"
+                                            className="w-24 rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                            value={newPlateTimeLimit} onChange={(e) => setNewPlateTimeLimit(e.target.value)} />
+                                    </>
+                                )}
                                 <Button icon="add" onClick={addPlate}>Əlavə et</Button>
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2">
@@ -332,9 +411,14 @@ export function ParkingManagementPage() {
                                         <div className="space-y-1">
                                             {plates.filter((p) => p.listType === lt).length === 0 && <div className="text-xs text-text-light">Boşdur</div>}
                                             {plates.filter((p) => p.listType === lt).map((p) => (
-                                                <div key={p.id} className="flex items-center justify-between rounded-lg bg-slate-75 px-3 py-1.5">
-                                                    <span className="font-mono text-sm font-bold text-text-dark">{p.plate}</span>
-                                                    <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text">close</button>
+                                                <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-75 px-3 py-1.5">
+                                                    <span className="font-mono text-sm font-bold text-text-dark shrink-0">{p.plate}</span>
+                                                    <span className="flex-1 truncate text-right text-[10px] text-text-muted">
+                                                        {p.category ?? ''}
+                                                        {p.validTo ? ` · ${p.validTo}` : ''}
+                                                        {p.timeLimitMinutes ? ` · ${p.timeLimitMinutes} dəq` : ''}
+                                                    </span>
+                                                    <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text shrink-0">close</button>
                                                 </div>
                                             ))}
                                         </div>

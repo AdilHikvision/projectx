@@ -20,11 +20,23 @@ const TYPE_COLOR: Record<string, string> = {
     DailyReport: 'text-primary',
 };
 
+/** Параметры-перечисления (тип заявки, вид отпуска) приходят с бэкенда как есть
+ *  («Vacation», «CheckIn»…) — переводим их, иначе внутри переведённой фразы
+ *  остаётся английское слово. Неизвестное значение показываем как есть. */
+const ENUM_PARAMS = ['type', 'leaveType'];
+
 function parseNotifText(raw: string, t: (key: string, params?: Record<string, unknown>) => string): string {
     try {
         const parsed = JSON.parse(raw) as { k?: string; p?: Record<string, unknown> };
         if (parsed && typeof parsed.k === 'string') {
-            return t(parsed.k, parsed.p ?? {});
+            const params = { ...(parsed.p ?? {}) };
+            for (const key of ENUM_PARAMS) {
+                const value = params[key];
+                if (typeof value === 'string' && value.length > 0) {
+                    params[key] = t(`notifications.enums.${value}`, { defaultValue: value });
+                }
+            }
+            return t(parsed.k, params);
         }
     } catch {
         // not JSON — return as-is

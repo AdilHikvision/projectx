@@ -9,16 +9,24 @@ interface ModalProps {
     fullScreen?: boolean;
     actions?: ReactNode;
     className?: string; // Add className prop
+    /** Ширина окна: 'md' — по умолчанию, 'lg'/'xl' — для форм с многоколоночной сеткой. */
+    size?: 'md' | 'lg' | 'xl';
 }
 
-export function Modal({ isOpen, onClose, title, children, fullScreen, actions, className = '' }: ModalProps) {
+const WIDTH_BY_SIZE: Record<'md' | 'lg' | 'xl', string> = {
+    md: 'max-w-lg',
+    lg: 'max-w-3xl',
+    xl: 'max-w-5xl',
+};
+
+export function Modal({ isOpen, onClose, title, children, fullScreen, actions, className = '', size = 'md' }: ModalProps) {
     const { t } = useTranslation();
     if (!isOpen) return null;
 
     const baseClasses = `relative flex flex-col shadow-float overflow-hidden rounded-2xl border border-border-light animate-pop`;
     const sizeClasses = fullScreen
         ? 'w-[calc(100%-2rem)] h-[calc(100%-2rem)]'
-        : 'w-full max-w-lg max-h-[90vh]';
+        : `w-full ${WIDTH_BY_SIZE[size]} max-h-[90vh]`;
 
     const bgClass = className.includes('bg-') ? '' : 'bg-white';
 

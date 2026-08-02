@@ -30,6 +30,16 @@ public sealed class DeviceCardCaptureService(
         public required Guid PersonId { get; init; }
         public required string PersonType { get; init; }
         public DateTime StartedUtc { get; init; } = DateTime.UtcNow;
+        /// <summary>Заведён на устройстве только ради захвата (нет уровня доступа) — убрать после завершения.</summary>
+        public bool TemporaryOnDevice { get; init; }
+    }
+
+    /// <summary>Убрать временно заведённого человека с устройства.</summary>
+    private async Task CleanupTemporaryAsync(Guid deviceId, string employeeNo, bool temporary, CancellationToken ct)
+    {
+        if (!temporary) return;
+        try { await syncService.DeletePersonFromDeviceAsync(employeeNo, deviceId, ct); }
+        catch (Exception ex) { logger.LogWarning(ex, "Cleanup temporary person {EmployeeNo} from device {DeviceId}", employeeNo, deviceId); }
     }
 
     public async Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, CancellationToken cancellationToken = default)
@@ -39,6 +49,7 @@ public sealed class DeviceCardCaptureService(
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
         var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var temporaryOnDevice = false;
 
         string employeeNo;
         if (personType == "employee")
@@ -48,8 +59,14 @@ public sealed class DeviceCardCaptureService(
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
-                var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
-                if (!syncRes.Success) return syncRes;
+                // Нет уровня доступа → человека на устройство НЕ пишем: чтение карты идёт
+                // со считывателя (CaptureCardInfo по readerID), пользователь там не нужен.
+                temporaryOnDevice = !await dbContext.Set<EmployeeAccessLevel>().AnyAsync(al => al.EmployeeId == personId, cancellationToken);
+                if (!temporaryOnDevice)
+                {
+                    var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
+                    if (!syncRes.Success) return syncRes;
+                }
             }
         }
         else if (personType == "gymcustomer")
@@ -143,7 +160,8 @@ public sealed class DeviceCardCaptureService(
         var immediateCard = ExtractCardNo(content);
         if (!string.IsNullOrWhiteSpace(immediateCard))
         {
-            var saved = await SaveAndReturnAsync(immediateCard, personId, personType, deviceId, cancellationToken);
+            var saved = await SaveAndReturnAsync(immediateCard, personId, personType, deviceId, temporaryOnDevice, cancellationToken);
+            await CleanupTemporaryAsync(deviceId, employeeNo, temporaryOnDevice, cancellationToken);
             if (!saved.Success)
                 return new DeviceSyncResult(false, saved.Error);
             if (saved.CardId.HasValue)
@@ -151,7 +169,7 @@ public sealed class DeviceCardCaptureService(
             return new DeviceSyncResult(true, null);
         }
 
-        Sessions[deviceId] = new CardSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
+        Sessions[deviceId] = new CardSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType, TemporaryOnDevice = temporaryOnDevice };
         return new DeviceSyncResult(true, null);
     }
 
@@ -167,12 +185,14 @@ public sealed class DeviceCardCaptureService(
         if (device is null)
         {
             Sessions.TryRemove(deviceId, out _);
+            await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
             return new CardCaptureProgressResult("failed", "Устройство не найдено.", null);
         }
 
         if ((DateTime.UtcNow - session.StartedUtc).TotalSeconds > 120)
         {
             Sessions.TryRemove(deviceId, out _);
+            await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
             return new CardCaptureProgressResult("failed", "Таймаут захвата.", null);
         }
 
@@ -203,6 +223,7 @@ public sealed class DeviceCardCaptureService(
             if (!string.IsNullOrWhiteSpace(cardNo))
             {
                 Sessions.TryRemove(deviceId, out _);
+            await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
 
                 var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, cancellationToken);
                 if (exists)
@@ -219,11 +240,16 @@ public sealed class DeviceCardCaptureService(
                 dbContext.Cards.Add(card);
                 await dbContext.SaveChangesAsync(cancellationToken);
 
-                _ = Task.Run(async () =>
+                // Карту пишем на устройство только если человек там должен быть (есть уровень доступа).
+                // Иначе SyncCardAsync заново создал бы пользователя на терминале — ровно то, чего не хотим.
+                if (!session.TemporaryOnDevice)
                 {
-                    try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
-                    catch { }
-                });
+                    _ = Task.Run(async () =>
+                    {
+                        try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
+                        catch { }
+                    });
+                }
 
                 return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", card.Id);
             }
@@ -237,6 +263,7 @@ public sealed class DeviceCardCaptureService(
                     if (el.TryGetProperty("isCurRequestOver", out var iso) && iso.ValueKind == JsonValueKind.True)
                     {
                         Sessions.TryRemove(deviceId, out _);
+            await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
                         return new CardCaptureProgressResult("failed", "Карта не была считана. Приложите карту и повторите.", null);
                     }
                 }
@@ -271,7 +298,9 @@ public sealed class DeviceCardCaptureService(
         return null;
     }
 
-    private async Task<(bool Success, string? Error, Guid? CardId)> SaveAndReturnAsync(string cardNo, Guid personId, string personType, Guid deviceId, CancellationToken ct)
+    /// <param name="temporaryOnDevice">Человек заведён на устройстве лишь ради захвата (нет уровня доступа):
+    /// карту на устройство не пишем, иначе он снова там появится.</param>
+    private async Task<(bool Success, string? Error, Guid? CardId)> SaveAndReturnAsync(string cardNo, Guid personId, string personType, Guid deviceId, bool temporaryOnDevice, CancellationToken ct)
     {
         var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, ct);
         if (exists)
@@ -288,11 +317,14 @@ public sealed class DeviceCardCaptureService(
         dbContext.Cards.Add(card);
         await dbContext.SaveChangesAsync(ct);
 
-        _ = Task.Run(async () =>
+        if (!temporaryOnDevice)
         {
-            try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
-            catch { }
-        });
+            _ = Task.Run(async () =>
+            {
+                try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
+                catch { }
+            });
+        }
 
         return (true, null, card.Id);
     }

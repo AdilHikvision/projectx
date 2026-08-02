@@ -352,8 +352,8 @@ export function SystemSettingsPage() {
         try {
             const res = await apiRequest<AttCriterion[]>('/api/attendance-criteria', { token })
             setAttCrit(Array.isArray(res) ? [...res].sort((a, b) => a.sortOrder - b.sortOrder) : [])
-        } catch { setAttCritError('Kriteriyalar yüklənmədi.') } finally { setAttCritLoading(false) }
-    }, [token])
+        } catch { setAttCritError(t('systemSettings.criteria.loadError')) } finally { setAttCritLoading(false) }
+    }, [token, t])
 
     const updateAttCrit = (key: string, patch: Partial<AttCriterion>) => {
         setAttCrit((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)))
@@ -370,8 +370,8 @@ export function SystemSettingsPage() {
             setAttCrit(next)
             try { localStorage.setItem('projectx.attCriteria', JSON.stringify(next)) } catch { /* noop */ }
             setAttCritSaved(true); setTimeout(() => setAttCritSaved(false), 2500)
-        } catch { setAttCritError('Yadda saxlanmadı.') } finally { setAttCritSaving(false) }
-    }, [attCrit, token])
+        } catch { setAttCritError(t('systemSettings.criteria.saveError')) } finally { setAttCritSaving(false) }
+    }, [attCrit, token, t])
 
     const loadBackups = useCallback(async () => {
         if (!token) return
@@ -1032,7 +1032,7 @@ export function SystemSettingsPage() {
                             className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'criteria' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
                                 }`}
                         >
-                            Tabel qaydaları
+                            {t('systemSettings.tabs.criteria')}
                         </button>
                         <button
                             onClick={() => setActiveTab('company')}
@@ -1467,52 +1467,52 @@ export function SystemSettingsPage() {
                                     <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
                                         <span className="material-symbols-outlined text-lg">event_available</span>
                                     </div>
-                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">Tabel qaydaları / Davamiyyət kriteriyaları</h3>
+                                    <h3 className="text-[10px] font-black text-text-light uppercase tracking-widest leading-none">{t('systemSettings.criteria.heading')}</h3>
                                 </div>
 
                                 <div className="bg-surface rounded-3xl shadow-md p-8 space-y-5 border-none text-text-light">
-                                    <p className="text-[11px] font-bold text-text-light">Aylıq tabeldə hər gün üçün rəng və hərf kodları. Rəng — xanaların rənglənməsi; hərf — 0 saatlıq günlərdə göstərilən işarə (məs. İstirahət → “İ”).</p>
+                                    <p className="text-[11px] font-bold text-text-light">{t('systemSettings.criteria.intro')}</p>
 
                                     {attCritLoading ? (
-                                        <p className="text-xs font-bold text-text-light py-4">Yüklənir…</p>
+                                        <p className="text-xs font-bold text-text-light py-4">{t('systemSettings.criteria.loading')}</p>
                                     ) : attCrit.length === 0 ? (
-                                        <p className="text-xs font-bold text-text-light py-4">{attCritError || 'Məlumat yoxdur.'}</p>
+                                        <p className="text-xs font-bold text-text-light py-4">{attCritError || t('systemSettings.criteria.noData')}</p>
                                     ) : (
                                         <div className="space-y-2">
                                             {attCrit.map((c) => (
                                                 <div key={c.key} className="flex items-center gap-3 rounded-2xl bg-slate-50 border border-border-light px-4 py-3">
                                                     <span className="w-6 h-6 rounded-lg shrink-0 border border-black/10" style={{ background: c.color }} />
                                                     <div className="flex-1 min-w-0">
-                                                        <p className="text-xs font-black text-text-dark truncate">{c.label}</p>
+                                                        <p className="text-xs font-black text-text-dark truncate">{t(`workHours.tabel.crit.${c.key}`, { defaultValue: c.label })}</p>
                                                         <p className="text-[9px] font-bold text-text-light uppercase tracking-widest">{c.key}</p>
                                                     </div>
-                                                    <label className="flex items-center gap-1.5 text-[9px] font-bold text-text-light uppercase tracking-widest cursor-pointer" title="Aktiv">
+                                                    <label className="flex items-center gap-1.5 text-[9px] font-bold text-text-light uppercase tracking-widest cursor-pointer" title={t('systemSettings.criteria.active')}>
                                                         <input type="checkbox" checked={c.enabled} onChange={(e) => updateAttCrit(c.key, { enabled: e.target.checked })} className="w-4 h-4 accent-primary" />
-                                                        Aktiv
+                                                        {t('systemSettings.criteria.active')}
                                                     </label>
                                                     <input
                                                         type="text"
                                                         value={c.letter}
                                                         maxLength={8}
                                                         onChange={(e) => updateAttCrit(c.key, { letter: e.target.value })}
-                                                        placeholder="Hərf"
-                                                        title="Hərf işarəsi (0 saatlıq gün)"
+                                                        placeholder={t('systemSettings.criteria.letter')}
+                                                        title={t('systemSettings.criteria.letterTitle')}
                                                         className="w-16 bg-white border border-border-light rounded-xl px-2 py-2 text-center text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20"
                                                     />
                                                     <select
                                                         value={c.displayMode === 'hours' ? 'hours' : 'letter'}
                                                         onChange={(e) => updateAttCrit(c.key, { displayMode: e.target.value })}
-                                                        title="Xanada göstərilmə: Hərf yoxsa Saat"
+                                                        title={t('systemSettings.criteria.displayTitle')}
                                                         className="shrink-0 bg-white border border-border-light rounded-xl px-2 py-2 text-xs font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
                                                     >
-                                                        <option value="letter">Hərf</option>
-                                                        <option value="hours">Saat</option>
+                                                        <option value="letter">{t('systemSettings.criteria.displayLetter')}</option>
+                                                        <option value="hours">{t('systemSettings.criteria.displayHours')}</option>
                                                     </select>
                                                     <input
                                                         type="color"
                                                         value={/^#[0-9a-fA-F]{6}$/.test(c.color) ? c.color : '#94A3B8'}
                                                         onChange={(e) => updateAttCrit(c.key, { color: e.target.value })}
-                                                        title="Rəng"
+                                                        title={t('systemSettings.criteria.color')}
                                                         className="w-10 h-10 shrink-0 rounded-xl border border-border-light cursor-pointer bg-white p-0.5"
                                                     />
                                                 </div>
@@ -1526,11 +1526,11 @@ export function SystemSettingsPage() {
                                             disabled={attCritSaving || attCritLoading || attCrit.length === 0}
                                             className="px-5 py-2.5 rounded-2xl bg-primary text-white text-[11px] font-black uppercase tracking-widest shadow-primary disabled:opacity-50 transition-all"
                                         >
-                                            {attCritSaving ? 'Saxlanılır…' : 'Yadda saxla'}
+                                            {attCritSaving ? t('systemSettings.criteria.saving') : t('systemSettings.criteria.save')}
                                         </button>
                                         {attCritSaved && (
                                             <span className="text-[11px] font-black text-green-600 flex items-center gap-1">
-                                                <span className="material-symbols-outlined text-sm">check_circle</span> Yadda saxlandı
+                                                <span className="material-symbols-outlined text-sm">check_circle</span> {t('systemSettings.criteria.saved')}
                                             </span>
                                         )}
                                         {attCritError && !attCritLoading && (

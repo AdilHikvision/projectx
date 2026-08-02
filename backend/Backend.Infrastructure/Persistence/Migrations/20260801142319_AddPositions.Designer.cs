@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260801142319_AddPositions")]
+    partial class AddPositions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2094,44 +2097,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("notification_reads", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Plate")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("Source")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedUtc");
-
-                    b.HasIndex("Type");
-
-                    b.ToTable("parking_events", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2168,55 +2133,11 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.ToTable("parking_floors", (string)null);
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingPermit", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateOnly>("ValidFrom")
-                        .HasColumnType("date");
-
-                    b.Property<DateOnly?>("ValidTo")
-                        .HasColumnType("date");
-
-                    b.Property<Guid>("VehicleId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("ZoneId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("VehicleId");
-
-                    b.HasIndex("ZoneId");
-
-                    b.ToTable("parking_permits", (string)null);
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.ParkingPlate", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
-
-                    b.Property<string>("Category")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -2240,59 +2161,14 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
-                    b.Property<int?>("TimeLimitMinutes")
-                        .HasColumnType("integer");
-
                     b.Property<DateTime?>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateOnly?>("ValidTo")
-                        .HasColumnType("date");
 
                     b.HasKey("Id");
 
                     b.HasIndex("PlateNormalized", "ListType");
 
                     b.ToTable("parking_plates", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingResident", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FullName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Phone")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("Unit")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsActive");
-
-                    b.ToTable("parking_residents", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
@@ -2331,14 +2207,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("CameraName")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<decimal?>("Cost")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -2351,21 +2219,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsPaid")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("Operator")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<DateTime?>("PaidUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("PaymentMethod")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("PhotoUrl")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
                     b.Property<string>("Plate")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -2376,14 +2229,8 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
-                    b.Property<double?>("RecognitionConfidence")
-                        .HasColumnType("double precision");
-
                     b.Property<int>("SpaceType")
                         .HasColumnType("integer");
-
-                    b.Property<Guid?>("TariffId")
-                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("UpdatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -2392,8 +2239,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("EnteredUtc");
 
                     b.HasIndex("PlateNormalized");
 
@@ -2442,202 +2287,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasIndex("Type");
 
                     b.ToTable("parking_spaces", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingSubscription", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateOnly>("EndDate")
-                        .HasColumnType("date");
-
-                    b.Property<int?>("EntriesLimit")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("EntriesUsed")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Plate")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("PlateNormalized")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<DateOnly>("StartDate")
-                        .HasColumnType("date");
-
-                    b.Property<bool>("Unlimited")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PlateNormalized");
-
-                    b.ToTable("parking_subscriptions", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingTariff", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("FixedPrice")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.Property<int>("FreeMinutes")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal?>("MaxPerDay")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<TimeSpan?>("NightFrom")
-                        .HasColumnType("interval");
-
-                    b.Property<decimal?>("NightPricePerHour")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.Property<TimeSpan?>("NightTo")
-                        .HasColumnType("interval");
-
-                    b.Property<decimal>("PricePerDay")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.Property<decimal>("PricePerHour")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.Property<int>("SortOrder")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal?>("WeekendPricePerHour")
-                        .HasPrecision(12, 2)
-                        .HasColumnType("numeric(12,2)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("parking_tariffs", (string)null);
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingVehicle", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Brand")
-                        .HasMaxLength(120)
-                        .HasColumnType("character varying(120)");
-
-                    b.Property<string>("Color")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("Company")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("Country")
-                        .HasMaxLength(8)
-                        .HasColumnType("character varying(8)");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("OwnerName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("OwnerPhone")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("PhotoUrl")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<string>("Plate")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("PlateNormalized")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<Guid?>("ResidentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("UpdatedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("VehicleType")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PlateNormalized");
-
-                    b.HasIndex("ResidentId");
-
-                    b.ToTable("parking_vehicles", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>
@@ -3815,24 +3464,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Zone");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingPermit", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingVehicle", "Vehicle")
-                        .WithMany("Permits")
-                        .HasForeignKey("VehicleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Backend.Domain.Entities.ParkingZone", "Zone")
-                        .WithMany()
-                        .HasForeignKey("ZoneId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Vehicle");
-
-                    b.Navigation("Zone");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
                 {
                     b.HasOne("Backend.Domain.Entities.ParkingFloor", "Floor")
@@ -3853,16 +3484,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Row");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingVehicle", b =>
-                {
-                    b.HasOne("Backend.Domain.Entities.ParkingResident", "Resident")
-                        .WithMany("Vehicles")
-                        .HasForeignKey("ResidentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Resident");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>
@@ -4065,19 +3686,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Rows");
                 });
 
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingResident", b =>
-                {
-                    b.Navigation("Vehicles");
-                });
-
             modelBuilder.Entity("Backend.Domain.Entities.ParkingRow", b =>
                 {
                     b.Navigation("Spaces");
-                });
-
-            modelBuilder.Entity("Backend.Domain.Entities.ParkingVehicle", b =>
-                {
-                    b.Navigation("Permits");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.ParkingZone", b =>

@@ -22,6 +22,7 @@ const ResetPasswordPage = lazy(() => named(import('./pages/ResetPasswordPage'), 
 const PayrollCalculationPage = lazy(() => named(import('./pages/PayrollCalculationPage'), 'PayrollCalculationPage'))
 const PeopleManagementPage = lazy(() => named(import('./pages/PeopleManagementPage'), 'PeopleManagementPage'))
 const PersonDetailPage = lazy(() => named(import('./pages/PersonDetailPage'), 'PersonDetailPage'))
+const PersonCreatePage = lazy(() => named(import('./pages/PersonCreatePage'), 'PersonCreatePage'))
 const SystemSettingsPage = lazy(() => named(import('./pages/SystemSettingsPage'), 'SystemSettingsPage'))
 const SystemStatusPage = lazy(() => named(import('./pages/SystemStatusPage'), 'SystemStatusPage'))
 const WorkHoursTrackingPage = lazy(() => named(import('./pages/WorkHoursTrackingPage'), 'WorkHoursTrackingPage'))
@@ -39,10 +40,14 @@ const GymAnalyticsPage = lazy(() => named(import('./pages/gym'), 'GymAnalyticsPa
 const GymPosPage = lazy(() => named(import('./pages/gym'), 'GymPosPage'))
 const ParkingManagementPage = lazy(() => named(import('./pages/parking'), 'ParkingManagementPage'))
 
-// ─── Aktiv Parking (embedded building-management app) ───
-const ApHomePage = lazy(() => named(import('./pages/aktivparking'), 'ApHomePage'))
-const ApPermitsPage = lazy(() => named(import('./pages/aktivparking'), 'ApPermitsPage'))
-const ApReportsPage = lazy(() => named(import('./pages/aktivparking'), 'ApReportsPage'))
+// ─── Aktiv Parking (нативные страницы ProjectX: жильцы, транспорт, пропуска, отчёты) ───
+const ApHomePage = lazy(() => named(import('./pages/parking'), 'ParkingHomePage'))
+const ParkingVehiclesPage = lazy(() => named(import('./pages/parking'), 'ParkingVehiclesPage'))
+const ApPermitsPage = lazy(() => named(import('./pages/parking'), 'ParkingPermitsPage'))
+const ApReportsPage = lazy(() => named(import('./pages/parking'), 'ParkingReportsPage'))
+const ParkingTariffsPage = lazy(() => named(import('./pages/parking'), 'ParkingTariffsPage'))
+const ParkingHistoryPage = lazy(() => named(import('./pages/parking'), 'ParkingHistoryPage'))
+const ParkingPosPage = lazy(() => named(import('./pages/parking'), 'ParkingPosPage'))
 
 // Dashboard route: Parking modulunda AktivParking "Ana Səhifə"-sini göstərir
 // (adı "Dashboard" qalır); Workforce-da "Dashboard" əsas səhifə (AnaHomePage)
@@ -88,6 +93,8 @@ function App() {
           <Route path="/home" element={<Navigate to="/dashboard" replace />} />
 
           <Route path="/people" element={<PeopleManagementPage />} />
+          {/* Статический сегмент "new" имеет приоритет над /people/:type/:id */}
+          <Route path="/people/new/:type" element={<PersonCreatePage />} />
           <Route path="/people/:type/:id" element={<PersonDetailPage />} />
           <Route path="/access-levels" element={<AccessLevelsPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
@@ -108,10 +115,14 @@ function App() {
           {/* ─── Parking Management module ─── */}
           <Route path="/parking/management" element={<ParkingManagementPage />} />
 
-          {/* ─── Aktiv Parking (embedded) — additive tabs, existing untouched ─── */}
+          {/* ─── Aktiv Parking (нативно) — жильцы, пропуска, отчёты ─── */}
           <Route path="/parking/ap-home" element={<ApHomePage />} />
+          <Route path="/parking/vehicles" element={<ParkingVehiclesPage />} />
           <Route path="/parking/ap-permits" element={<ApPermitsPage />} />
           <Route path="/parking/ap-reports" element={<ApReportsPage />} />
+          <Route path="/parking/tariffs" element={<ParkingTariffsPage />} />
+          <Route path="/parking/history" element={<ParkingHistoryPage />} />
+          <Route path="/parking/pos" element={<ParkingPosPage />} />
 
           <Route path="/settings" element={<SystemSettingsPage />} />
           <Route path="/status" element={<SystemStatusPage />} />

@@ -49,6 +49,23 @@ public sealed record SchedulePlannerRow(
     string? Color,
     string? ScheduleType);
 
+// Строка месячного табеля (İş vaxtının aylıq uçotu): дни месяца → (часы, ключ критерия).
+public sealed record MonthlyTabelCell(double Hours, string Key);
+public sealed record MonthlyTabelRow(
+    string No,
+    string ExternalId,
+    string Fullname,
+    string Position,
+    string Department,
+    Dictionary<int, MonthlyTabelCell> Days,
+    int TotalDays,
+    int TotalHours,
+    int ExtraDays,
+    int ExtraHours);
+
+/// <summary>Стиль критерия табеля (из attendance_criteria, с дефолтами для отсутствующих ключей).</summary>
+public sealed record TabelCritStyle(string Key, string Label, string Letter, string Color, string DisplayMode, bool Enabled);
+
 public sealed record PayrollReportRow(
     string EmployeeName,
     string? EmployeeNo,
@@ -329,6 +346,133 @@ public static class ExcelReportBuilder
         ws.Column(2).Width = 16;
         for (int i = 0; i < dates.Count; i++) ws.Column(3 + i).Width = 11;
         ws.SheetView.FreezeColumns(2);
+        ws.SheetView.FreezeRows(headerRow);
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    // Ячейка табеля: часы (displayMode=hours) или буква критерия; цвет/заливка из критерия.
+    static (string Text, string Color) TabelCellContent(MonthlyTabelCell cell, IReadOnlyDictionary<string, TabelCritStyle> crit)
+    {
+        crit.TryGetValue(cell.Key, out var c);
+        var color = c?.Color ?? "#6B7280";
+        var letter = c?.Letter ?? "";
+        var mode = c?.DisplayMode == "hours" ? "hours" : "letter";
+        var text = mode == "hours"
+            ? (cell.Hours > 0 ? cell.Hours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : letter)
+            : (letter.Length > 0 ? letter : (cell.Hours > 0 ? cell.Hours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : ""));
+        return (text, color);
+    }
+
+    // Светлая заливка из hex-цвета критерия (смешение с белым, как #RRGGBB22 в UI).
+    static XLColor TabelTint(string hex)
+    {
+        try
+        {
+            var c = System.Drawing.ColorTranslator.FromHtml(hex);
+            static int Mix(int ch) => ch + (int)((255 - ch) * 0.85);
+            return XLColor.FromArgb(Mix(c.R), Mix(c.G), Mix(c.B));
+        }
+        catch { return XLColor.White; }
+    }
+
+    public static byte[] BuildMonthlyTabel(
+        IReadOnlyList<MonthlyTabelRow> rows,
+        int year, int month,
+        IReadOnlyDictionary<string, TabelCritStyle> crit)
+    {
+        int daysInMonth = DateTime.DaysInMonth(year, month);
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Tabel");
+
+        ws.Cell("A1").Value = $"İş vaxtının aylıq uçotu — Tabel — {year:D4}-{month:D2}";
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 14;
+
+        int headerRow = 3;
+        var headers = new List<string> { "S/S", "Tab. №", "Soyadı, adı, atasının adı", "Vəzifəsi", "Struktur bölməsi" };
+        for (int d = 1; d <= daysInMonth; d++) headers.Add(d.ToString());
+        headers.AddRange(["Cəmi gün", "Cəmi saat", "Əlavə gün", "Əlavə saat"]);
+        for (int i = 0; i < headers.Count; i++)
+        {
+            var cell = ws.Cell(headerRow, i + 1);
+            cell.Value = headers[i];
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+            cell.Style.Font.FontColor = XLColor.White;
+            cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        }
+        // Выходные (сб/вс) в шапке — приглушённая заливка.
+        for (int d = 1; d <= daysInMonth; d++)
+        {
+            var dow = new DateTime(year, month, d).DayOfWeek;
+            if (dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday)
+                ws.Cell(headerRow, 5 + d).Style.Fill.BackgroundColor = XLColor.FromHtml("#7c78d8");
+        }
+
+        int row = headerRow + 1;
+        int idx = 1;
+        foreach (var r in rows)
+        {
+            ws.Cell(row, 1).Value = idx++;
+            ws.Cell(row, 2).Value = r.ExternalId;
+            ws.Cell(row, 3).Value = r.Fullname;
+            ws.Cell(row, 4).Value = r.Position;
+            ws.Cell(row, 5).Value = r.Department;
+            for (int d = 1; d <= daysInMonth; d++)
+            {
+                var cell = ws.Cell(row, 5 + d);
+                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                if (!r.Days.TryGetValue(d, out var dayCell)) continue;
+                var (text, color) = TabelCellContent(dayCell, crit);
+                cell.Value = text;
+                cell.Style.Font.Bold = true;
+                cell.Style.Font.FontColor = XLColor.FromHtml(color);
+                cell.Style.Fill.BackgroundColor = TabelTint(color);
+            }
+            ws.Cell(row, 5 + daysInMonth + 1).Value = r.TotalDays;
+            ws.Cell(row, 5 + daysInMonth + 2).Value = r.TotalHours;
+            ws.Cell(row, 5 + daysInMonth + 3).Value = r.ExtraDays;
+            ws.Cell(row, 5 + daysInMonth + 4).Value = r.ExtraHours;
+            row++;
+        }
+
+        // Итого по колонке "Cəmi saat".
+        if (rows.Count > 0)
+        {
+            ws.Cell(row, 3).Value = "TOTAL";
+            ws.Cell(row, 3).Style.Font.Bold = true;
+            ws.Cell(row, 5 + daysInMonth + 2).Value = rows.Sum(r => r.TotalHours);
+            ws.Cell(row, 5 + daysInMonth + 2).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f0f0");
+        }
+
+        // Легенда критериев.
+        int legendRow = row + 2;
+        ws.Cell(legendRow, 1).Value = "Kodların izahı:";
+        ws.Cell(legendRow, 1).Style.Font.Bold = true;
+        int lr = legendRow + 1;
+        foreach (var c in crit.Values.Where(c => c.Enabled).OrderBy(c => c.Key))
+        {
+            ws.Cell(lr, 1).Value = c.Letter.Length > 0 ? c.Letter : "S";
+            ws.Cell(lr, 1).Style.Font.Bold = true;
+            ws.Cell(lr, 1).Style.Font.FontColor = XLColor.FromHtml(c.Color);
+            ws.Cell(lr, 1).Style.Fill.BackgroundColor = TabelTint(c.Color);
+            ws.Cell(lr, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Cell(lr, 2).Value = c.Label + (c.DisplayMode == "hours" ? " (saat)" : "");
+            lr++;
+        }
+
+        ws.Column(1).Width = 5;
+        ws.Column(2).Width = 10;
+        ws.Column(3).Width = 28;
+        ws.Column(4).Width = 16;
+        ws.Column(5).Width = 16;
+        for (int d = 1; d <= daysInMonth; d++) ws.Column(5 + d).Width = 4.5;
+        for (int i = 1; i <= 4; i++) ws.Column(5 + daysInMonth + i).Width = 9;
+        ws.SheetView.FreezeColumns(3);
         ws.SheetView.FreezeRows(headerRow);
 
         using var ms = new MemoryStream();
@@ -656,6 +800,139 @@ public static class PdfReportBuilder
                             }
                         }
                     }
+                });
+
+                page.Footer().AlignRight().Text(x =>
+                {
+                    x.Span("Page ").FontSize(7).FontColor("#888888");
+                    x.CurrentPageNumber().FontSize(7);
+                    x.Span(" of ").FontSize(7);
+                    x.TotalPages().FontSize(7);
+                });
+            });
+        });
+
+        using var ms = new MemoryStream();
+        doc.GeneratePdf(ms);
+        return ms.ToArray();
+    }
+
+    // Светлый фон из hex-цвета критерия (аналог #RRGGBB22 в UI).
+    static string TabelTintHex(string hex)
+    {
+        try
+        {
+            var c = System.Drawing.ColorTranslator.FromHtml(hex);
+            static int Mix(int ch) => ch + (int)((255 - ch) * 0.85);
+            return $"#{Mix(c.R):X2}{Mix(c.G):X2}{Mix(c.B):X2}";
+        }
+        catch { return "#ffffff"; }
+    }
+
+    public static byte[] BuildMonthlyTabel(
+        IReadOnlyList<MonthlyTabelRow> rows,
+        int year, int month,
+        IReadOnlyDictionary<string, TabelCritStyle> crit)
+    {
+        int daysInMonth = DateTime.DaysInMonth(year, month);
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A3.Landscape());
+                page.Margin(1.0f, Unit.Centimetre);
+                page.DefaultTextStyle(t => t.FontSize(7).FontFamily("Arial"));
+
+                page.Header().Column(col =>
+                {
+                    col.Item().Text("İş vaxtının aylıq uçotu — Tabel")
+                        .FontSize(14).Bold().FontColor(PrimaryHex);
+                    col.Item().Text($"Dövr: {year:D4}-{month:D2}")
+                        .FontSize(9).FontColor("#555555");
+                    col.Item().PaddingTop(4).LineHorizontal(1).LineColor(PrimaryHex);
+                });
+
+                page.Content().PaddingTop(8).Column(content =>
+                {
+                    content.Item().Table(table =>
+                    {
+                        table.ColumnsDefinition(c =>
+                        {
+                            c.ConstantColumn(20);  // S/S
+                            c.ConstantColumn(44);  // Tab №
+                            c.RelativeColumn(4);   // Name
+                            c.RelativeColumn(2);   // Position
+                            c.RelativeColumn(2);   // Department
+                            for (int d = 0; d < daysInMonth; d++) c.ConstantColumn(19);
+                            c.ConstantColumn(30);  // Cəmi gün
+                            c.ConstantColumn(32);  // Cəmi saat
+                            c.ConstantColumn(30);  // Əlavə gün
+                            c.ConstantColumn(32);  // Əlavə saat
+                        });
+
+                        table.Header(h =>
+                        {
+                            void Head(string txt, string bg = "#4f46e5")
+                                => h.Cell().Background(bg).Padding(2).AlignCenter()
+                                    .Text(txt).FontColor("#ffffff").Bold().FontSize(6.5f);
+                            Head("S/S"); Head("Tab.№"); Head("Soyadı, adı, atasının adı"); Head("Vəzifəsi"); Head("Şöbə");
+                            for (int d = 1; d <= daysInMonth; d++)
+                            {
+                                var dow = new DateTime(year, month, d).DayOfWeek;
+                                Head(d.ToString(), dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday ? "#7c78d8" : "#4f46e5");
+                            }
+                            Head("C.gün"); Head("C.saat"); Head("Ə.gün"); Head("Ə.saat");
+                        });
+
+                        bool alt = false;
+                        int idx = 1;
+                        foreach (var r in rows)
+                        {
+                            string bg = alt ? "#f8f8ff" : "#ffffff";
+                            alt = !alt;
+                            table.Cell().Background(bg).Padding(2).AlignCenter().Text(idx++.ToString()).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).Text(r.ExternalId).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).Text(r.Fullname).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).Text(r.Position).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).Text(r.Department).FontSize(6.5f);
+                            for (int d = 1; d <= daysInMonth; d++)
+                            {
+                                if (!r.Days.TryGetValue(d, out var dayCell))
+                                {
+                                    table.Cell().Background(bg).Padding(2).Text("");
+                                    continue;
+                                }
+                                crit.TryGetValue(dayCell.Key, out var cs);
+                                var color = cs?.Color ?? "#6B7280";
+                                var letter = cs?.Letter ?? "";
+                                var mode = cs?.DisplayMode == "hours" ? "hours" : "letter";
+                                var text = mode == "hours"
+                                    ? (dayCell.Hours > 0 ? dayCell.Hours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : letter)
+                                    : (letter.Length > 0 ? letter : (dayCell.Hours > 0 ? dayCell.Hours.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : ""));
+                                table.Cell().Background(TabelTintHex(color)).Padding(2).AlignCenter()
+                                    .Text(text).FontColor(color).Bold().FontSize(6.5f);
+                            }
+                            table.Cell().Background(bg).Padding(2).AlignCenter().Text(r.TotalDays.ToString()).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).AlignCenter().Text(r.TotalHours.ToString()).Bold().FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).AlignCenter().Text(r.ExtraDays.ToString()).FontSize(6.5f);
+                            table.Cell().Background(bg).Padding(2).AlignCenter().Text(r.ExtraHours.ToString()).FontSize(6.5f);
+                        }
+                    });
+
+                    // Легенда критериев.
+                    content.Item().PaddingTop(10).Row(rowc =>
+                    {
+                        rowc.AutoItem().Text("Kodların izahı:  ").Bold().FontSize(7);
+                        foreach (var c in crit.Values.Where(c => c.Enabled).OrderBy(c => c.Key))
+                        {
+                            rowc.AutoItem().PaddingRight(10).Text(t =>
+                            {
+                                t.Span((c.Letter.Length > 0 ? c.Letter : "S") + " ").FontColor(c.Color).Bold().FontSize(7);
+                                t.Span(c.Label + (c.DisplayMode == "hours" ? " (saat)" : "")).FontSize(7).FontColor("#555555");
+                            });
+                        }
+                    });
                 });
 
                 page.Footer().AlignRight().Text(x =>

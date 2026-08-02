@@ -63,10 +63,13 @@ public sealed class DailyReportNotificationService(
         static string N(string key, object? p = null) =>
             System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
 
+        // Отдельный ключ, когда есть отпускники: фраза про них должна быть переводимой,
+        // а не подставляться готовым английским текстом.
         await notificationService.CreateAsync(
             NotificationTypes.DailyReport,
             N("notifications.titles.dailyReport", new { date }),
-            N("notifications.bodies.dailyReport", new { present = presentCount, total = totalEmployees, absent = absentCount, onLeave = onLeaveCount > 0 ? $" On leave: {onLeaveCount}." : "" }),
+            N(onLeaveCount > 0 ? "notifications.bodies.dailyReportWithLeave" : "notifications.bodies.dailyReport",
+                new { present = presentCount, total = totalEmployees, absent = absentCount, onLeave = onLeaveCount }),
             ct: ct);
 
         logger.LogInformation("Daily report notification sent for {Date}: present={Present}, onLeave={OnLeave}, absent={Absent}, total={Total}",

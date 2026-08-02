@@ -53,7 +53,6 @@ export default defineConfig({
     port: 5056,
     strictPort: true,
     allowedHosts: ['192.168.88.143', 'localhost'],
-    hmr: { host: '192.168.88.143', protocol: 'ws', clientPort: 5056 },
     proxy: apiProxy,
   },
   preview: {

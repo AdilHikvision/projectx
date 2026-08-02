@@ -1,4 +1,5 @@
 export * from './Modal';
+export * from './ErrorDialog';
 export * from './PageHeader';
 export * from './TopBar';
 export * from './Sidebar';

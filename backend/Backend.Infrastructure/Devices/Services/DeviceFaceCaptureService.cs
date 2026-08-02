@@ -28,6 +28,17 @@ public sealed class DeviceFaceCaptureService(
         public required Guid PersonId { get; init; }
         public required string PersonType { get; init; }
         public DateTime StartedUtc { get; init; } = DateTime.UtcNow;
+        /// <summary>Человека завели на устройстве только ради захвата (у него нет уровня доступа) —
+        /// после завершения его надо оттуда убрать: на устройства он попадёт лишь при назначении уровня.</summary>
+        public bool TemporaryOnDevice { get; init; }
+    }
+
+    /// <summary>Убрать временно заведённого человека с устройства (ошибки глушим — захват уже состоялся).</summary>
+    private async Task CleanupTemporaryAsync(Guid deviceId, CaptureSession session, CancellationToken ct)
+    {
+        if (!session.TemporaryOnDevice) return;
+        try { await syncService.DeletePersonFromDeviceAsync(session.EmployeeNo, deviceId, ct); }
+        catch (Exception ex) { logger.LogWarning(ex, "Cleanup temporary person {EmployeeNo} from device {DeviceId}", session.EmployeeNo, deviceId); }
     }
 
     public async Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, CancellationToken cancellationToken = default)
@@ -37,6 +48,7 @@ public sealed class DeviceFaceCaptureService(
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
         var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var temporaryOnDevice = false;
 
         string employeeNo;
         if (personType == "employee")
@@ -46,8 +58,15 @@ public sealed class DeviceFaceCaptureService(
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
-                var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
-                if (!syncRes.Success) return syncRes;
+                // Нет уровня доступа → человека на устройство НЕ пишем. Захват идёт с камеры терминала,
+                // снимок забираем себе. Если прошивка всё же создаст пользователя сама — уберём его
+                // после захвата (CleanupTemporaryAsync).
+                temporaryOnDevice = !await dbContext.Set<EmployeeAccessLevel>().AnyAsync(al => al.EmployeeId == personId, cancellationToken);
+                if (!temporaryOnDevice)
+                {
+                    var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
+                    if (!syncRes.Success) return syncRes;
+                }
             }
         }
         else if (personType == "gymcustomer")
@@ -115,7 +134,7 @@ public sealed class DeviceFaceCaptureService(
 
         logger.LogInformation("[CaptureFace] CaptureFaceData OK for {Device}. Response: {Content}", device.Name, (content?.Length ?? 0) > 200 ? content![..200] + "..." : content ?? "(empty)");
 
-        Sessions[deviceId] = new CaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType };
+        Sessions[deviceId] = new CaptureSession { EmployeeNo = employeeNo, PersonId = personId, PersonType = personType, TemporaryOnDevice = temporaryOnDevice };
         return new DeviceSyncResult(true, null);
     }
 
@@ -128,12 +147,14 @@ public sealed class DeviceFaceCaptureService(
         if (device is null)
         {
             Sessions.TryRemove(deviceId, out _);
+                await CleanupTemporaryAsync(deviceId, session, cancellationToken);
             return new FaceCaptureProgressResult("failed", null, "Устройство не найдено.", null);
         }
 
         if ((DateTime.UtcNow - session.StartedUtc).TotalSeconds > 120)
         {
             Sessions.TryRemove(deviceId, out _);
+                await CleanupTemporaryAsync(deviceId, session, cancellationToken);
             return new FaceCaptureProgressResult("failed", null, "Таймаут захвата.", null);
         }
 
@@ -213,6 +234,7 @@ public sealed class DeviceFaceCaptureService(
             if (progress == 0 && isOver == true)
             {
                 Sessions.TryRemove(deviceId, out _);
+                await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                 return new FaceCaptureProgressResult("failed", null, message ?? "Захват лица не удался.", null);
             }
 
@@ -289,10 +311,14 @@ public sealed class DeviceFaceCaptureService(
                     dbContext.Faces.Add(face);
                     await dbContext.SaveChangesAsync(cancellationToken);
 
+                    // Снимок уже у нас — теперь убираем временную запись с устройства.
+                    await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                     return new FaceCaptureProgressResult("completed", 100,
                         "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.",
                         face.Id);
                 }
+                // Снимок не пришёл — временную запись всё равно убираем.
+                await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                 return new FaceCaptureProgressResult("completed", 100,
                     "Лицо захвачено на устройстве. Изображение не получено — добавьте лицо с компьютера.", null);
             }

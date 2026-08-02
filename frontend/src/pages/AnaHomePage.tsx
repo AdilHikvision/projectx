@@ -1,56 +1,35 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
+import { apiRequest } from '../lib/api'
+import { useAuth } from '../auth/AuthContext'
 import './ana-home.css'
 
 /* ═══════════════════════════════════════════════════════════════
-   Ana səhifə — workforce modulunun açılış görünüşü.
-   arkoz.html (192.168.88.189:5090) "Ana səhifə" ekranının BİREBİR portu:
-   hero + 2 üzən kart · 4 KPI · donut / son giriş / yeni əməkdaş ·
-   məzuniyyət müraciətləri / bugünkü növbələr / sürətli əməliyyatlar / həftəlik statistika.
-   DESIGN-SYSTEM.md-yə uyğun (Plus Jakarta Sans, #6C5CE7, radius 18px KÖLGƏSİZ,
-   KPI 54px ikon, grid cədvəl, status çipləri, SVG stroke 1.8). Stil SCOPED: ana-home.css.
-   Demo data; backend inteqrasiyası sonrakı mərhələdir.
+   Ana səhifə — workforce modulunun açılış görünüşü (arkoz.html dizaynının portu).
+   REAL DATA: /api/attendance/daily (bugünkü davamiyyət, son girişlər, növbələr),
+   /api/leaves (məzuniyyət müraciətləri), /api/attendance/period (həftəlik statistika).
+   Stil SCOPED: ana-home.css. Mətnlər i18n (anaHome.*).
    ═══════════════════════════════════════════════════════════════ */
 
-// Avatar rəng dövrü (DESIGN-SYSTEM §2)
 const AV = [['#EFECFD', '#6C5CE7'], ['#EAF8F0', '#1E9B62'], ['#FEF4E6', '#D98324'], ['#E9F1FE', '#3A72CE'], ['#FDECEA', '#D9534A'], ['#F1EDFB', '#7B5BC9']]
 
-interface Recent { initials: string; name: string; position: string; time: string; status: 'İşdə' | 'Gecikdi' | 'İşdə deyil'; chip: string }
-const RECENT: Recent[] = [
-  { initials: 'RM', name: 'Rəşad Məmmədov', position: 'Marketinq üzrə mütəxəssis', time: '08:55', status: 'İşdə', chip: 'green' },
-  { initials: 'Aİ', name: 'Aysel İbrahimova', position: 'UX/UI Dizayner', time: '09:03', status: 'İşdə', chip: 'green' },
-  { initials: 'EQ', name: 'Elvin Quliyev', position: 'Proqramçı', time: '09:15', status: 'Gecikdi', chip: 'orange' },
-  { initials: 'GƏ', name: 'Günel Əliyeva', position: 'Maliyyə mütəxəssisi', time: '09:18', status: 'İşdə', chip: 'green' },
-  { initials: 'MH', name: 'Murat Həsənov', position: 'Satış meneceri', time: '09:25', status: 'İşdə', chip: 'green' },
-  { initials: 'NR', name: 'Nigar Rzayeva', position: 'HR mütəxəssisi', time: '09:31', status: 'İşdə', chip: 'green' },
-]
+interface DailyRow {
+  employeeId: string
+  employeeName: string | null
+  scheduleName: string | null
+  shiftStart: string | null
+  shiftEnd: string | null
+  checkInUtc: string | null
+  isDayOff: boolean
+  isAbsent: boolean
+  onLeave: boolean
+  lateMinutes: number | null
+}
+interface LeaveRow { id: string; employeeName: string; leaveType: string; startDate: string; endDate: string; status: string }
+interface PeriodRow { employeeId: string; date: string; checkInUtc: string | null; isDayOff: boolean }
 
-// Məzuniyyət müraciətləri
-const LEAVES = [
-  { initials: 'TH', name: 'Tural Həsənov', type: 'İllik məzuniyyət', date: '24 May - 28 May', status: 'Gözləmədə', chip: 'orange' },
-  { initials: 'Zİ', name: 'Zəhra İsmayılova', type: 'Xəstəlik icazəsi', date: '20 May', status: 'Təsdiqləndi', chip: 'green' },
-]
-
-// Bugünkü növbələr
-const SHIFTS = [
-  { icon: 'sun', tint: '#FEF4E6', color: '#D98324', name: 'Səhər növbəsi', time: '09:00 - 18:00', count: '63 nəfər' },
-  { icon: 'noon', tint: '#E9F1FE', color: '#3A72CE', name: 'Günorta növbəsi', time: '13:00 - 22:00', count: '34 nəfər' },
-  { icon: 'moon', tint: '#EFECFD', color: '#6C5CE7', name: 'Gecə növbəsi', time: '22:00 - 07:00', count: '18 nəfər' },
-]
-
-// Sürətli əməliyyatlar
-const ACTIONS = [
-  { icon: 'scan', tint: '#EFECFD', color: '#6C5CE7', title: 'Üz tanıma cihazları', desc: 'Cihazları idarə edin və statusu izləyin' },
-  { icon: 'cal', tint: '#EAF8F0', color: '#1E9B62', title: 'İcazə (izin) yarat', desc: 'Məzuniyyət və digər icazələri qeyd edin' },
-  { icon: 'chart', tint: '#FEF4E6', color: '#D98324', title: 'Hesabat yarat', desc: 'Davamiyyət hesabatını ixrac edin' },
-]
-
-// Həftəlik statistika (bar chart) — max 150
-const WEEK = [
-  { d: 'B.e', v: 124 }, { d: 'Ç.a', v: 100 }, { d: 'Ç', v: 118 }, { d: 'C.a', v: 128 },
-  { d: 'C', v: 96 }, { d: 'Ş', v: 40, dim: true }, { d: 'B', v: 20, dim: true },
-]
-
-// İnline SVG ikonlar (viewBox 0 0 24 24, stroke 1.8 — DESIGN-SYSTEM §8)
 const svg = (d: string, color: string, size = 26) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     {d.split('|').map((p, i) => <path key={i} d={p} />)}
@@ -69,31 +48,120 @@ const ICONS: Record<string, string> = {
   chart: 'M3 3v18h18|M18 17V9|M13 17V5|M8 17v-3',
 }
 
+const initials = (name: string) =>
+  name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '—'
+
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+
 export function AnaHomePage() {
+  const { t, i18n } = useTranslation()
+  const { token } = useAuth()
+  const navigate = useNavigate()
+  const [daily, setDaily] = useState<DailyRow[]>([])
+  const [leaves, setLeaves] = useState<LeaveRow[]>([])
+  const [week, setWeek] = useState<PeriodRow[]>([])
+  const [weekFrom, setWeekFrom] = useState<Date | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    apiRequest<DailyRow[]>('/api/attendance/daily', { token }).then(setDaily).catch(() => setDaily([]))
+    apiRequest<LeaveRow[]>('/api/leaves', { token }).then((l) => setLeaves(l.slice(0, 3))).catch(() => setLeaves([]))
+    // Həftəlik statistika: cari həftə (B.e - B.)
+    const now = new Date()
+    const monday = new Date(now)
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7))
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    setWeekFrom(monday)
+    apiRequest<PeriodRow[]>(`/api/attendance/period?from=${iso(monday)}&to=${iso(sunday)}`, { token })
+      .then(setWeek).catch(() => setWeek([]))
+  }, [token])
+
+  const stats = useMemo(() => {
+    const workRows = daily.filter((r) => !r.isDayOff)
+    const present = workRows.filter((r) => r.checkInUtc)
+    const late = workRows.filter((r) => (r.lateMinutes ?? 0) > 0)
+    const absent = workRows.filter((r) => r.isAbsent)
+    const pct = (n: number) => (workRows.length > 0 ? Math.round((n / workRows.length) * 100) : 0)
+    const recent = [...present].sort((a, b) => (b.checkInUtc! > a.checkInUtc! ? 1 : -1)).slice(0, 6)
+    // Bugünkü növbələr: shiftStart–shiftEnd üzrə qruplaşdır
+    const shiftMap = new Map<string, { name: string; time: string; count: number; startH: number }>()
+    for (const r of workRows) {
+      if (!r.shiftStart || !r.shiftEnd) continue
+      const key = `${r.shiftStart}–${r.shiftEnd}`
+      const cur = shiftMap.get(key)
+      if (cur) cur.count++
+      else shiftMap.set(key, { name: r.scheduleName ?? key, time: key, count: 1, startH: parseInt(r.shiftStart.slice(0, 2), 10) })
+    }
+    const shifts = Array.from(shiftMap.values()).sort((a, b) => a.startH - b.startH).slice(0, 4)
+    return { total: daily.length, workCount: workRows.length, present, late, absent, pct, recent, shifts }
+  }, [daily])
+
+  const weekBars = useMemo(() => {
+    if (!weekFrom) return []
+    const byDate = new Map<string, Set<string>>()
+    for (const r of week) {
+      if (!r.checkInUtc) continue
+      const d = r.date.slice(0, 10)
+      if (!byDate.has(d)) byDate.set(d, new Set())
+      byDate.get(d)!.add(r.employeeId)
+    }
+    const bars: { label: string; value: number; dim: boolean }[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekFrom)
+      d.setDate(weekFrom.getDate() + i)
+      const key = d.toISOString().slice(0, 10)
+      bars.push({
+        label: d.toLocaleDateString(i18n.language, { weekday: 'short' }),
+        value: byDate.get(key)?.size ?? 0,
+        dim: i >= 5,
+      })
+    }
+    return bars
+  }, [week, weekFrom, i18n.language])
+
+  const weekMax = Math.max(stats.total, ...weekBars.map((b) => b.value), 1)
+  const donutPresent = stats.pct(stats.present.length)
+  const donutLate = stats.pct(stats.late.length)
+  const donutAbsent = Math.max(0, 100 - donutPresent - donutLate)
+  const lastIn = stats.recent[0] ?? null
+
+  const leaveChip = (s: string) => (s === 'Approved' ? 'green' : s === 'Rejected' ? 'red' : 'orange')
+  const shiftIcon = (h: number) => (h < 12 ? 'sun' : h < 17 ? 'noon' : 'moon')
+  const shiftTint: Record<string, [string, string]> = { sun: ['#FEF4E6', '#D98324'], noon: ['#E9F1FE', '#3A72CE'], moon: ['#EFECFD', '#6C5CE7'] }
+
+  const ACTIONS = [
+    { icon: 'scan', tint: '#EFECFD', color: '#6C5CE7', title: t('anaHome.actionDevices'), desc: t('anaHome.actionDevicesDesc'), to: '/monitoring' },
+    { icon: 'cal', tint: '#EAF8F0', color: '#1E9B62', title: t('anaHome.actionLeave'), desc: t('anaHome.actionLeaveDesc'), to: '/work-hours' },
+    { icon: 'chart', tint: '#FEF4E6', color: '#D98324', title: t('anaHome.actionReport'), desc: t('anaHome.actionReportDesc'), to: '/work-hours' },
+  ]
+
   return (
     <AppLayout onAction={() => {}}>
       <div className="ana-root">
 
         {/* HERO */}
         <div className="ana-hero">
-          <img className="ana-hero-img" src="/ana-hero.png" alt="Ofisdə üz tanıma ilə keçid nəzarəti" />
+          <img className="ana-hero-img" src="/ana-hero.png" alt="" />
           <div className="ana-hero-text">
-            <h1>Xoş gəldiniz! Gününüz xoş olsun 👋</h1>
-            <p>Bugünkü davamiyyət vəziyyətinə ümumi baxış</p>
+            <h1>{t('anaHome.welcome')} 👋</h1>
+            <p>{t('anaHome.welcomeSub')}</p>
           </div>
           <div className="ana-hero-cards">
             <div className="ana-float">
               <span className="ic" style={{ background: '#EAF8F0' }}>{svg(IC_CHECK, '#1E9B62', 20)}</span>
               <div>
-                <div className="l1">08:55</div>
-                <div className="l2">Rəşad Məmmədov · Giriş vaxtı</div>
+                <div className="l1">{lastIn?.checkInUtc ? fmtTime(lastIn.checkInUtc) : '—'}</div>
+                <div className="l2">{lastIn ? `${lastIn.employeeName ?? '—'} · ${t('anaHome.lastCheckIn')}` : t('anaHome.lastCheckIn')}</div>
               </div>
             </div>
             <div className="ana-float">
               <span className="ic" style={{ background: '#EFECFD' }}>{svg(IC_GROUP, '#6C5CE7', 20)}</span>
               <div>
-                <div className="l1">Növbədə 2 nəfər</div>
-                <div className="l2">Növbədə olanlar</div>
+                <div className="l1">{t('anaHome.presentCount', { count: stats.present.length })}</div>
+                <div className="l2">{t('anaHome.presentNow')}</div>
               </div>
             </div>
           </div>
@@ -102,43 +170,35 @@ export function AnaHomePage() {
         {/* KPI */}
         <div className="ana-kpis">
           <div className="ana-kpi">
-            <div className="ana-kpi-top">
-              <span className="ana-kpi-ic" style={{ background: '#EFECFD' }}>{svg(IC_GROUP, '#6C5CE7')}</span>
-            </div>
+            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#EFECFD' }}>{svg(IC_GROUP, '#6C5CE7')}</span></div>
             <div>
-              <div className="ana-kpi-lbl">Ümumi əməkdaşlar</div>
-              <div className="ana-kpi-num" style={{ color: '#252641' }}>128</div>
-              <div className="ana-kpi-sub">Nəfər</div>
+              <div className="ana-kpi-lbl">{t('anaHome.kpiTotal')}</div>
+              <div className="ana-kpi-num" style={{ color: '#252641' }}>{stats.total}</div>
+              <div className="ana-kpi-sub">{t('anaHome.persons')}</div>
             </div>
           </div>
           <div className="ana-kpi green">
-            <div className="ana-kpi-top">
-              <span className="ana-kpi-ic" style={{ background: '#EAF8F0' }}>{svg(IC_CHECK, '#1E9B62')}</span>
-            </div>
+            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#EAF8F0' }}>{svg(IC_CHECK, '#1E9B62')}</span></div>
             <div>
-              <div className="ana-kpi-lbl">İşdə olanlar</div>
-              <div className="ana-kpi-num" style={{ color: '#1E9B62' }}>96</div>
-              <div className="ana-kpi-sub">Nəfər (75%)</div>
+              <div className="ana-kpi-lbl">{t('anaHome.kpiPresent')}</div>
+              <div className="ana-kpi-num" style={{ color: '#1E9B62' }}>{stats.present.length}</div>
+              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: donutPresent })}</div>
             </div>
           </div>
           <div className="ana-kpi orange">
-            <div className="ana-kpi-top">
-              <span className="ana-kpi-ic" style={{ background: '#FEF4E6' }}>{svg(IC_CLOCK, '#D98324')}</span>
-            </div>
+            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#FEF4E6' }}>{svg(IC_CLOCK, '#D98324')}</span></div>
             <div>
-              <div className="ana-kpi-lbl">Gecikənlər</div>
-              <div className="ana-kpi-num" style={{ color: '#D98324' }}>7</div>
-              <div className="ana-kpi-sub">Nəfər (5%)</div>
+              <div className="ana-kpi-lbl">{t('anaHome.kpiLate')}</div>
+              <div className="ana-kpi-num" style={{ color: '#D98324' }}>{stats.late.length}</div>
+              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: donutLate })}</div>
             </div>
           </div>
           <div className="ana-kpi red">
-            <div className="ana-kpi-top">
-              <span className="ana-kpi-ic" style={{ background: '#FDECEA' }}>{svg(IC_X, '#D9534A')}</span>
-            </div>
+            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#FDECEA' }}>{svg(IC_X, '#D9534A')}</span></div>
             <div>
-              <div className="ana-kpi-lbl">İşdə olmayanlar</div>
-              <div className="ana-kpi-num" style={{ color: '#D9534A' }}>25</div>
-              <div className="ana-kpi-sub">Nəfər (20%)</div>
+              <div className="ana-kpi-lbl">{t('anaHome.kpiAbsent')}</div>
+              <div className="ana-kpi-num" style={{ color: '#D9534A' }}>{stats.absent.length}</div>
+              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: stats.pct(stats.absent.length) })}</div>
             </div>
           </div>
         </div>
@@ -147,53 +207,56 @@ export function AnaHomePage() {
         <div className="ana-grid3">
           {/* Donut */}
           <div className="ana-card">
-            <div className="ana-card-h"><span className="t">Bugünkü davamiyyət</span></div>
+            <div className="ana-card-h"><span className="t">{t('anaHome.todayAttendance')}</span></div>
             <div className="ana-donut-wrap">
-              <div className="ana-donut" style={{ background: 'conic-gradient(#22B573 0 75%, #E8A33D 75% 80%, #E9736A 80% 100%)' }}>
+              <div className="ana-donut" style={{ background: `conic-gradient(#22B573 0 ${donutPresent}%, #E8A33D ${donutPresent}% ${donutPresent + donutLate}%, #E9736A ${donutPresent + donutLate}% 100%)` }}>
                 <div className="hole">
-                  <div className="n">75%</div>
-                  <div className="c">İşdə olanlar</div>
+                  <div className="n">{donutPresent}%</div>
+                  <div className="c">{t('anaHome.kpiPresent')}</div>
                 </div>
               </div>
               <div className="ana-legend">
-                <div className="ana-lg"><span className="dot" style={{ background: '#22B573' }}></span><span className="nm">İşdə olanlar</span><span className="vl">96 (75%)</span></div>
-                <div className="ana-lg"><span className="dot" style={{ background: '#E8A33D' }}></span><span className="nm">Gecikənlər</span><span className="vl">7 (5%)</span></div>
-                <div className="ana-lg"><span className="dot" style={{ background: '#E9736A' }}></span><span className="nm">İşdə olmayanlar</span><span className="vl">25 (20%)</span></div>
+                <div className="ana-lg"><span className="dot" style={{ background: '#22B573' }}></span><span className="nm">{t('anaHome.kpiPresent')}</span><span className="vl">{stats.present.length} ({donutPresent}%)</span></div>
+                <div className="ana-lg"><span className="dot" style={{ background: '#E8A33D' }}></span><span className="nm">{t('anaHome.kpiLate')}</span><span className="vl">{stats.late.length} ({donutLate}%)</span></div>
+                <div className="ana-lg"><span className="dot" style={{ background: '#E9736A' }}></span><span className="nm">{t('anaHome.kpiAbsent')}</span><span className="vl">{stats.absent.length} ({donutAbsent}%)</span></div>
               </div>
-              <button className="ana-btn ghost">Ətraflı hesabat →</button>
+              <button className="ana-btn ghost" onClick={() => navigate('/work-hours')}>{t('anaHome.detailedReport')} →</button>
             </div>
           </div>
 
           {/* Son giriş edənlər */}
           <div className="ana-card">
             <div className="ana-card-h">
-              <span className="t">Son giriş edənlər</span>
-              <button className="ana-link">Hamısına bax →</button>
+              <span className="t">{t('anaHome.recentCheckins')}</span>
+              <button className="ana-link" onClick={() => navigate('/work-hours')}>{t('anaHome.viewAll')} →</button>
             </div>
             <div className="ana-thead">
-              <span>Əməkdaş</span><span>Giriş</span><span className="r">Status</span>
+              <span>{t('anaHome.colEmployee')}</span><span>{t('anaHome.colCheckIn')}</span><span className="r">{t('anaHome.colStatus')}</span>
             </div>
-            {RECENT.map((p, i) => (
-              <div className="ana-trow" key={p.name}>
+            {stats.recent.length === 0 && <p className="ana-empty-note">{t('anaHome.noCheckins')}</p>}
+            {stats.recent.map((p, i) => (
+              <div className="ana-trow" key={p.employeeId}>
                 <div className="ana-person">
-                  <span className="ana-av" style={{ background: AV[i % AV.length][0], color: AV[i % AV.length][1] }}>{p.initials}</span>
+                  <span className="ana-av" style={{ background: AV[i % AV.length][0], color: AV[i % AV.length][1] }}>{initials(p.employeeName ?? '—')}</span>
                   <div style={{ minWidth: 0 }}>
-                    <div className="nm">{p.name}</div>
-                    <div className="ps">{p.position}</div>
+                    <div className="nm">{p.employeeName ?? '—'}</div>
+                    <div className="ps">{p.scheduleName ?? '—'}</div>
                   </div>
                 </div>
-                <div className="ana-time">{p.time}</div>
-                <span className={'ana-chip ' + p.chip}>{p.status}</span>
+                <div className="ana-time">{p.checkInUtc ? fmtTime(p.checkInUtc) : '—'}</div>
+                <span className={'ana-chip ' + ((p.lateMinutes ?? 0) > 0 ? 'orange' : 'green')}>
+                  {(p.lateMinutes ?? 0) > 0 ? t('anaHome.statusLate') : t('anaHome.statusPresent')}
+                </span>
               </div>
             ))}
           </div>
 
           {/* Yeni əməkdaş */}
           <div className="ana-card ana-add">
-            <div className="ana-card-h"><span className="t">Yeni əməkdaş əlavə et</span></div>
-            <p className="desc">Əməkdaş məlumatlarını daxil edin və sistemə əlavə edin.</p>
-            <div className="illus">İllüstrasiya</div>
-            <button className="ana-btn">Əməkdaş əlavə et +</button>
+            <div className="ana-card-h"><span className="t">{t('anaHome.addEmployeeTitle')}</span></div>
+            <p className="desc">{t('anaHome.addEmployeeDesc')}</p>
+            <div className="illus">{t('anaHome.addEmployeeIllustration')}</div>
+            <button className="ana-btn" onClick={() => navigate('/people')}>{t('anaHome.addEmployeeBtn')} +</button>
           </div>
         </div>
 
@@ -201,45 +264,50 @@ export function AnaHomePage() {
         <div className="ana-grid4">
           {/* Məzuniyyət müraciətləri */}
           <div className="ana-card ana-col">
-            <div className="ana-card-h"><span className="t">Məzuniyyət müraciətləri</span></div>
+            <div className="ana-card-h"><span className="t">{t('anaHome.leaveRequests')}</span></div>
             <div className="ana-list">
-              {LEAVES.map((l, i) => (
-                <div className="ana-leave" key={l.name}>
-                  <span className="ana-av sm" style={{ background: AV[(i + 2) % AV.length][0], color: AV[(i + 2) % AV.length][1] }}>{l.initials}</span>
+              {leaves.length === 0 && <p className="ana-empty-note">{t('anaHome.noLeaves')}</p>}
+              {leaves.map((l, i) => (
+                <div className="ana-leave" key={l.id}>
+                  <span className="ana-av sm" style={{ background: AV[(i + 2) % AV.length][0], color: AV[(i + 2) % AV.length][1] }}>{initials(l.employeeName)}</span>
                   <div className="ana-leave-mid">
-                    <div className="nm">{l.name}</div>
-                    <div className="ps">{l.type} · {l.date}</div>
+                    <div className="nm">{l.employeeName}</div>
+                    <div className="ps">{t(`workHours.${l.leaveType === 'Vacation' ? 'vacation' : 'dayOffNoun'}`, { defaultValue: l.leaveType })} · {l.startDate} – {l.endDate}</div>
                   </div>
-                  <span className={'ana-chip ' + l.chip}>{l.status}</span>
+                  <span className={'ana-chip ' + leaveChip(l.status)}>{t(`workHours.status.${l.status}`, { defaultValue: l.status })}</span>
                 </div>
               ))}
             </div>
-            <button className="ana-link foot">Hamısına bax →</button>
+            <button className="ana-link foot" onClick={() => navigate('/work-hours')}>{t('anaHome.viewAll')} →</button>
           </div>
 
           {/* Bugünkü növbələr */}
           <div className="ana-card ana-col">
-            <div className="ana-card-h"><span className="t">Bugünkü növbələr</span></div>
+            <div className="ana-card-h"><span className="t">{t('anaHome.todayShifts')}</span></div>
             <div className="ana-list">
-              {SHIFTS.map((s) => (
-                <div className="ana-shift" key={s.name}>
-                  <span className="ana-sq" style={{ background: s.tint }}>{svg(ICONS[s.icon], s.color, 20)}</span>
-                  <div className="ana-shift-mid">
-                    <div className="nm">{s.name}</div>
-                    <div className="ps">{s.time}</div>
+              {stats.shifts.length === 0 && <p className="ana-empty-note">{t('anaHome.noShifts')}</p>}
+              {stats.shifts.map((s) => {
+                const ic = shiftIcon(s.startH)
+                return (
+                  <div className="ana-shift" key={s.time}>
+                    <span className="ana-sq" style={{ background: shiftTint[ic][0] }}>{svg(ICONS[ic], shiftTint[ic][1], 20)}</span>
+                    <div className="ana-shift-mid">
+                      <div className="nm">{s.name}</div>
+                      <div className="ps">{s.time}</div>
+                    </div>
+                    <span className="ana-shift-cnt">{t('anaHome.peopleCount', { count: s.count })}</span>
                   </div>
-                  <span className="ana-shift-cnt">{s.count}</span>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
           {/* Sürətli əməliyyatlar */}
           <div className="ana-card ana-col">
-            <div className="ana-card-h"><span className="t">Sürətli əməliyyatlar</span></div>
+            <div className="ana-card-h"><span className="t">{t('anaHome.quickActions')}</span></div>
             <div className="ana-list">
               {ACTIONS.map((a) => (
-                <button className="ana-action" key={a.title}>
+                <button className="ana-action" key={a.title} onClick={() => navigate(a.to)}>
                   <span className="ana-sq" style={{ background: a.tint }}>{svg(ICONS[a.icon], a.color, 20)}</span>
                   <div className="ana-action-mid">
                     <div className="nm">{a.title}</div>
@@ -253,16 +321,18 @@ export function AnaHomePage() {
 
           {/* Bu həftəlik statistika */}
           <div className="ana-card ana-col">
-            <div className="ana-card-h"><span className="t">Bu həftəlik statistika</span></div>
+            <div className="ana-card-h"><span className="t">{t('anaHome.weeklyStats')}</span></div>
             <div className="ana-chart">
-              <div className="ana-yaxis"><span>150</span><span>100</span><span>50</span><span>0</span></div>
+              <div className="ana-yaxis">
+                <span>{weekMax}</span><span>{Math.round(weekMax * 2 / 3)}</span><span>{Math.round(weekMax / 3)}</span><span>0</span>
+              </div>
               <div className="ana-bars">
-                {WEEK.map((w) => (
-                  <div className="ana-bar-col" key={w.d}>
+                {weekBars.map((w) => (
+                  <div className="ana-bar-col" key={w.label}>
                     <div className="ana-bar-track">
-                      <div className="ana-bar" style={{ height: (w.v / 150 * 100) + '%', background: w.dim ? '#E9E7F9' : '#6C5CE7' }}></div>
+                      <div className="ana-bar" style={{ height: (w.value / weekMax * 100) + '%', background: w.dim ? '#E9E7F9' : '#6C5CE7' }} title={String(w.value)}></div>
                     </div>
-                    <span className="ana-bar-lbl">{w.d}</span>
+                    <span className="ana-bar-lbl">{w.label}</span>
                   </div>
                 ))}
               </div>

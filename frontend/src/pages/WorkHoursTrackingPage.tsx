@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
@@ -14,42 +14,23 @@ import './monthly-hours.css'
    YALNIZ real backend datası (/api/reports/work-hours/monthly, projectx_dev).
    Mok/demo YOXDUR. "Tab. №" sütunu işçinin ExternalId-ni göstərir.
    ═══════════════════════════════════════════════════════════════ */
-interface MhShift { code: string; label: string; hours: number; pill: string }
-const MH_CODES: MhShift[] = [
-  { code: '8', label: '8 saatlıq iş günü', hours: 8, pill: 'cw' },
-  { code: '9', label: '9 saatlıq iş günü', hours: 9, pill: 'cw' },
-  { code: '11', label: '11 saatlıq növbə', hours: 11, pill: 'cw' },
-  { code: '7', label: 'Qısaldılmış iş günü', hours: 7, pill: 'cw' },
-  { code: '12', label: '12 saatlıq növbə', hours: 12, pill: 'c12' },
-  { code: '3', label: '3 saatlıq / yarımnövbə', hours: 3, pill: 'c3' },
-  { code: 'i', label: 'İstirahət günü', hours: 0, pill: 'ci' },
-  { code: 'm', label: 'Məzuniyyət', hours: 0, pill: 'cm' },
-  { code: 'x', label: 'İşə çıxmayıb', hours: 0, pill: 'cx' },
-  { code: 'b', label: 'Bayram günü', hours: 0, pill: 'cb' },
-]
-const MH_MAP: Record<string, MhShift> = {}
-MH_CODES.forEach((c) => { MH_MAP[c.code] = c })
-const MH_SW: Record<string, { bg: string; fg: string }> = {
-  cw: { bg: 'var(--wf-mh-cw)', fg: 'var(--wf-mh-cwT)' }, c3: { bg: 'var(--wf-mh-c3)', fg: 'var(--wf-mh-c3T)' },
-  c12: { bg: 'var(--wf-mh-c12)', fg: 'var(--wf-mh-c12T)' }, cx: { bg: 'var(--wf-mh-cx)', fg: 'var(--wf-mh-cxT)' },
-  ci: { bg: 'var(--wf-mh-ci)', fg: 'var(--wf-mh-ciT)' }, cm: { bg: 'var(--wf-mh-cm)', fg: 'var(--wf-mh-cmT)' },
-  cb: { bg: 'var(--wf-mh-cb)', fg: 'var(--wf-mh-cbT)' },
-}
-
 interface MhDayCell { hours: number; criterionKey: string }
 interface MhEmp { no: string; externalId: string; fullname: string; position: string; department: string; days: Record<string, MhDayCell>; totalDays: string; totalHours: string; extraDays: string; extraHours: string }
-const MH_DEFAULT_MONTH = '2026-05'
+// Cari ay (YYYY-MM) — tabel həmişə bu ayla açılır.
+const MH_DEFAULT_MONTH = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') })()
 interface MhApiResponse { month: string; employees: MhEmp[] }
 
 /* ─── Davamiyyət kriteriyaları (attendance criteria, GET /api/attendance-criteria) ─── */
 interface AttCriterion { key: string; label: string; letter: string; color: string; enabled: boolean; sortOrder: number; displayMode: string }
 const MH_CRIT_DEFAULTS: AttCriterion[] = [
-  { key: 'normal', label: 'Normal', letter: '', color: '#2E7D32', enabled: true, sortOrder: 0, displayMode: 'hours' },
-  { key: 'undertime', label: 'Natamam', letter: 'x', color: '#E8A33D', enabled: true, sortOrder: 1, displayMode: 'hours' },
+  { key: 'normal', label: 'Tam iş günü', letter: '', color: '#2E7D32', enabled: true, sortOrder: 0, displayMode: 'hours' },
+  { key: 'undertime', label: 'Natamam iş günü', letter: 'N', color: '#E8A33D', enabled: true, sortOrder: 1, displayMode: 'hours' },
   { key: 'overtime', label: 'Əlavə iş', letter: '', color: '#2563EB', enabled: true, sortOrder: 2, displayMode: 'hours' },
   { key: 'late', label: 'Gecikmə', letter: '', color: '#EA6A47', enabled: true, sortOrder: 3, displayMode: 'hours' },
   { key: 'early_leave', label: 'Erkən çıxış', letter: '', color: '#8B5CF6', enabled: true, sortOrder: 4, displayMode: 'hours' },
-  { key: 'dayoff', label: 'İstirahət', letter: 'İ', color: '#94A3B8', enabled: true, sortOrder: 5, displayMode: 'letter' },
+  { key: 'dayoff', label: 'İstirahət günü', letter: 'İ', color: '#94A3B8', enabled: true, sortOrder: 5, displayMode: 'letter' },
+  { key: 'onleave', label: 'Məzuniyyət', letter: 'M', color: '#6366F1', enabled: true, sortOrder: 6, displayMode: 'letter' },
+  { key: 'absent', label: 'İşə çıxmayıb', letter: 'X', color: '#DC2626', enabled: true, sortOrder: 7, displayMode: 'letter' },
 ]
 // Subtle tinted background from a #rrggbb hex (append alpha).
 function mhTint(hex: string): string { return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex + '22' : 'transparent' }
@@ -58,13 +39,19 @@ function mhFmtHours(h: number): string { const n = Math.round(h * 100) / 100; re
 
 function mhDaysInMonth(ym: string): number { const p = ym.split('-'); return new Date(+p[0], +p[1], 0).getDate() }
 function mhWeekend(ym: string, day: number): boolean { const p = ym.split('-'); const dow = new Date(+p[0], +p[1] - 1, day).getDay(); return dow === 0 || dow === 6 }
-function mhAzMonth(ym: string): string { const names = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun', 'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr']; const p = ym.split('-'); return names[+p[1] - 1] + ' ' + p[0] }
+// Ay adı cari interfeys dilində (az/en/ru) — Intl vasitəsilə.
+function mhMonthLabel(ym: string, lang: string): string {
+  const p = ym.split('-')
+  try {
+    const s = new Date(+p[0], +p[1] - 1, 1).toLocaleDateString(lang, { month: 'long', year: 'numeric' })
+    return s.charAt(0).toUpperCase() + s.slice(1)
+  } catch { return ym }
+}
 
-function MonthlyHoursTable() {
+function MonthlyHoursTable({ month, employeeNo }: { month: string; employeeNo?: string | null }) {
+  const { t, i18n } = useTranslation()
   const { token } = useAuth()
-  const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
-  const [mhDept, setMhDept] = useState('')
-  const [mhName, setMhName] = useState('')
+  const mhMonth = month
   const [mhData, setMhData] = useState<MhEmp[]>([])
   const [mhLoading, setMhLoading] = useState(true)
   const [mhError, setMhError] = useState('')
@@ -100,70 +87,59 @@ function MonthlyHoursTable() {
       .catch(() => {
         if (cancelled) return
         setMhData([])
-        setMhError('Məlumat yüklənmədi — backend əlçatmır. Yenidən cəhd edin.')
+        setMhError(t('workHours.tabel.loadError'))
       })
       .finally(() => { if (!cancelled) setMhLoading(false) })
     return () => { cancelled = true }
-  }, [mhMonth, token])
+  }, [mhMonth, token, t])
 
   const nDays = mhDaysInMonth(mhMonth)
-  const nameLc = mhName.toLowerCase().trim()
-  const source = mhData
-  const rows = source.filter((e) => (!mhDept || e.department === mhDept) && (!nameLc || e.fullname.toLowerCase().indexOf(nameLc) >= 0 || (e.no || '').toLowerCase().indexOf(nameLc) >= 0 || (e.externalId || '').toLowerCase().indexOf(nameLc) >= 0))
-  const depts = Array.from(new Set(source.map((e) => e.department).filter(Boolean))).sort()
+  const rows = mhData.filter((e) => !employeeNo || e.no === employeeNo)
   const sumHours = rows.reduce((s, e) => s + (parseInt(e.totalHours, 10) || 0), 0)
   const dayNums = Array.from({ length: nDays }, (_, k) => k + 1)
+  // Defaults + server siyahısı: serverdə çatışmayan açar (məs. absent) default-dan gəlir, boş xana qalmır.
   const critMap = new Map<string, AttCriterion>()
+  MH_CRIT_DEFAULTS.forEach((c) => critMap.set(c.key, c))
   mhCrit.forEach((c) => critMap.set(c.key, c))
+  const critLegend = Array.from(critMap.values()).filter((c) => c.enabled).sort((a, b) => a.sortOrder - b.sortOrder)
+  // Ad interfeys dilində — tanınmayan açar üçün DB-dəki label göstərilir.
+  const critLabel = (c: AttCriterion) => t(`workHours.tabel.crit.${c.key}`, { defaultValue: c.label })
 
   return (
     <div className="wf-mh-root">
-      <div className="wf-mh-filter">
-        <input className="wf-mh-input" type="month" value={mhMonth} onChange={(e) => setMhMonth(e.target.value)} title="Dövr" style={{ width: 150 }} />
-        <select className="wf-mh-input" value={mhDept} onChange={(e) => setMhDept(e.target.value)}>
-          <option value="">Bütün şöbələr</option>
-          {depts.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <input className="wf-mh-input" type="text" placeholder="İşçi axtar — ad və ya tabel №" value={mhName} onChange={(e) => setMhName(e.target.value)} style={{ minWidth: 240 }} />
-        <div className="wf-mh-spacer" style={{ display: 'flex', gap: 8 }}>
-          <button className="wf-mh-btn excel" onClick={() => window.alert('Excel export — backend inteqrasiyası növbəti mərhələdə')}>⬇ Excel</button>
-          <button className="wf-mh-btn pdf" onClick={() => window.print()}>⬇ PDF</button>
-        </div>
-      </div>
-
       <div className="wf-mh-panel">
         <div className="wf-mh-caption">
           <div>
-            <div className="t1">İş vaxtının aylıq uçotu — Tabel</div>
-            <div className="t2">{mhAzMonth(mhMonth)} · {mhDept || 'Bütün şöbələr'} · kodlar: iş saatı / i / m / x / b</div>
+            <div className="t1">{t('workHours.tabel.title')}</div>
+            <div className="t2">{mhMonthLabel(mhMonth, i18n.language)} · {t('workHours.tabel.colorsNote')}</div>
           </div>
           <div className="wf-mh-summary">
-            <div><div className="lbl">İşçi sayı</div><div className="val">{rows.length}</div></div>
-            <div><div className="lbl">Cəmi saat</div><div className="val acc">{sumHours}</div></div>
+            <div><div className="lbl">{t('workHours.tabel.employeeCount')}</div><div className="val">{rows.length}</div></div>
+            <div><div className="lbl">{t('workHours.tabel.totalHours')}</div><div className="val acc">{sumHours}</div></div>
           </div>
         </div>
 
         <div className="wf-mh-scroll">
           {mhLoading ? (
-            <div className="wf-mh-empty">Yüklənir…</div>
+            <div className="wf-mh-empty">{t('workHours.tabel.loading')}</div>
           ) : mhError ? (
             <div className="wf-mh-empty">{mhError}</div>
           ) : rows.length === 0 ? (
-            <div className="wf-mh-empty">Məlumat yoxdur.</div>
+            <div className="wf-mh-empty">{t('workHours.tabel.noData')}</div>
           ) : (
             <table className="wf-mh-table">
               <thead>
                 <tr>
-                  <th className="stick wf-mh-c-ss" rowSpan={2}>S/S</th>
-                  <th className="stick wf-mh-c-no" rowSpan={2}>Tab. №</th>
-                  <th className="stick wf-mh-c-name" rowSpan={2}>Soyadı, adı, atasının adı</th>
-                  <th className="wf-mh-c-pos" rowSpan={2}>Vəzifəsi</th>
-                  <th className="wf-mh-c-dept" rowSpan={2}>Struktur bölməsi</th>
-                  <th colSpan={nDays}>Ayın günləri</th>
-                  <th className="wf-mh-total" rowSpan={2}>Cəmi gün</th>
-                  <th className="wf-mh-total" rowSpan={2}>Cəmi saat</th>
-                  <th className="wf-mh-total" rowSpan={2}>Əlavə gün</th>
-                  <th className="wf-mh-total" rowSpan={2}>Əlavə saat</th>
+                  <th className="stick wf-mh-c-ss" rowSpan={2}>{t('workHours.tabel.colSS')}</th>
+                  <th className="stick wf-mh-c-no" rowSpan={2}>{t('workHours.tabel.colTabNo')}</th>
+                  <th className="stick wf-mh-c-name" rowSpan={2}>{t('workHours.tabel.colFullName')}</th>
+                  <th className="wf-mh-c-pos" rowSpan={2}>{t('workHours.tabel.colPosition')}</th>
+                  <th className="wf-mh-c-dept" rowSpan={2}>{t('workHours.tabel.colDept')}</th>
+                  <th colSpan={nDays}>{t('workHours.tabel.colDays')}</th>
+                  <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colTotalDays')}</th>
+                  <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colTotalHours')}</th>
+                  <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colExtraDays')}</th>
+                  <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colExtraHours')}</th>
                 </tr>
                 <tr>
                   {dayNums.map((d) => <th key={d} className={'wf-mh-day' + (mhWeekend(mhMonth, d) ? ' we' : '')}>{d}</th>)}
@@ -189,7 +165,7 @@ function MonthlyHoursTable() {
                       const content = mode === 'hours'
                         ? (hrs > 0 ? mhFmtHours(hrs) : (crit ? crit.letter : ''))
                         : (crit ? crit.letter : (hrs > 0 ? mhFmtHours(hrs) : ''))
-                      const title = crit ? cell.criterionKey + ' — ' + crit.label : cell.criterionKey
+                      const title = crit ? critLabel(crit) : cell.criterionKey
                       const style = crit ? { color: crit.color, background: mhTint(crit.color), fontWeight: 700 as const } : undefined
                       return (
                         <td key={dd} className={'wf-mh-day' + we}>
@@ -209,11 +185,11 @@ function MonthlyHoursTable() {
         </div>
 
         <div className="wf-mh-legend">
-          <span className="lg-lbl">Kodların izahı:</span>
-          {MH_CODES.map((c) => (
-            <span key={c.code} className="wf-mh-chip">
-              <span className="sw" style={{ background: MH_SW[c.pill].bg, color: MH_SW[c.pill].fg }}>{c.code}</span>
-              {c.label}
+          <span className="lg-lbl">{t('workHours.tabel.legendTitle')}</span>
+          {critLegend.map((c) => (
+            <span key={c.key} className="wf-mh-chip">
+              <span className="sw" style={{ background: mhTint(c.color), color: c.color, fontWeight: 700 }}>{c.letter || t('workHours.tabel.legendHoursChip')}</span>
+              {critLabel(c)}{c.displayMode === 'hours' ? ` (${t('workHours.tabel.legendHours')})` : ''}
             </span>
           ))}
         </div>
@@ -228,6 +204,14 @@ interface Employee {
   firstName: string
   lastName: string
   employeeNo: string | null
+  department?: { id: string; name: string } | null
+}
+
+interface WhDept {
+  id: string
+  name: string
+  parentId?: string | null
+  sortOrder: number
 }
 
 
@@ -271,7 +255,7 @@ interface SelfServiceRequestRow {
   reviewComment: string | null
   createdUtc: string
 }
-type SubTab = 'all' | 'absent' | 'late' | 'early' | 'overtime' | 'incomplete'
+type SubTab = 'all' | 'absent' | 'late' | 'early' | 'overtime'
 
 interface PeriodRow {
   employeeId: string
@@ -407,16 +391,6 @@ function maskHHMM(input: string): string {
   return `${digits.slice(0, 2)}:${digits.slice(2)}`
 }
 
-/**
- * Длина смены в часах от HH:MM до HH:MM. Если конец раньше начала — считаем
- * ночную смену (через полночь).
- */
-function isEarlyCheckout(row: PeriodRow): boolean {
-  if (!row.checkOutUtc || !row.shiftEnd) return false
-  const outHHMM = new Date(row.checkOutUtc).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
-  const endHHMM = row.shiftEnd.slice(0, 5)
-  return outHHMM < endHHMM
-}
 
 function rowMatchesSubTab(r: PeriodRow, st: SubTab): boolean {
   if (r.isDayOff) return st === 'all'
@@ -425,7 +399,6 @@ function rowMatchesSubTab(r: PeriodRow, st: SubTab): boolean {
     case 'late': return (r.lateMinutes ?? 0) > 0
     case 'early': return (r.earlyLeaveMinutes ?? 0) > 0
     case 'overtime': return r.overtimeHours > 0
-    case 'incomplete': return !!r.checkInUtc && !r.checkOutUtc
     default: return true
   }
 }
@@ -450,6 +423,13 @@ export function WorkHoursTrackingPage() {
   // Filters
   const [employees, setEmployees] = useState<Employee[]>([])
   const [filterEmployee, setFilterEmployee] = useState('')
+  // Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела.
+  const [deptTree, setDeptTree] = useState<WhDept[]>([])
+  const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
+  const [empPickerOpen, setEmpPickerOpen] = useState(false)
+  const [pickerDeptId, setPickerDeptId] = useState<string | null>(null)
+  const [pickerDeptSearch, setPickerDeptSearch] = useState('')
+  const [pickerEmpSearch, setPickerEmpSearch] = useState('')
   const [filterFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10)
   })
@@ -494,6 +474,8 @@ export function WorkHoursTrackingPage() {
   const [leavesLoading, setLeavesLoading] = useState(false)
   const [selfServiceReqs, setSelfServiceReqs] = useState<SelfServiceRequestRow[]>([])
   const [selfServiceLoading, setSelfServiceLoading] = useState(false)
+  // Статусные табы секции "Заявки самообслуживания": Pending | Approved | Rejected.
+  const [ssTab, setSsTab] = useState<'Pending' | 'Approved' | 'Rejected'>('Pending')
   const [leaveModal, setLeaveModal] = useState<'create' | null>(null)
   const [leaveSaving, setLeaveSaving] = useState(false)
   const [leaveForm, setLeaveForm] = useState<LeaveForm>({
@@ -514,6 +496,17 @@ export function WorkHoursTrackingPage() {
     if (!token || !emailReportTo.trim()) return
     setEmailReportSending(true)
     try {
+      if (tab === 'monthlyHours') {
+        // Табель — отдельный эндпоинт: месяц + получатель.
+        await apiRequest('/api/reports/work-hours/monthly/send-email', {
+          method: 'POST', token,
+          body: JSON.stringify({ to: emailReportTo.trim(), month: mhMonth }),
+        })
+        alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
+        setEmailReportModal(false)
+        setEmailReportTo('')
+        return
+      }
       let from = filterDailyDate
       let to = filterDailyDate
       if (tab === 'weekly') { const r = weekRange(weeklyAnchor); from = r.from; to = r.to }
@@ -602,6 +595,8 @@ useEffect(() => {
   const loadMeta = async () => {
     const emps = await apiRequest<Employee[]>('/api/employees', authOpts).catch(() => [] as Employee[])
     setEmployees(emps)
+    const depts = await apiRequest<WhDept[]>('/api/departments/tree', authOpts).catch(() => [] as WhDept[])
+    setDeptTree(depts)
   }
 
   function openCorrection(d: DailySummary) {
@@ -975,19 +970,15 @@ useEffect(() => {
           {(() => {
             const showSub = tab === 'daily' || tab === 'weekly' || tab === 'monthly'
             const subTabCounts: Record<SubTab, number> = (() => {
-              if (!showSub) return { all: 0, absent: 0, late: 0, early: 0, overtime: 0, incomplete: 0 }
+              if (!showSub) return { all: 0, absent: 0, late: 0, early: 0, overtime: 0 }
+              // Sayğaclar cədvəl filtri ilə EYNİ şərtlərdən istifadə edir — yoxsa "1" göstərib boş cədvəl açılır.
               if (tab === 'daily') {
                 return {
                   all: daily.length,
-                  absent: daily.filter(d => !d.checkInUtc).length,
-                  late: daily.filter(d => (d.lateMinutes ?? 0) > 0).length,
-                  early: daily.filter(d => (d.earlyLeaveMinutes ?? 0) > 0).length,
-                  overtime: daily.filter(d => {
-                    if (!d.checkInUtc || !d.shiftStart || !d.shiftEnd) return false
-                    const exp = computeShiftHours(d.shiftStart.slice(0, 5), d.shiftEnd.slice(0, 5))
-                    return exp !== null && d.totalHours > exp
-                  }).length,
-                  incomplete: daily.filter(d => !!d.checkInUtc).length,
+                  absent: daily.filter(d => !d.isDayOff && d.isAbsent).length,
+                  late: daily.filter(d => !d.isDayOff && (d.lateMinutes ?? 0) > 0).length,
+                  early: daily.filter(d => !d.isDayOff && (d.earlyLeaveMinutes ?? 0) > 0).length,
+                  overtime: daily.filter(d => !d.isDayOff && d.overtimeHours > 0).length,
                 }
               }
               const empMap = new Map<string, PeriodRow[]>()
@@ -998,15 +989,10 @@ useEffect(() => {
               const emps = Array.from(empMap.values())
               return {
                 all: emps.length,
-                absent: emps.filter(rows => rows.some(r => !r.checkInUtc)).length,
-                late: emps.filter(rows => rows.some(r => (r.lateMinutes ?? 0) > 0)).length,
-                early: emps.filter(rows => rows.some(r => isEarlyCheckout(r))).length,
-                overtime: emps.filter(rows => rows.some(r => {
-                  if (!r.checkInUtc || !r.shiftStart || !r.shiftEnd) return false
-                  const exp = computeShiftHours(r.shiftStart.slice(0, 5), r.shiftEnd.slice(0, 5))
-                  return exp !== null && r.totalHours > exp
-                })).length,
-                incomplete: emps.filter(rows => rows.some(r => !!r.checkInUtc)).length,
+                absent: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'absent'))).length,
+                late: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'late'))).length,
+                early: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'early'))).length,
+                overtime: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'overtime'))).length,
               }
             })()
             const subLabels: Record<SubTab, string> = {
@@ -1015,7 +1001,6 @@ useEffect(() => {
               late: t('workHours.subTabLate'),
               early: t('workHours.subTabEarly'),
               overtime: t('workHours.subTabOvertime'),
-              incomplete: t('workHours.subTabIncomplete'),
             }
             const tabLabels: Record<PageTab, string> = {
               daily: t('workHours.tabDaily'),
@@ -1023,7 +1008,7 @@ useEffect(() => {
               monthly: t('workHours.tabMonthly'),
               schedules: t('workHours.tabSchedules'),
               leaves: t('workHours.tabLeaves'),
-              monthlyHours: 'Monthly Hours',
+              monthlyHours: t('workHours.tabTabel'),
             }
             const btnBase = 'flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap'
             const btnActive = 'bg-primary text-white shadow-sm'
@@ -1049,7 +1034,7 @@ useEffect(() => {
                   <>
                     <div className="h-px bg-black/[0.06] mx-1 my-1" />
                     <div className="flex gap-1">
-                      {(['all', 'absent', 'late', 'early', 'overtime', 'incomplete'] as SubTab[]).map(st => (
+                      {(['all', 'absent', 'late', 'early', 'overtime'] as SubTab[]).map(st => (
                         <button
                           key={st}
                           type="button"
@@ -1074,16 +1059,19 @@ useEffect(() => {
           <div className="bg-surface rounded-2xl p-5 shadow-sm flex flex-wrap gap-4 items-end">
             <div className="space-y-1 flex-1 min-w-[160px]">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.employee')}</label>
-              <select
-                value={filterEmployee}
-                onChange={(e) => setFilterEmployee(e.target.value)}
-                className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              <button
+                type="button"
+                onClick={() => { setPickerDeptSearch(''); setPickerEmpSearch(''); setEmpPickerOpen(true) }}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2"
               >
-                <option value="">{t('workHours.allEmployees')}</option>
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
-                ))}
-              </select>
+                <span className="truncate">
+                  {(() => {
+                    const sel = employees.find((e) => e.id === filterEmployee)
+                    return sel ? `${sel.firstName} ${sel.lastName}` : t('workHours.allEmployees')
+                  })()}
+                </span>
+                <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
+              </button>
             </div>
 
             {tab === 'daily' && (
@@ -1111,6 +1099,30 @@ useEffect(() => {
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.month')}</label>
                 <input type="month" value={monthlyAnchor} onChange={(e) => setMonthlyAnchor(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
+              </div>
+            )}
+
+            {tab === 'monthlyHours' && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.month')}</label>
+                <input type="month" value={mhMonth} onChange={(e) => setMhMonth(e.target.value)}
+                  className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
+              </div>
+            )}
+
+            {tab === 'monthlyHours' && (
+              <div className="flex items-end gap-2 flex-wrap">
+                <Button type="button" icon="send" variant="outline" onClick={() => setEmailReportModal(true)}>
+                  {t('workHours.sendReport')}
+                </Button>
+                <Button type="button" icon="table_view" variant="outline" disabled={!!exporting}
+                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/excel?month=${mhMonth}`, 'excel')}>
+                  {exporting === 'excel' ? t('workHours.exporting') : t('workHours.excel')}
+                </Button>
+                <Button type="button" icon="picture_as_pdf" variant="outline" disabled={!!exporting}
+                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/pdf?month=${mhMonth}`, 'pdf')}>
+                  {exporting === 'pdf' ? t('workHours.exporting') : t('workHours.pdf')}
+                </Button>
               </div>
             )}
 
@@ -1158,6 +1170,110 @@ useEffect(() => {
               </div>
             )}
           </div>
+          )}
+
+          {/* Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела */}
+          {empPickerOpen && (
+            <Modal isOpen title={t('workHours.pickEmployeeTitle')} onClose={() => setEmpPickerOpen(false)}>
+              {(() => {
+                const closePick = (id: string) => { setFilterEmployee(id); setEmpPickerOpen(false) }
+                // Множество отделов-потомков выбранного (включая его самого) — сотрудники подотделов тоже видны.
+                const descendants = (rootId: string): Set<string> => {
+                  const set = new Set<string>([rootId])
+                  let grew = true
+                  while (grew) {
+                    grew = false
+                    for (const d of deptTree) {
+                      if (d.parentId && set.has(d.parentId) && !set.has(d.id)) { set.add(d.id); grew = true }
+                    }
+                  }
+                  return set
+                }
+                const deptScope = pickerDeptId ? descendants(pickerDeptId) : null
+                const empQ = pickerEmpSearch.trim().toLowerCase()
+                const pickerEmps = employees.filter((e) => {
+                  if (deptScope && !(e.department && deptScope.has(e.department.id))) return false
+                  if (empQ && !(`${e.firstName} ${e.lastName}`.toLowerCase().includes(empQ) || (e.employeeNo ?? '').toLowerCase().includes(empQ))) return false
+                  return true
+                })
+                const deptQ = pickerDeptSearch.trim().toLowerCase()
+                const deptBtnCls = (active: boolean) =>
+                  `w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`
+                const renderDept = (parentId: string | null, depth: number): ReactNode[] =>
+                  deptTree
+                    .filter((d) => (d.parentId ?? null) === parentId)
+                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+                    .flatMap((d) => [
+                      <button key={d.id} type="button" onClick={() => setPickerDeptId(d.id)} className={deptBtnCls(pickerDeptId === d.id)} style={{ paddingLeft: 12 + depth * 16 }}>
+                        {d.name}
+                      </button>,
+                      ...renderDept(d.id, depth + 1),
+                    ])
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Departments tree */}
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={pickerDeptSearch}
+                        onChange={(e) => setPickerDeptSearch(e.target.value)}
+                        placeholder={t('workHours.deptSearchPlaceholder')}
+                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+                        <button type="button" onClick={() => setPickerDeptId(null)} className={deptBtnCls(pickerDeptId === null)}>
+                          {t('people.allDepartments')}
+                        </button>
+                        {deptQ
+                          ? deptTree
+                              .filter((d) => d.name.toLowerCase().includes(deptQ))
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map((d) => (
+                                <button key={d.id} type="button" onClick={() => setPickerDeptId(d.id)} className={deptBtnCls(pickerDeptId === d.id)}>
+                                  {d.name}
+                                </button>
+                              ))
+                          : renderDept(null, 0)}
+                      </div>
+                    </div>
+                    {/* Employees of selected department */}
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={pickerEmpSearch}
+                        onChange={(e) => setPickerEmpSearch(e.target.value)}
+                        placeholder={t('workHours.empSearchPlaceholder')}
+                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => closePick('')}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterEmployee === '' ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
+                        >
+                          {t('workHours.allEmployees')}
+                        </button>
+                        {pickerEmps.length === 0 ? (
+                          <p className="px-3 py-4 text-xs text-text-light">{t('workHours.noEmployeesInDept')}</p>
+                        ) : (
+                          pickerEmps.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onClick={() => closePick(e.id)}
+                              className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${filterEmployee === e.id ? 'bg-primary text-white' : 'hover:bg-background-light'}`}
+                            >
+                              <span className={`block text-sm font-bold truncate ${filterEmployee === e.id ? 'text-white' : 'text-text-dark'}`}>{e.firstName} {e.lastName}</span>
+                              {e.department && <span className={`block text-[10px] truncate ${filterEmployee === e.id ? 'text-white/80' : 'text-text-light'}`}>{e.department.name}</span>}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+            </Modal>
           )}
 
           {/* Schedules — company work time templates */}
@@ -1256,7 +1372,7 @@ useEffect(() => {
           )}
 
           {/* Daily Report — one day, only employees with assigned schedule */}
-          {tab === 'monthlyHours' && <MonthlyHoursTable />}
+          {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} employeeNo={employees.find((e) => e.id === filterEmployee)?.employeeNo ?? null} />}
 
           {tab === 'daily' && (() => {
             const filteredDaily = daily.filter(d => {
@@ -1266,7 +1382,6 @@ useEffect(() => {
                 case 'late': return (d.lateMinutes ?? 0) > 0
                 case 'early': return (d.earlyLeaveMinutes ?? 0) > 0
                 case 'overtime': return d.overtimeHours > 0
-                case 'incomplete': return !!d.checkInUtc && !d.checkOutUtc
                 default: return true
               }
             })
@@ -1303,9 +1418,9 @@ useEffect(() => {
                         <th className="px-5 py-3 text-left">{t('workHours.checkOut')}</th>
                         <th className="px-5 py-3 text-right">{t('workHours.actual')}</th>
                         <th className="px-5 py-3 text-right">{t('workHours.norm')}</th>
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.late')}</th>}
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.early')}</th>}
-                        {subTab !== 'incomplete' && <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>}
+                        <th className="px-5 py-3 text-right">{t('workHours.late')}</th>
+                        <th className="px-5 py-3 text-right">{t('workHours.early')}</th>
+                        <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>
                         <th className="px-5 py-3 text-right">{t('common.edit')}</th>
                       </tr>
                     </thead>
@@ -1329,9 +1444,9 @@ useEffect(() => {
                           <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right font-mono text-text-dark">{d.totalHours > 0 ? formatHM(d.totalHours) : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>
-                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                          {subTab !== 'incomplete' && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
+                          <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                           </td>
@@ -1416,9 +1531,9 @@ useEffect(() => {
                                 <th className="px-5 py-2 text-left">{t('workHours.checkOut')}</th>
                                 <th className="px-5 py-2 text-right">{t('workHours.actual')}</th>
                                 <th className="px-5 py-2 text-right">{t('workHours.norm')}</th>
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.late')}</th>}
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.early')}</th>}
-                                {subTab !== 'incomplete' && <th className="px-5 py-2 text-right">{t('workHours.ot')}</th>}
+                                <th className="px-5 py-2 text-right">{t('workHours.late')}</th>
+                                <th className="px-5 py-2 text-right">{t('workHours.early')}</th>
+                                <th className="px-5 py-2 text-right">{t('workHours.ot')}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1442,9 +1557,9 @@ useEffect(() => {
                                   </td>
                                   <td className="px-5 py-2 text-right font-mono text-text-dark">{r.totalHours > 0 ? formatHM(r.totalHours) : <span className="text-text-light">—</span>}</td>
                                   <td className="px-5 py-2 text-right font-mono text-text-light">{r.normHours > 0 ? formatHM(r.normHours) : '—'}</td>
-                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{r.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{r.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>}
-                                  {subTab !== 'incomplete' && <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
+                                  <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{r.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{r.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1560,14 +1675,34 @@ useEffect(() => {
                   <p className="text-xs text-text-light">{t('workHours.selfServiceRequestsDesc')}</p>
                 </div>
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-border">
-                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.requestsCount', { count: selfServiceReqs.length })}</p>
+                  {(() => {
+                    const ssFiltered = selfServiceReqs.filter((r) => r.status === ssTab)
+                    const ssCount = (s: 'Pending' | 'Approved' | 'Rejected') => selfServiceReqs.filter((r) => r.status === s).length
+                    return (
+                      <>
+                  <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex gap-1 bg-background-light rounded-xl p-1">
+                      {(['Pending', 'Approved', 'Rejected'] as const).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setSsTab(s)}
+                          className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${ssTab === s ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}
+                        >
+                          {t(`workHours.status.${s}`, { defaultValue: s })}
+                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md leading-none ${ssTab === s ? 'bg-white/20' : 'bg-surface text-text-muted'}`}>
+                            {ssCount(s)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.requestsCount', { count: ssFiltered.length })}</p>
                   </div>
                   {selfServiceLoading ? (
                     <div className="flex items-center justify-center py-16">
                       <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
                     </div>
-                  ) : selfServiceReqs.length === 0 ? (
+                  ) : ssFiltered.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                       <span className="material-symbols-outlined text-4xl">inbox</span>
                       <p className="text-sm">{t('workHours.noSelfServiceRequests')}</p>
@@ -1587,7 +1722,7 @@ useEffect(() => {
                           </tr>
                         </thead>
                         <tbody>
-                          {selfServiceReqs.map((req) => (
+                          {ssFiltered.map((req) => (
                             <tr key={req.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                               <td className="px-5 py-3 font-bold text-text-dark">{req.employeeName}</td>
                               <td className="px-5 py-3">
@@ -1633,6 +1768,9 @@ useEffect(() => {
                       </table>
                     </div>
                   )}
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             </div>
@@ -1829,6 +1967,16 @@ useEffect(() => {
                 readOnly
                 className="opacity-70 cursor-not-allowed"
               />
+              {(() => {
+                const s = scheduleForm.shiftStart, e = scheduleForm.shiftEnd
+                const re = /^([01][0-9]|2[0-3]):([0-5][0-9])$/
+                return re.test(s) && re.test(e) && e <= s ? (
+                  <p className="text-[10px] font-bold text-indigo-600 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">dark_mode</span>
+                    {t('workHours.nightShiftHint')}
+                  </p>
+                ) : null
+              })()}
             </div>
           )}
           {scheduleForm.type === 'Flexible' && (
@@ -1930,6 +2078,15 @@ useEffect(() => {
                       className="w-full rounded-lg bg-white border border-border px-2 py-1.5 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                     />
                   </div>
+                  {(() => {
+                    const re = /^([01][0-9]|2[0-3]):([0-5][0-9])$/
+                    return re.test(sh.shiftStart) && re.test(sh.shiftEnd) && sh.shiftEnd < sh.shiftStart ? (
+                      <p className="text-[10px] font-bold text-indigo-600 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">dark_mode</span>
+                        {t('workHours.nightShiftHint')}
+                      </p>
+                    ) : null
+                  })()}
                 </div>
               ))}
             </div>

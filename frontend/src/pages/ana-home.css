@@ -133,3 +133,6 @@
   .ana-root .ana-grid3{grid-template-columns:1fr}
   .ana-root .ana-grid4{grid-template-columns:repeat(2,1fr)}
 }
+
+/* Boş hal qeydi (real datada siyahı boş olduqda) */
+.ana-root .ana-empty-note{font-size:12px;color:#8B8CA7;padding:14px 4px;text-align:center}

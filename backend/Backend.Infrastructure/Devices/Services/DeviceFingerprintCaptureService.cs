@@ -33,6 +33,16 @@ public sealed class DeviceFingerprintCaptureService(
         public string Status { get; set; } = "starting";
         public string? Message { get; set; }
         public Guid? FingerprintId { get; set; }
+        /// <summary>Заведён на устройстве только ради захвата (нет уровня доступа) — убрать после завершения.</summary>
+        public bool TemporaryOnDevice { get; init; }
+    }
+
+    /// <summary>Убрать временно заведённого человека с устройства.</summary>
+    private async Task CleanupTemporaryAsync(Guid deviceId, FpSession session, CancellationToken ct)
+    {
+        if (!session.TemporaryOnDevice) return;
+        try { await syncService.DeletePersonFromDeviceAsync(session.EmployeeNo, deviceId, ct); }
+        catch (Exception ex) { logger.LogWarning(ex, "Cleanup temporary person {EmployeeNo} from device {DeviceId}", session.EmployeeNo, deviceId); }
     }
 
     public async Task<DeviceSyncResult> StartCaptureAsync(Guid deviceId, Guid personId, string personType, int fingerIndex, CancellationToken cancellationToken = default)
@@ -42,6 +52,7 @@ public sealed class DeviceFingerprintCaptureService(
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
         var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var temporaryOnDevice = false;
 
         string employeeNo;
         if (personType == "employee")
@@ -51,8 +62,14 @@ public sealed class DeviceFingerprintCaptureService(
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
-                var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
-                if (!syncRes.Success) return syncRes;
+                // Нет уровня доступа → человека на устройство НЕ пишем вовсе: захват отпечатка
+                // читается со считывателя (в запросе только fingerNo), пользователь там не нужен.
+                temporaryOnDevice = !await dbContext.Set<EmployeeAccessLevel>().AnyAsync(al => al.EmployeeId == personId, cancellationToken);
+                if (!temporaryOnDevice)
+                {
+                    var syncRes = await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken);
+                    if (!syncRes.Success) return syncRes;
+                }
             }
         }
         else if (personType == "gymcustomer")
@@ -89,7 +106,8 @@ public sealed class DeviceFingerprintCaptureService(
             PersonType = personType,
             FingerIndex = fpIndex,
             Status = "capturing",
-            Message = "Приложите палец к считывателю на устройстве..."
+            Message = "Приложите палец к считывателю на устройстве...",
+            TemporaryOnDevice = temporaryOnDevice
         };
         Sessions[deviceId] = session;
 
@@ -108,6 +126,11 @@ public sealed class DeviceFingerprintCaptureService(
                 logger.LogError(ex, "[CaptureFP] Background capture failed");
                 session.Status = "failed";
                 session.Message = ex.Message;
+            }
+            finally
+            {
+                // Захват окончен (успешно или нет) — временную запись с устройства убираем.
+                await CleanupTemporaryAsync(deviceId, session, CancellationToken.None);
             }
         });
 

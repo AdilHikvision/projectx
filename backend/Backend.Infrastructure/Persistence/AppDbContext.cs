@@ -21,6 +21,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<DeviceStatus> DeviceStatuses => Set<DeviceStatus>();
     public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Position> Positions => Set<Position>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
     public DbSet<AccessLevel> AccessLevels => Set<AccessLevel>();
@@ -75,6 +76,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ParkingSpace> ParkingSpaces => Set<ParkingSpace>();
     public DbSet<ParkingPlate> ParkingPlates => Set<ParkingPlate>();
     public DbSet<ParkingSession> ParkingSessions => Set<ParkingSession>();
+    public DbSet<ParkingResident> ParkingResidents => Set<ParkingResident>();
+    public DbSet<ParkingVehicle> ParkingVehicles => Set<ParkingVehicle>();
+    public DbSet<ParkingPermit> ParkingPermits => Set<ParkingPermit>();
+    public DbSet<ParkingTariff> ParkingTariffs => Set<ParkingTariff>();
+    public DbSet<ParkingSubscription> ParkingSubscriptions => Set<ParkingSubscription>();
+    public DbSet<ParkingEvent> ParkingEvents => Set<ParkingEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -122,6 +129,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<Position>(entity =>
+        {
+            entity.ToTable("positions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+        });
+
         builder.Entity<DeviceStatus>(entity =>
         {
             entity.ToTable("device_statuses");
@@ -149,6 +164,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(x => x.EmployeeNo).IsUnique().HasFilter("EmployeeNo IS NOT NULL");
             entity.HasIndex(x => x.SelfServiceEmail).IsUnique().HasFilter("\"SelfServiceEmail\" IS NOT NULL");
             entity.HasOne(x => x.Department).WithMany(x => x.Employees).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.Position).WithMany(x => x.Employees).HasForeignKey(x => x.PositionId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.Company).WithMany(x => x.Employees).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.WorkSchedule).WithMany(x => x.Employees).HasForeignKey(x => x.WorkScheduleId).OnDelete(DeleteBehavior.SetNull);
         });
@@ -684,6 +700,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
             entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Category).HasMaxLength(32);
             entity.HasIndex(x => new { x.PlateNormalized, x.ListType });
         });
 
@@ -693,8 +710,51 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
             entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.CameraName).HasMaxLength(120);
+            entity.Property(x => x.PhotoUrl).HasMaxLength(500);
+            entity.Property(x => x.Operator).HasMaxLength(120);
+            entity.Property(x => x.PaymentMethod).HasMaxLength(32);
+            entity.Property(x => x.Cost).HasPrecision(12, 2);
             entity.HasIndex(x => new { x.ZoneId, x.ExitedUtc });
             entity.HasIndex(x => x.PlateNormalized);
+            entity.HasIndex(x => x.EnteredUtc);
+        });
+
+        builder.Entity<ParkingTariff>(entity =>
+        {
+            entity.ToTable("parking_tariffs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Kind).HasConversion<int>().IsRequired();
+            entity.Property(x => x.PricePerHour).HasPrecision(12, 2);
+            entity.Property(x => x.PricePerDay).HasPrecision(12, 2);
+            entity.Property(x => x.FixedPrice).HasPrecision(12, 2);
+            entity.Property(x => x.MaxPerDay).HasPrecision(12, 2);
+            entity.Property(x => x.NightPricePerHour).HasPrecision(12, 2);
+            entity.Property(x => x.WeekendPricePerHour).HasPrecision(12, 2);
+        });
+
+        builder.Entity<ParkingSubscription>(entity =>
+        {
+            entity.ToTable("parking_subscriptions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.PlateNormalized);
+        });
+
+        builder.Entity<ParkingEvent>(entity =>
+        {
+            entity.ToTable("parking_events");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Type).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Message).HasMaxLength(1000);
+            entity.Property(x => x.Plate).HasMaxLength(32);
+            entity.Property(x => x.Source).HasMaxLength(120);
+            entity.HasIndex(x => x.CreatedUtc);
+            entity.HasIndex(x => x.Type);
         });
 
         builder.Entity<ParkingFloor>(entity =>
@@ -725,6 +785,48 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Row).WithMany(x => x.Spaces).HasForeignKey(x => x.RowId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => x.RowId);
             entity.HasIndex(x => x.Type);
+        });
+
+        builder.Entity<ParkingResident>(entity =>
+        {
+            entity.ToTable("parking_residents");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.FullName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Phone).HasMaxLength(64);
+            entity.Property(x => x.Unit).HasMaxLength(64);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.IsActive);
+        });
+
+        builder.Entity<ParkingVehicle>(entity =>
+        {
+            entity.ToTable("parking_vehicles");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Plate).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
+            entity.Property(x => x.Brand).HasMaxLength(120);
+            entity.Property(x => x.Color).HasMaxLength(64);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.Property(x => x.Country).HasMaxLength(8);
+            entity.Property(x => x.Company).HasMaxLength(200);
+            entity.Property(x => x.VehicleType).HasMaxLength(32);
+            entity.Property(x => x.PhotoUrl).HasMaxLength(500);
+            entity.Property(x => x.OwnerName).HasMaxLength(200);
+            entity.Property(x => x.OwnerPhone).HasMaxLength(64);
+            entity.HasOne(x => x.Resident).WithMany(x => x.Vehicles).HasForeignKey(x => x.ResidentId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.PlateNormalized);
+            entity.HasIndex(x => x.ResidentId);
+        });
+
+        builder.Entity<ParkingPermit>(entity =>
+        {
+            entity.ToTable("parking_permits");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasOne(x => x.Vehicle).WithMany(x => x.Permits).HasForeignKey(x => x.VehicleId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Zone).WithMany().HasForeignKey(x => x.ZoneId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.VehicleId);
+            entity.HasIndex(x => x.ZoneId);
         });
 
         builder.Entity<AuditLogEntry>(entity =>

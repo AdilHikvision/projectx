@@ -36,8 +36,22 @@ interface CompanyForm {
   description: string
 }
 
+interface PositionItem {
+  id: string
+  name: string
+  description?: string | null
+  sortOrder: number
+  employeesCount: number
+}
+
+interface PositionForm {
+  name: string
+  description: string
+}
+
 const emptyDeptForm: DepartmentForm = { name: '', description: '', parentId: null, companyId: null }
 const emptyCompanyForm: CompanyForm = { name: '', description: '' }
+const emptyPosForm: PositionForm = { name: '', description: '' }
 
 type AppMode = 'Single' | 'Multiple' | 'None'
 
@@ -280,15 +294,17 @@ export function CompanyTab() {
   const [mode, setMode] = useState<AppMode>('None')
   const [companies, setCompanies] = useState<Company[]>([])
   const [items, setItems] = useState<DepartmentTreeItem[]>([])
+  const [positions, setPositions] = useState<PositionItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState<'initial' | 'add-dept' | 'edit-dept' | 'add-company' | 'edit-company' | null>(null)
+  const [modal, setModal] = useState<'initial' | 'add-dept' | 'edit-dept' | 'add-company' | 'edit-company' | 'add-pos' | 'edit-pos' | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deptForm, setDeptForm] = useState<DepartmentForm>(emptyDeptForm)
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
+  const [posForm, setPosForm] = useState<PositionForm>(emptyPosForm)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'dept' | 'company', item: any } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'dept' | 'company' | 'pos', item: any } | null>(null)
   const [zoom, setZoom] = useState<Record<string, number>>({})
   const [pan, setPan] = useState<Record<string, { x: number, y: number }>>({})
   const [isPanning, setIsPanning] = useState(false)
@@ -326,10 +342,11 @@ export function CompanyTab() {
     setLoading(true)
     setError(null)
     try {
-      const [settings, companyList, deptList] = await Promise.all([
+      const [settings, companyList, deptList, posList] = await Promise.all([
         apiRequest<any[]>('/api/system-settings', { token }),
         apiRequest<Company[]>('/api/companies', { token }),
-        apiRequest<DepartmentTreeItem[]>('/api/departments/tree', { token })
+        apiRequest<DepartmentTreeItem[]>('/api/departments/tree', { token }),
+        apiRequest<PositionItem[]>('/api/positions', { token })
       ])
 
       const modeSetting = settings.find(s => s.key === 'CompanyMode')
@@ -338,6 +355,7 @@ export function CompanyTab() {
       setMode(currentMode)
       setCompanies(companyList)
       setItems(deptList)
+      setPositions(posList)
       setExpandedIds(new Set(deptList.map((d) => d.id)))
 
       if (currentMode === 'None') {
@@ -456,7 +474,42 @@ export function CompanyTab() {
     }
   }
 
-  const handleDelete = (type: 'dept' | 'company', item: any) => {
+  const handleAddPos = () => {
+    setPosForm(emptyPosForm)
+    setEditingId(null)
+    setModal('add-pos')
+  }
+
+  const handleEditPos = (item: PositionItem) => {
+    setPosForm({ name: item.name, description: item.description ?? '' })
+    setEditingId(item.id)
+    setModal('edit-pos')
+  }
+
+  const handleSubmitPos = async () => {
+    if (!token || !posForm.name.trim()) return
+    setIsSubmitting(true)
+    try {
+      const method = editingId ? 'PUT' : 'POST'
+      const url = editingId ? `/api/positions/${editingId}` : '/api/positions'
+      await apiRequest(url, {
+        method,
+        token,
+        body: JSON.stringify({
+          name: posForm.name.trim(),
+          description: posForm.description.trim() || null,
+        }),
+      })
+      setModal(null)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('companyTab.saveFailed'))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDelete = (type: 'dept' | 'company' | 'pos', item: any) => {
     setDeleteConfirm({ type, item })
   }
 
@@ -464,8 +517,10 @@ export function CompanyTab() {
     if (!token || !deleteConfirm) return
     setIsSubmitting(true)
     try {
-      const url = deleteConfirm.type === 'dept' 
-        ? `/api/departments/${deleteConfirm.item.id}` 
+      const url = deleteConfirm.type === 'dept'
+        ? `/api/departments/${deleteConfirm.item.id}`
+        : deleteConfirm.type === 'pos'
+        ? `/api/positions/${deleteConfirm.item.id}`
         : `/api/companies/${deleteConfirm.item.id}`
       await apiRequest(url, { method: 'DELETE', token })
       setDeleteConfirm(null)
@@ -695,6 +750,51 @@ export function CompanyTab() {
               )
             })}
           </div>
+
+          {/* Positions (должности / vəzifələr) — плоский справочник */}
+          <div className="bg-surface rounded-3xl p-8 shadow-md border-none">
+            <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+              <div>
+                <h4 className="text-lg font-black text-text-dark">{t('companyTab.positionsTitle')}</h4>
+                <p className="text-xs text-text-light">{t('companyTab.positionsDescription')}</p>
+              </div>
+              <Button icon="add" onClick={handleAddPos}>
+                {t('companyTab.addPosition')}
+              </Button>
+            </div>
+
+            {positions.length === 0 ? (
+              <div className="py-8 text-center bg-slate-50 rounded-2xl shadow-sm border-none">
+                <p className="text-xs text-text-light">{t('companyTab.noPositionsYet')}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {positions.map((p) => (
+                  <div key={p.id} className="flex items-center gap-3 rounded-2xl bg-slate-50 border border-border-light px-4 py-3">
+                    <span className="material-symbols-outlined text-text-light">badge</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-black text-text-dark truncate">{p.name}</p>
+                      {p.description && <p className="text-xs text-text-light truncate">{p.description}</p>}
+                    </div>
+                    <span className="text-[10px] font-black text-text-light uppercase tracking-widest shrink-0" title={t('companyTab.positionEmployeesCount')}>
+                      {p.employeesCount} <span className="material-symbols-outlined text-sm align-middle">group</span>
+                    </span>
+                    <Button variant="outline" size="sm" icon="edit" onClick={() => handleEditPos(p)}>
+                      {t('common.edit')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-500 hover:bg-red-50"
+                      onClick={() => handleDelete('pos', p)}
+                    >
+                      ×
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -795,10 +895,41 @@ export function CompanyTab() {
         </Modal>
       )}
 
+      {(modal === 'add-pos' || modal === 'edit-pos') && (
+        <Modal
+          isOpen
+          title={modal === 'add-pos' ? t('companyTab.addPosition') : t('companyTab.editPosition')}
+          onClose={() => setModal(null)}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('common.name')}</label>
+              <Input
+                value={posForm.name}
+                onChange={e => setPosForm({ ...posForm, name: e.target.value })}
+                placeholder={t('companyTab.positionNamePlaceholder')}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('companyTab.description')}</label>
+              <Input
+                value={posForm.description}
+                onChange={e => setPosForm({ ...posForm, description: e.target.value })}
+                placeholder={t('common.optional')}
+              />
+            </div>
+            <Button fullWidth onClick={handleSubmitPos} isLoading={isSubmitting} disabled={!posForm.name.trim()}>
+              {modal === 'add-pos' ? t('common.add') : t('common.save')}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
       {deleteConfirm && (
         <ConfirmDialog
           isOpen
-          title={deleteConfirm.type === 'dept' ? t('companyTab.deleteDepartmentQuestion') : t('companyTab.deleteCompanyQuestion')}
+          title={deleteConfirm.type === 'dept' ? t('companyTab.deleteDepartmentQuestion') : deleteConfirm.type === 'pos' ? t('companyTab.deletePositionQuestion') : t('companyTab.deleteCompanyQuestion')}
           message={t('companyTab.actionCannotBeUndone')}
           onConfirm={handleConfirmDelete}
           onClose={() => setDeleteConfirm(null)}

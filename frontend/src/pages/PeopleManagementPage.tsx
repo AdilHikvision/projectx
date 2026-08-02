@@ -45,23 +45,11 @@ interface VisitorResponse {
   irisesCount: number
 }
 
-interface AccessLevel {
-  id: string
-  name: string
-  description?: string | null
-}
-
 interface DepartmentTreeItem {
   id: string
   name: string
   parentId?: string | null
   companyId?: string | null
-}
-
-interface Company {
-  id: string
-  name: string
-  description?: string | null
 }
 
 type TabType = 'employees' | 'visitors'
@@ -77,7 +65,6 @@ export function PeopleManagementPage() {
   const [statusFilterVisitors, setStatusFilterVisitors] = useState({ active: true, blocked: false })
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
   const [visitors, setVisitors] = useState<VisitorResponse[]>([])
-  const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [deptFilter, setDeptFilter] = useState<string>('')
@@ -85,23 +72,7 @@ export function PeopleManagementPage() {
   const PAGE_SIZE = 20
   const [error, setError] = useState<string | null>(null)
   const [syncWarning, setSyncWarning] = useState<string | null>(null)
-  const [modalMode, setModalMode] = useState<'create' | null>(null)
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    gender: '',
-    validFrom: new Date().toISOString().slice(0, 10),
-    validTo: '2037-12-31',
-    documentNumber: '',
-    visitDateUtc: new Date().toISOString().slice(0, 10),
-    onlyVerify: false,
-    accessLevelIds: [] as string[],
-    departmentId: null as string | null,
-    companyId: null as string | null,
-  })
-  const [companies, setCompanies] = useState<Company[]>([])
   const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [devices, setDevices] = useState<{ id: string; name: string; ipAddress: string }[]>([])
   const [importSelectedDeviceIds, setImportSelectedDeviceIds] = useState<string[]>([])
@@ -152,16 +123,6 @@ export function PeopleManagementPage() {
     }
   }, [token, searchQuery, t])
 
-  const loadAccessLevels = useCallback(async () => {
-    if (!token) return
-    try {
-      const list = await apiRequest<AccessLevel[]>(`/api/access-levels`, { token })
-      setAccessLevels(list)
-    } catch {
-      setAccessLevels([])
-    }
-  }, [token])
-
   const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
 
@@ -181,18 +142,6 @@ export function PeopleManagementPage() {
     }
   }, [token, companyMode])
 
-  const loadCompanies = useCallback(async (): Promise<Company[]> => {
-    if (!token) return []
-    try {
-      const list = await apiRequest<Company[]>(`/api/companies`, { token })
-      setCompanies(list)
-      return list
-    } catch {
-      setCompanies([])
-      return []
-    }
-  }, [token])
-
   const loadCompanyMode = useCallback(async (): Promise<string> => {
     if (!token) return 'None'
     try {
@@ -205,16 +154,11 @@ export function PeopleManagementPage() {
     }
   }, [token])
 
+  // Отделы нужны списку для фильтра; режим компаний — чтобы знать, показывать ли их.
   useEffect(() => {
-    loadAccessLevels()
-    loadCompanies()
     loadCompanyMode()
     loadDepartments()
-  }, [loadAccessLevels, loadCompanies, loadCompanyMode, loadDepartments])
-
-  useEffect(() => {
-    loadDepartments(formData.companyId)
-  }, [loadDepartments, formData.companyId])
+  }, [loadCompanyMode, loadDepartments])
 
   useEffect(() => {
     if (!token) return
@@ -239,133 +183,9 @@ export function PeopleManagementPage() {
     return employees.filter((e) => e.isActive).length + visitors.filter((v) => v.isActive).length
   }, [employees, visitors])
 
-  async function openCreateModal() {
-    setModalMode('create')
-    setError(null)
-
-    // Load companies and mode if not loaded
-    let currentCompanies = companies;
-    if (currentCompanies.length === 0) {
-      currentCompanies = await loadCompanies();
-    }
-    let currentMode = companyMode;
-    if (currentMode === 'None') {
-      currentMode = await loadCompanyMode() as any;
-    }
-
-    const defaultCompanyId = currentMode === 'Single' ? currentCompanies[0]?.id || null : null
-
-    try {
-      if (tab === 'employees') {
-        setFormData({
-          firstName: '',
-          lastName: '',
-          gender: '',
-          validFrom: new Date().toISOString().slice(0, 10),
-          validTo: '2037-12-31',
-          documentNumber: '',
-          visitDateUtc: new Date().toISOString().slice(0, 10),
-          onlyVerify: false,
-          accessLevelIds: [],
-          departmentId: null,
-          companyId: defaultCompanyId,
-        })
-      } else {
-        setFormData({
-          firstName: '',
-          lastName: '',
-          gender: '',
-          validFrom: new Date().toISOString().slice(0, 10),
-          validTo: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
-          documentNumber: '',
-          visitDateUtc: '',
-          onlyVerify: false,
-          accessLevelIds: [],
-          departmentId: null,
-          companyId: defaultCompanyId,
-        })
-      }
-    } catch (e) {
-      setFormData({
-        firstName: '',
-        lastName: '',
-        gender: '',
-        validFrom: new Date().toISOString().slice(0, 10),
-        validTo: '2037-12-31',
-        documentNumber: '',
-        visitDateUtc: new Date().toISOString().slice(0, 10),
-        onlyVerify: false,
-        accessLevelIds: [],
-        departmentId: null,
-        companyId: defaultCompanyId,
-      })
-      setError(e instanceof Error ? e.message : t('people.errors.loadNextId'))
-    }
-  }
-
-  function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
-    const w = res?.syncWarnings
-    setSyncWarning(Array.isArray(w) && w.length > 0
-      ? t('people.errors.deviceSyncErrors') + '\n' + w.join('\n')
-      : null)
-  }
-
-  async function handleSubmit() {
-    if (!token) return
-    setIsSubmitting(true)
-    setError(null)
-    try {
-      if (tab === 'employees') {
-        const res = await apiRequest<{ syncWarnings?: string[] }>('/api/employees', {
-          method: 'POST',
-          token,
-          body: JSON.stringify({
-            firstName: formData.firstName.trim(),
-            lastName: formData.lastName.trim(),
-            gender: formData.gender.trim() || null,
-            validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-            validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-            onlyVerify: formData.onlyVerify,
-            accessLevelIds: formData.accessLevelIds,
-            departmentId: formData.departmentId || null,
-            companyId: formData.companyId || null,
-          }),
-        })
-        showSyncWarnings(res)
-        await loadEmployees()
-      } else {
-        const res = await apiRequest<{ syncWarnings?: string[] }>('/api/visitors', {
-          method: 'POST',
-          token,
-          body: JSON.stringify({
-            firstName: formData.firstName.trim(),
-            lastName: formData.lastName.trim(),
-            documentNumber: null,
-            validFromUtc: formData.validFrom ? formData.validFrom + 'T00:00:00Z' : null,
-            validToUtc: formData.validTo ? formData.validTo + 'T23:59:59Z' : null,
-            accessLevelIds: formData.accessLevelIds,
-            departmentId: formData.departmentId || null,
-            companyId: formData.companyId || null,
-          }),
-        })
-        showSyncWarnings(res)
-        await loadVisitors()
-      }
-      setModalMode(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('people.errors.saveFailed'))
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  function toggleAccessLevel(id: string) {
-    setFormData((prev) => ({
-      ...prev,
-      accessLevelIds: prev.accessLevelIds.includes(id)
-        ? prev.accessLevelIds.filter((x) => x !== id)
-        : [...prev.accessLevelIds, id],
-    }))
+  // Добавление вынесено на отдельную страницу /people/new/:type
+  function openCreatePage() {
+    navigate(`/people/new/${tab === 'employees' ? 'employee' : 'visitor'}`)
   }
 
   async function openImportModal() {
@@ -482,7 +302,7 @@ export function PeopleManagementPage() {
   )
 
   return (
-    <AppLayout onAction={openCreateModal}>
+    <AppLayout onAction={openCreatePage}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
@@ -494,7 +314,7 @@ export function PeopleManagementPage() {
                 <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
                   {t('common.import')}
                 </Button>
-                <Button icon="person_add" size="md" onClick={openCreateModal} className="shadow-md">
+                <Button icon="person_add" size="md" onClick={openCreatePage} className="shadow-md">
                   {t('people.addPeople')}
                 </Button>
               </div>
@@ -826,161 +646,6 @@ export function PeopleManagementPage() {
         </div>
       </Modal>
 
-      <Modal
-        isOpen={!!modalMode}
-        title={tab === 'employees' ? t('people.addEmployee') : t('people.addVisitor')}
-        onClose={() => setModalMode(null)}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.firstName')}</label>
-              <Input
-                value={formData.firstName}
-                onChange={(e) => setFormData((p) => ({ ...p, firstName: e.target.value }))}
-                placeholder={t('common.required')}
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.lastName')}</label>
-              <Input
-                value={formData.lastName}
-                onChange={(e) => setFormData((p) => ({ ...p, lastName: e.target.value }))}
-                placeholder={t('common.required')}
-              />
-            </div>
-          </div>
-
-          {tab === 'employees' ? (
-            <>
-              <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.gender')}</label>
-                <select
-                  value={formData.gender}
-                  onChange={(e) => setFormData((p) => ({ ...p, gender: e.target.value }))}
-                  className="w-full h-10 px-3 rounded-xl border border-divider-light bg-surface text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 transition-all outline-none"
-                >
-                  <option value="">{t('people.genderUnknown')}</option>
-                  <option value="male">{t('people.male')}</option>
-                  <option value="female">{t('people.female')}</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validFrom')}</label>
-                  <Input
-                    type="date"
-                    value={formData.validFrom}
-                    onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validTo')}</label>
-                  <Input
-                    type="date"
-                    value={formData.validTo}
-                    onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <label className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={formData.onlyVerify}
-                  onChange={(e) => setFormData((p) => ({ ...p, onlyVerify: e.target.checked }))}
-                  className="w-5 h-5 mt-0.5 rounded border-border-light text-primary focus:ring-primary"
-                />
-                <div>
-                  <span className="text-xs font-black text-text-dark uppercase tracking-widest block">{t('people.timeAttendanceOnly')}</span>
-                  <p className="text-[10px] text-text-light mt-1 leading-relaxed">{t('people.timeAttendanceOnlyDescription')}</p>
-                </div>
-              </label>
-            </>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validFrom')}</label>
-                  <Input
-                    type="date"
-                    value={formData.validFrom}
-                    onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.validTo')}</label>
-                  <Input
-                    type="date"
-                    value={formData.validTo}
-                    onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </>
-          )}
-
-          {companyMode !== 'None' && (
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.company')}</label>
-              {companyMode === 'Multiple' ? (
-                <select
-                  value={formData.companyId ?? ''}
-                  onChange={(e) => setFormData((p) => ({ ...p, companyId: e.target.value || null, departmentId: null }))}
-                  className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
-                >
-                  <option value="">{t('people.notSelected')}</option>
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <div className="p-3 bg-slate-50 rounded-xl border border-divider-light text-sm font-bold text-text-dark">
-                  {companies.find(c => c.id === formData.companyId)?.name || t('people.primaryCompany')}
-                </div>
-              )}
-            </div>
-          )}
-
-          {departments.length > 0 && (
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.department')}</label>
-              <select
-                value={formData.departmentId ?? ''}
-                onChange={(e) => setFormData((p) => ({ ...p, departmentId: e.target.value || null }))}
-                className="w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none"
-              >
-                <option value="">{t('people.notAssigned')}</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {accessLevels.length > 0 && (
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-2">{t('people.accessLevels')}</label>
-              <div className="max-h-32 overflow-y-auto space-y-2 border border-border-light rounded-xl p-2">
-                {accessLevels.map((level) => (
-                  <label key={level.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.accessLevelIds.includes(level.id)}
-                      onChange={() => toggleAccessLevel(level.id)}
-                      className="rounded border-border-light text-primary focus:ring-primary"
-                    />
-                    <span className="text-sm font-bold text-text-dark">{level.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="flex gap-2 pt-4">
-            <Button fullWidth onClick={handleSubmit} isLoading={isSubmitting} disabled={!formData.firstName || isSubmitting}>{t('common.save')}</Button>
-            <Button fullWidth variant="outline" onClick={() => setModalMode(null)}>{t('common.cancel')}</Button>
-          </div>
-        </div>
-      </Modal>
     </AppLayout>
   )
 }

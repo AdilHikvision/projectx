@@ -109,6 +109,148 @@ public sealed class DatabaseInitializer(
             ALTER TABLE visitors ADD COLUMN IF NOT EXISTS "CompanyId" uuid REFERENCES companies("Id") ON DELETE SET NULL
             """, cancellationToken);
 
+        // Должности (positions) + FK у сотрудников — страховка для баз, где миграция не применилась.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS positions (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Name" character varying(200) NOT NULL,
+                "Description" character varying(500),
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE employees ADD COLUMN IF NOT EXISTS "PositionId" uuid REFERENCES positions("Id") ON DELETE SET NULL
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_employees_PositionId" ON employees ("PositionId")
+            """, cancellationToken);
+
+        // Aktiv Parking (нативно): жильцы, транспорт, пропуска — страховка для баз без миграции.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_residents (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "FullName" character varying(200) NOT NULL,
+                "Phone" character varying(64),
+                "Unit" character varying(64),
+                "Notes" character varying(1000),
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_vehicles (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "ResidentId" uuid REFERENCES parking_residents("Id") ON DELETE SET NULL,
+                "Plate" character varying(32) NOT NULL,
+                "PlateNormalized" character varying(32) NOT NULL,
+                "Brand" character varying(120),
+                "Color" character varying(64),
+                "Notes" character varying(1000),
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_permits (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "VehicleId" uuid NOT NULL REFERENCES parking_vehicles("Id") ON DELETE CASCADE,
+                "ZoneId" uuid REFERENCES parking_zones("Id") ON DELETE SET NULL,
+                "ValidFrom" date NOT NULL,
+                "ValidTo" date,
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "Notes" character varying(1000),
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_vehicles_PlateNormalized" ON parking_vehicles ("PlateNormalized")
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_permits_VehicleId" ON parking_permits ("VehicleId")
+            """, cancellationToken);
+
+        // Платная парковка: тарифы, абонементы, журнал событий + расширения авто/списков/сессий.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_tariffs (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Name" character varying(200) NOT NULL,
+                "Kind" integer NOT NULL DEFAULT 1,
+                "FreeMinutes" integer NOT NULL DEFAULT 0,
+                "PricePerHour" numeric(12,2) NOT NULL DEFAULT 0,
+                "PricePerDay" numeric(12,2) NOT NULL DEFAULT 0,
+                "FixedPrice" numeric(12,2) NOT NULL DEFAULT 0,
+                "MaxPerDay" numeric(12,2),
+                "NightPricePerHour" numeric(12,2),
+                "NightFrom" interval,
+                "NightTo" interval,
+                "WeekendPricePerHour" numeric(12,2),
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "IsDefault" boolean NOT NULL DEFAULT FALSE,
+                "SortOrder" integer NOT NULL DEFAULT 0,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_subscriptions (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Plate" character varying(32) NOT NULL,
+                "PlateNormalized" character varying(32) NOT NULL,
+                "Name" character varying(200) NOT NULL,
+                "StartDate" date NOT NULL,
+                "EndDate" date NOT NULL,
+                "EntriesLimit" integer,
+                "EntriesUsed" integer NOT NULL DEFAULT 0,
+                "Unlimited" boolean NOT NULL DEFAULT FALSE,
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "Notes" character varying(1000),
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_events (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Type" character varying(64) NOT NULL,
+                "Message" character varying(1000),
+                "Plate" character varying(32),
+                "Source" character varying(120),
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE parking_vehicles
+                ADD COLUMN IF NOT EXISTS "Country" character varying(8),
+                ADD COLUMN IF NOT EXISTS "Company" character varying(200),
+                ADD COLUMN IF NOT EXISTS "VehicleType" character varying(32),
+                ADD COLUMN IF NOT EXISTS "PhotoUrl" character varying(500),
+                ADD COLUMN IF NOT EXISTS "OwnerName" character varying(200),
+                ADD COLUMN IF NOT EXISTS "OwnerPhone" character varying(64)
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE parking_plates
+                ADD COLUMN IF NOT EXISTS "Category" character varying(32),
+                ADD COLUMN IF NOT EXISTS "ValidTo" date,
+                ADD COLUMN IF NOT EXISTS "TimeLimitMinutes" integer
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE parking_sessions
+                ADD COLUMN IF NOT EXISTS "CameraName" character varying(120),
+                ADD COLUMN IF NOT EXISTS "PhotoUrl" character varying(500),
+                ADD COLUMN IF NOT EXISTS "RecognitionConfidence" double precision,
+                ADD COLUMN IF NOT EXISTS "Operator" character varying(120),
+                ADD COLUMN IF NOT EXISTS "Cost" numeric(12,2),
+                ADD COLUMN IF NOT EXISTS "PaymentMethod" character varying(32),
+                ADD COLUMN IF NOT EXISTS "PaidUtc" timestamp with time zone,
+                ADD COLUMN IF NOT EXISTS "TariffId" uuid
+            """, cancellationToken);
+
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS cards (
                 "Id" uuid NOT NULL PRIMARY KEY,
@@ -215,6 +357,37 @@ public sealed class DatabaseInitializer(
             }
         }
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Davamiyyət kriteriyaları: дефолтные строки только если таблица пуста —
+        // дальше они правятся через Settings → Davamiyyət kriteriyaları и не перетираются.
+        if (!await dbContext.AttendanceCriterias.AnyAsync(cancellationToken))
+        {
+            var criteriaDefaults = new (string Key, string Label, string Letter, string Color, string DisplayMode, int SortOrder)[]
+            {
+                ("normal",      "Tam iş günü",      "",  "#2E7D32", "hours",  0),
+                ("undertime",   "Natamam iş günü",  "N", "#E8A33D", "hours",  1),
+                ("overtime",    "Əlavə iş",         "",  "#2563EB", "hours",  2),
+                ("late",        "Gecikmə",          "",  "#EA6A47", "hours",  3),
+                ("early_leave", "Erkən çıxış",      "",  "#8B5CF6", "hours",  4),
+                ("dayoff",      "İstirahət günü",   "İ", "#94A3B8", "letter", 5),
+                ("onleave",     "Məzuniyyət",       "M", "#6366F1", "letter", 6),
+                ("absent",      "İşə çıxmayıb",     "X", "#DC2626", "letter", 7),
+            };
+            foreach (var c in criteriaDefaults)
+            {
+                dbContext.AttendanceCriterias.Add(new Backend.Domain.Entities.AttendanceCriteria
+                {
+                    Key = c.Key,
+                    Label = c.Label,
+                    Letter = c.Letter,
+                    Color = c.Color,
+                    DisplayMode = c.DisplayMode,
+                    Enabled = true,
+                    SortOrder = c.SortOrder
+                });
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
 
         // Первый администратор создаётся только вручную через /api/auth/setup-admin-password (страница Initial Setup), не из конфигурации.
         if (!await userManager.Users.AnyAsync(cancellationToken))

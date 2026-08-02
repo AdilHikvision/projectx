@@ -82,6 +82,16 @@ public sealed class Department : BaseEntity
     public ICollection<Visitor> Visitors { get; set; } = new List<Visitor>();
 }
 
+/// <summary>Должность (vəzifə) — плоский справочник, назначается сотруднику.</summary>
+public sealed class Position : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int SortOrder { get; set; }
+
+    public ICollection<Employee> Employees { get; set; } = new List<Employee>();
+}
+
 public sealed class AccessLevel : BaseEntity
 {
     public string Name { get; set; } = string.Empty;
@@ -125,6 +135,10 @@ public sealed class Employee : BaseEntity
 
     public Guid? DepartmentId { get; set; }
     public Department? Department { get; set; }
+
+    /// <summary>Должность (vəzifə).</summary>
+    public Guid? PositionId { get; set; }
+    public Position? Position { get; set; }
 
     public Guid? CompanyId { get; set; }
     public Company? Company { get; set; }
@@ -1105,9 +1119,15 @@ public sealed class ParkingPlate : BaseEntity
     public ParkingPlateList ListType { get; set; }
     public string? Note { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Белый список: категория (employee|management|vip|service). Чёрный: причина (unpaid|violator|stolen|banned).</summary>
+    public string? Category { get; set; }
+    /// <summary>Срок действия пропуска (белый список); null — бессрочно.</summary>
+    public DateOnly? ValidTo { get; set; }
+    /// <summary>Ограничение времени стоянки в минутах (белый список); null — без ограничения.</summary>
+    public int? TimeLimitMinutes { get; set; }
 }
 
-/// <summary>Сессия парковки (машина внутри) — для подсчёта занятости.</summary>
+/// <summary>Сессия парковки (машина внутри) — занятость, история въездов/выездов, оплата.</summary>
 public sealed class ParkingSession : BaseEntity
 {
     public string Plate { get; set; } = string.Empty;
@@ -1117,6 +1137,135 @@ public sealed class ParkingSession : BaseEntity
     public DateTime EnteredUtc { get; set; } = DateTime.UtcNow;
     public DateTime? ExitedUtc { get; set; }
     public bool IsPaid { get; set; }
+    /// <summary>Камера, распознавшая номер на въезде.</summary>
+    public string? CameraName { get; set; }
+    /// <summary>Фото с камеры (URL/путь).</summary>
+    public string? PhotoUrl { get; set; }
+    /// <summary>Вероятность распознавания номера, 0..1.</summary>
+    public double? RecognitionConfidence { get; set; }
+    /// <summary>Оператор (если въезд/выезд оформлен вручную).</summary>
+    public string? Operator { get; set; }
+    /// <summary>Начисленная стоимость (платный режим).</summary>
+    public decimal? Cost { get; set; }
+    /// <summary>Способ оплаты: cash|card|online|free|subscription.</summary>
+    public string? PaymentMethod { get; set; }
+    public DateTime? PaidUtc { get; set; }
+    public Guid? TariffId { get; set; }
+}
+
+/// <summary>Вид тарифа парковки.</summary>
+public enum ParkingTariffKind
+{
+    Hourly = 1,
+    Daily = 2,
+    Fixed = 3
+}
+
+/// <summary>Тариф платной парковки. Часовой поддерживает ночную/выходную ставку и потолок за сутки.</summary>
+public sealed class ParkingTariff : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public ParkingTariffKind Kind { get; set; } = ParkingTariffKind.Hourly;
+    /// <summary>Первые X минут бесплатно.</summary>
+    public int FreeMinutes { get; set; }
+    public decimal PricePerHour { get; set; }
+    public decimal PricePerDay { get; set; }
+    public decimal FixedPrice { get; set; }
+    /// <summary>Максимум за сутки (для часового); null — без потолка.</summary>
+    public decimal? MaxPerDay { get; set; }
+    /// <summary>Ночная ставка в час; действует в окне NightFrom–NightTo. null — нет ночного тарифа.</summary>
+    public decimal? NightPricePerHour { get; set; }
+    public TimeSpan? NightFrom { get; set; }
+    public TimeSpan? NightTo { get; set; }
+    /// <summary>Ставка в час по выходным (сб/вс); null — как обычная.</summary>
+    public decimal? WeekendPricePerHour { get; set; }
+    public bool IsActive { get; set; } = true;
+    /// <summary>Тариф по умолчанию для расчёта на выезде.</summary>
+    public bool IsDefault { get; set; }
+    public int SortOrder { get; set; }
+}
+
+/// <summary>Абонемент (месяц/квартал/год) — привязан к номеру.</summary>
+public sealed class ParkingSubscription : BaseEntity
+{
+    public string Plate { get; set; } = string.Empty;
+    public string PlateNormalized { get; set; } = string.Empty;
+    /// <summary>Название (напр. «Месяц», «Квартал», «Год»).</summary>
+    public string Name { get; set; } = string.Empty;
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate { get; set; }
+    /// <summary>Лимит въездов; null — по времени действия.</summary>
+    public int? EntriesLimit { get; set; }
+    public int EntriesUsed { get; set; }
+    /// <summary>Неограниченный доступ (игнорирует лимит въездов).</summary>
+    public bool Unlimited { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string? Notes { get; set; }
+}
+
+/// <summary>Журнал событий парковки: шлагбаум, ошибки камер/распознавания, питание, входы администраторов, тревоги.</summary>
+public sealed class ParkingEvent : BaseEntity
+{
+    /// <summary>barrier_open|barrier_close|manual_open|camera_error|recognition_error|power_loss|admin_login|denied|alarm</summary>
+    public string Type { get; set; } = string.Empty;
+    public string? Message { get; set; }
+    public string? Plate { get; set; }
+    /// <summary>Источник: имя камеры / оператор / system.</summary>
+    public string? Source { get; set; }
+}
+
+/// <summary>Жилец / арендатор здания (модуль парковки).</summary>
+public sealed class ParkingResident : BaseEntity
+{
+    public string FullName { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    /// <summary>Квартира / офис / блок.</summary>
+    public string? Unit { get; set; }
+    public string? Notes { get; set; }
+    public bool IsActive { get; set; } = true;
+    public ICollection<ParkingVehicle> Vehicles { get; set; } = new List<ParkingVehicle>();
+}
+
+/// <summary>Транспортное средство. Владелец — текстовые поля (имя/телефон), без справочника жильцов.</summary>
+public sealed class ParkingVehicle : BaseEntity
+{
+    public Guid? ResidentId { get; set; }
+    public ParkingResident? Resident { get; set; }
+    /// <summary>Владелец (имя).</summary>
+    public string? OwnerName { get; set; }
+    /// <summary>Телефон владельца.</summary>
+    public string? OwnerPhone { get; set; }
+    public string Plate { get; set; } = string.Empty;
+    public string PlateNormalized { get; set; } = string.Empty;
+    /// <summary>Марка/модель (свободный текст).</summary>
+    public string? Brand { get; set; }
+    public string? Color { get; set; }
+    public string? Notes { get; set; }
+    public bool IsActive { get; set; } = true;
+    /// <summary>Страна регистрации номера (напр. AZ).</summary>
+    public string? Country { get; set; }
+    /// <summary>Компания владельца.</summary>
+    public string? Company { get; set; }
+    /// <summary>Тип: car|truck|bus|motorcycle|other.</summary>
+    public string? VehicleType { get; set; }
+    /// <summary>Фото автомобиля (URL/путь).</summary>
+    public string? PhotoUrl { get; set; }
+    public ICollection<ParkingPermit> Permits { get; set; } = new List<ParkingPermit>();
+}
+
+/// <summary>Пропуск (разрешение на въезд) для ТС; срок задаётся датами, null ValidTo — бессрочно.</summary>
+public sealed class ParkingPermit : BaseEntity
+{
+    public Guid VehicleId { get; set; }
+    public ParkingVehicle? Vehicle { get; set; }
+    /// <summary>Зона действия; null — все зоны.</summary>
+    public Guid? ZoneId { get; set; }
+    public ParkingZone? Zone { get; set; }
+    public DateOnly ValidFrom { get; set; }
+    public DateOnly? ValidTo { get; set; }
+    /// <summary>false — приостановлен вручную (независимо от дат).</summary>
+    public bool IsActive { get; set; } = true;
+    public string? Notes { get; set; }
 }
 
 /// <summary>Системный аудит-лог. Кто, что, когда сделал. Пишется middleware-ом + точечными вызовами.</summary>
@@ -1137,10 +1286,10 @@ public sealed class AuditLogEntry
 }
 
 /// <summary>Настраиваемый критерий табеля (davamiyyət kriteriyası): каждый день попадает в один из
-/// key = normal|undertime|overtime|late|early_leave|dayoff. Пользователь задаёт букву и цвет отображения.</summary>
+/// key = normal|undertime|overtime|late|early_leave|dayoff|onleave|absent. Пользователь задаёт букву и цвет отображения.</summary>
 public sealed class AttendanceCriteria : BaseEntity
 {
-    public string Key { get; set; } = string.Empty;   // normal|undertime|overtime|late|early_leave|dayoff
+    public string Key { get; set; } = string.Empty;   // normal|undertime|overtime|late|early_leave|dayoff|onleave|absent
     public string Label { get; set; } = string.Empty;
     public string Letter { get; set; } = string.Empty; // istifadəçi dəyişir (короткая метка для часовых-нет дней)
     public string Color { get; set; } = "#6B7280";     // hex, istifadəçi dəyişir

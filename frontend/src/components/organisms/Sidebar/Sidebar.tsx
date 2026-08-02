@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavItem } from '../../molecules';
 import { Logo } from '../../atoms';
 import { useAuth } from '../../../auth/AuthContext';
 import { useModule } from '../../../context/ModuleContext';
 import { MODULES, type ModuleKey } from '../../../config/modules';
+import { apiRequest } from '../../../lib/api';
 
 interface NavConfig {
     to: string;
@@ -16,6 +18,8 @@ interface NavConfig {
     anyOf?: string[];
     /** Restrict item to these modules. Omit = visible in every module (e.g. Dashboard, Settings). */
     modules?: ModuleKey[];
+    /** Показывать только когда парковка в платном режиме (parking.mode = Paid). */
+    paidParkingOnly?: boolean;
 }
 
 // Top section — feature pages. Dashboard is visible in every module; the rest are Workforce-only.
@@ -42,10 +46,14 @@ const PRIMARY_NAV: NavConfig[] = [
     // ─── Parking Management ───
     { to: '/parking/management', icon: 'local_parking', labelKey: 'parking.nav.management', modules: ['parking'] },
 
-    // ─── Aktiv Parking (embedded building-management pages — additive tabs) ───
+    // ─── Aktiv Parking (нативные страницы ProjectX) ───
     // "Ana Səhifə" Dashboard tabında göstərilir (parking modulunda), ona görə burada ayrıca yoxdur.
-    { to: '/parking/ap-permits', icon: 'verified_user', label: 'Giriş icazələri', modules: ['parking'] },
-    { to: '/parking/ap-reports', icon: 'bar_chart', label: 'Hesabatlar', modules: ['parking'] },
+    { to: '/parking/vehicles', icon: 'directions_car', labelKey: 'parking.nav.vehicles', modules: ['parking'] },
+    { to: '/parking/ap-permits', icon: 'verified_user', labelKey: 'parking.nav.permits', modules: ['parking'] },
+    { to: '/parking/pos', icon: 'point_of_sale', labelKey: 'parking.nav.pos', modules: ['parking'], paidParkingOnly: true },
+    { to: '/parking/tariffs', icon: 'sell', labelKey: 'parking.nav.tariffs', modules: ['parking'], paidParkingOnly: true },
+    { to: '/parking/history', icon: 'history', labelKey: 'parking.nav.history', modules: ['parking'] },
+    { to: '/parking/ap-reports', icon: 'bar_chart', labelKey: 'parking.nav.reports', modules: ['parking'] },
 ];
 
 // System section — admin / settings pages.
@@ -56,13 +64,25 @@ const SYSTEM_NAV: NavConfig[] = [
 ];
 
 export function Sidebar() {
-    const { hasAnyPermission } = useAuth();
+    const { hasAnyPermission, token } = useAuth();
     const { t } = useTranslation();
     const { activeModule, openPicker } = useModule();
     const module = MODULES[activeModule];
 
+    // Режим парковки: пункты POS/Тарифы видны только при платном режиме.
+    const [parkingPaid, setParkingPaid] = useState(false);
+    useEffect(() => {
+        if (activeModule !== 'parking' || !token) return;
+        let cancelled = false;
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
+            .then((r) => { if (!cancelled) setParkingPaid(r?.value === 'Paid'); })
+            .catch(() => { if (!cancelled) setParkingPaid(false); });
+        return () => { cancelled = true; };
+    }, [activeModule, token]);
+
     const isAllowed = (item: NavConfig): boolean => {
         if (item.modules && !item.modules.includes(activeModule)) return false;
+        if (item.paidParkingOnly && !parkingPaid) return false;
         if (!item.anyOf || item.anyOf.length === 0) return true;
         return hasAnyPermission(item.anyOf);
     };
