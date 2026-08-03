@@ -2388,7 +2388,20 @@
     "reportSentTo": "Отчёт отправлен на {{email}}",
     "failedToSend": "Не удалось отправить",
     "noDatesMatch": "Нет дат, соответствующих выбранным дням недели в этом диапазоне",
-    "assignmentFailed": "Не удалось выполнить назначение. Попробуйте ещё раз."
+    "assignmentFailed": "Не удалось выполнить назначение. Попробуйте ещё раз.",
+    "selectWholeDept": "Выбрать весь отдел ({{count}})",
+    "wholeDept": "весь отдел",
+    "subTabPresent": "На работе",
+    "editLeave": "Редактировать отпуск",
+    "cancelLeave": "Отменить",
+    "cancelLeaveConfirm": "Отменить этот отпуск? Он перестанет учитываться в посещаемости и отчётах.",
+    "subTabPermission": "Разрешения",
+    "permissionShort": "Разрешение",
+    "permissionTitle": "Разрешение на отлучку — {{name}}",
+    "permissionFromTime": "С",
+    "permissionToTime": "До",
+    "permissionShowInReport": "Отображать в отчёте",
+    "permissionDeductHint": "Часы отсутствия будут вычтены из общего отработанного времени. Без галочки разрешение просто фиксируется."
   },
   "systemSettings": {
     "pageTitle": "Настройки системы",
@@ -2720,7 +2733,8 @@
     "actionLeaveDesc": "Оформление отпусков и других разрешений",
     "actionReport": "Создать отчёт",
     "actionReportDesc": "Экспорт отчёта по посещаемости",
-    "weeklyStats": "Статистика за неделю"
+    "weeklyStats": "Статистика за неделю",
+    "openDailyReport": "Открыть дневной отчёт"
   },
   "errorDialog": {
     "title": "Что-то пошло не так",

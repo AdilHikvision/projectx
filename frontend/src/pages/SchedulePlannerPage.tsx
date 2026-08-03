@@ -311,7 +311,7 @@ export function SchedulePlannerPage() {
         if (!emp) return
         const p = getEffective(emp, dateStr)
         setMScheduleId(p.scheduleId)
-        setMDayOff(p.isDayOff)
+        setMDayOff(false) // отметка «выходной» из планировщика убрана; существующий day-off можно только сбросить или перезаписать графиком
         setMReset(false)
         setMHasExisting(!!(p.scheduleId || p.isDayOff))
         setModal({ empId, dateStr, dayLabel, dayNum })
@@ -750,20 +750,8 @@ export function SchedulePlannerPage() {
                                 </button>
                             </div>
 
-                            {/* Day off toggle */}
-                            <label className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors border
-                                ${mDayOff ? 'bg-rose-50 border-rose-200' : 'border-transparent hover:bg-black/[0.04]'}`}>
-                                <input type="checkbox" checked={mDayOff}
-                                    onChange={e => { setMDayOff(e.target.checked); if (e.target.checked) { setMScheduleId(null); setMReset(false) } }}
-                                    className="w-4 h-4 rounded accent-rose-500" />
-                                <div>
-                                    <p className="text-sm font-bold text-text-dark">{t('schedulePlanner.markAsDayOff')}</p>
-                                    <p className="text-[10px] text-text-muted">{t('schedulePlanner.noScheduleForDate')}</p>
-                                </div>
-                            </label>
-
                             {/* Schedule picker */}
-                            {!mDayOff && (
+                            {(
                                 <div className="space-y-2">
                                     <p className="text-[10px] font-black text-text-muted uppercase tracking-widest px-1">
                                         {t('schedulePlanner.selectSchedule')}

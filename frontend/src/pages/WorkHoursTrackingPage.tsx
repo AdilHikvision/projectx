@@ -255,7 +255,7 @@ interface SelfServiceRequestRow {
   reviewComment: string | null
   createdUtc: string
 }
-type SubTab = 'all' | 'absent' | 'late' | 'early' | 'overtime'
+type SubTab = 'all' | 'present' | 'absent' | 'late' | 'early' | 'overtime' | 'permission'
 
 interface PeriodRow {
   employeeId: string
@@ -277,6 +277,8 @@ interface PeriodRow {
   lateMinutes: number | null
   earlyLeaveMinutes: number | null
   corrected: boolean
+  permissionHours?: number | null
+  permissionShowInReport?: boolean | null
 }
 
 interface DailySummary {
@@ -301,6 +303,11 @@ interface DailySummary {
   earlyLeaveMinutes: number | null
   corrected: boolean
   correctionComment: string | null
+  permissionFrom?: string | null
+  permissionTo?: string | null
+  permissionHours?: number | null
+  permissionShowInReport?: boolean | null
+  permissionReason?: string | null
 }
 
 function formatDateOnly(iso: string) {
@@ -395,12 +402,122 @@ function maskHHMM(input: string): string {
 function rowMatchesSubTab(r: PeriodRow, st: SubTab): boolean {
   if (r.isDayOff) return st === 'all'
   switch (st) {
+    case 'present': return !r.isAbsent && r.checkInUtc != null
     case 'absent': return r.isAbsent
     case 'late': return (r.lateMinutes ?? 0) > 0
     case 'early': return (r.earlyLeaveMinutes ?? 0) > 0
     case 'overtime': return r.overtimeHours > 0
+    case 'permission': return (r.permissionHours ?? 0) > 0
     default: return true
   }
+}
+
+/** Одиночный выбор сотрудника: слева дерево отделов (с фильтром), справа поиск + список. */
+function EmployeeSinglePickerModal({ isOpen, onClose, employees, deptTree, selectedId, onPick }: {
+  isOpen: boolean
+  onClose: () => void
+  employees: Employee[]
+  deptTree: WhDept[]
+  selectedId: string
+  onPick: (id: string) => void
+}) {
+  const { t } = useTranslation()
+  const [deptId, setDeptId] = useState<string | null>(null)
+  const [deptSearch, setDeptSearch] = useState('')
+  const [empSearch, setEmpSearch] = useState('')
+  useEffect(() => {
+    if (isOpen) { setDeptId(null); setDeptSearch(''); setEmpSearch('') }
+  }, [isOpen])
+  if (!isOpen) return null
+
+  const descendants = (rootId: string): Set<string> => {
+    const set = new Set<string>([rootId])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const d of deptTree) {
+        if (d.parentId && set.has(d.parentId) && !set.has(d.id)) { set.add(d.id); grew = true }
+      }
+    }
+    return set
+  }
+  const deptScope = deptId ? descendants(deptId) : null
+  const empQ = empSearch.trim().toLowerCase()
+  const list = employees.filter((e) => {
+    if (deptScope && !(e.department && deptScope.has(e.department.id))) return false
+    if (empQ && !(`${e.firstName} ${e.lastName}`.toLowerCase().includes(empQ) || (e.employeeNo ?? '').toLowerCase().includes(empQ))) return false
+    return true
+  })
+  const deptQ = deptSearch.trim().toLowerCase()
+  const deptBtnCls = (active: boolean) =>
+    `w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`
+  const renderDept = (parentId: string | null, depth: number): ReactNode[] =>
+    deptTree
+      .filter((d) => (d.parentId ?? null) === parentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .flatMap((d) => [
+        <button key={d.id} type="button" onClick={() => setDeptId(d.id)} className={deptBtnCls(deptId === d.id)} style={{ paddingLeft: 12 + depth * 16 }}>
+          {d.name}
+        </button>,
+        ...renderDept(d.id, depth + 1),
+      ])
+
+  return (
+    <Modal isOpen title={t('workHours.pickEmployeeTitle')} onClose={onClose}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={deptSearch}
+            onChange={(e) => setDeptSearch(e.target.value)}
+            placeholder={t('workHours.deptSearchPlaceholder')}
+            className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+          />
+          <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+            <button type="button" onClick={() => setDeptId(null)} className={deptBtnCls(deptId === null)}>
+              {t('people.allDepartments')}
+            </button>
+            {deptQ
+              ? deptTree
+                  .filter((d) => d.name.toLowerCase().includes(deptQ))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((d) => (
+                    <button key={d.id} type="button" onClick={() => setDeptId(d.id)} className={deptBtnCls(deptId === d.id)}>
+                      {d.name}
+                    </button>
+                  ))
+              : renderDept(null, 0)}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={empSearch}
+            onChange={(e) => setEmpSearch(e.target.value)}
+            placeholder={t('workHours.empSearchPlaceholder')}
+            className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+          />
+          <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+            {list.length === 0 ? (
+              <p className="px-3 py-4 text-xs text-text-light">{t('workHours.noEmployeesInDept')}</p>
+            ) : (
+              list.map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => onPick(e.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${selectedId === e.id ? 'bg-primary text-white' : 'hover:bg-background-light'}`}
+                >
+                  <span className={`block text-sm font-bold truncate ${selectedId === e.id ? 'text-white' : 'text-text-dark'}`}>{e.firstName} {e.lastName}</span>
+                  {e.department && <span className={`block text-[10px] truncate ${selectedId === e.id ? 'text-white/80' : 'text-text-light'}`}>{e.department.name}</span>}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
 }
 
 function computeShiftHours(start: string, end: string): number | null {
@@ -417,12 +534,22 @@ export function WorkHoursTrackingPage() {
   const { t } = useTranslation()
   const { token } = useAuth()
   const { exporting, downloadReport } = useExportReport(token)
-  const [tab, setTab] = useState<PageTab>('daily')
-  const [subTab, setSubTab] = useState<SubTab>('all')
+  // Стартовые таб/суб-таб можно задать через URL: /work-hours?tab=daily&sub=late
+  // (карточки на главной ведут сюда с нужным фильтром).
+  const [tab, setTab] = useState<PageTab>(() => {
+    const p = new URLSearchParams(window.location.search).get('tab')
+    return p === 'daily' || p === 'weekly' || p === 'monthly' || p === 'monthlyHours' || p === 'schedules' || p === 'leaves' ? p : 'daily'
+  })
+  const [subTab, setSubTab] = useState<SubTab>(() => {
+    const p = new URLSearchParams(window.location.search).get('sub')
+    return p === 'all' || p === 'present' || p === 'absent' || p === 'late' || p === 'early' || p === 'overtime' || p === 'permission' ? p : 'all'
+  })
 
   // Filters
   const [employees, setEmployees] = useState<Employee[]>([])
   const [filterEmployee, setFilterEmployee] = useState('')
+  // Фильтр «весь отдел» (id отдела): взаимоисключающ с filterEmployee.
+  const [filterDepartment, setFilterDepartment] = useState('')
   // Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела.
   const [deptTree, setDeptTree] = useState<WhDept[]>([])
   const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
@@ -442,6 +569,10 @@ export function WorkHoursTrackingPage() {
 
   // Модалка коррекции check-in/check-out для конкретного сотрудника на конкретный день.
   const [correctionModal, setCorrectionModal] = useState<DailySummary | null>(null)
+  // Разрешение на отлучку (почасовое).
+  const [permissionModal, setPermissionModal] = useState<DailySummary | null>(null)
+  const [permissionForm, setPermissionForm] = useState({ from: '13:00', to: '15:00', reason: '', showInReport: true })
+  const [permissionSaving, setPermissionSaving] = useState(false)
   const [correctionForm, setCorrectionForm] = useState({ checkIn: '', checkOut: '', comment: '' })
   const [correctionSaving, setCorrectionSaving] = useState(false)
 
@@ -476,8 +607,13 @@ export function WorkHoursTrackingPage() {
   const [selfServiceLoading, setSelfServiceLoading] = useState(false)
   // Статусные табы секции "Заявки самообслуживания": Pending | Approved | Rejected.
   const [ssTab, setSsTab] = useState<'Pending' | 'Approved' | 'Rejected'>('Pending')
-  const [leaveModal, setLeaveModal] = useState<'create' | null>(null)
+  const [leaveModal, setLeaveModal] = useState<'create' | 'edit' | null>(null)
+  const [editingLeaveId, setEditingLeaveId] = useState<string | null>(null)
+  const [leaveEmpPickerOpen, setLeaveEmpPickerOpen] = useState(false)
   const [leaveSaving, setLeaveSaving] = useState(false)
+  // Фильтры таблицы отпусков: поиск по сотруднику + отдел.
+  const [leaveSearch, setLeaveSearch] = useState('')
+  const [leaveDept, setLeaveDept] = useState('')
   const [leaveForm, setLeaveForm] = useState<LeaveForm>({
     employeeId: '',
     leaveType: 'Vacation',
@@ -547,7 +683,7 @@ useEffect(() => {
   useEffect(() => {
     if (tab === 'daily') loadDaily()
     else if (tab === 'weekly' || tab === 'monthly') loadPeriod()
-  }, [tab, filterEmployee, filterFrom, filterTo, filterDailyDate, weeklyAnchor, monthlyAnchor])
+  }, [tab, filterEmployee, filterDepartment, filterFrom, filterTo, filterDailyDate, weeklyAnchor, monthlyAnchor])
 
   const loadSchedules = useCallback(async () => {
     if (!token) return
@@ -597,6 +733,46 @@ useEffect(() => {
     setEmployees(emps)
     const depts = await apiRequest<WhDept[]>('/api/departments/tree', authOpts).catch(() => [] as WhDept[])
     setDeptTree(depts)
+  }
+
+  function openPermission(d: DailySummary) {
+    setPermissionForm({
+      from: d.permissionFrom ?? '13:00',
+      to: d.permissionTo ?? '15:00',
+      reason: d.permissionReason ?? '',
+      showInReport: d.permissionShowInReport ?? true,
+    })
+    setPermissionModal(d)
+  }
+
+  async function savePermission() {
+    if (!permissionModal || !token) return
+    setPermissionSaving(true)
+    try {
+      await apiRequest('/api/attendance/permission', {
+        method: 'POST', token,
+        body: JSON.stringify({
+          employeeId: permissionModal.employeeId,
+          date: filterDailyDate,
+          fromTime: permissionForm.from,
+          toTime: permissionForm.to,
+          reason: permissionForm.reason.trim() || null,
+          showInReport: permissionForm.showInReport,
+        }),
+      })
+      setPermissionModal(null)
+      await loadDaily()
+    } finally {
+      setPermissionSaving(false)
+    }
+  }
+
+  async function deletePermission() {
+    if (!permissionModal || !token) return
+    const params = new URLSearchParams({ employeeId: permissionModal.employeeId, date: filterDailyDate })
+    await apiRequest(`/api/attendance/permission?${params}`, { method: 'DELETE', token })
+    setPermissionModal(null)
+    await loadDaily()
   }
 
   function openCorrection(d: DailySummary) {
@@ -663,6 +839,7 @@ useEffect(() => {
       const range = tab === 'weekly' ? weekRange(weeklyAnchor) : monthRange(monthlyAnchor)
       const params = new URLSearchParams()
       if (filterEmployee) params.set('employeeId', filterEmployee)
+      else if (filterDepartment) params.set('departmentId', filterDepartment)
       params.set('from', new Date(range.from + 'T00:00:00').toISOString())
       params.set('to', new Date(range.to + 'T00:00:00').toISOString())
       const data = await apiRequest<PeriodRow[]>(`/api/attendance/period?${params}`, authOpts)
@@ -677,6 +854,7 @@ useEffect(() => {
     try {
       const params = new URLSearchParams()
       if (filterEmployee) params.set('employeeId', filterEmployee)
+      else if (filterDepartment) params.set('departmentId', filterDepartment)
       if (filterDailyDate) params.set('date', new Date(filterDailyDate).toISOString())
       const data = await apiRequest<DailySummary[]>(`/api/attendance/daily?${params}`, authOpts)
       setDaily(data)
@@ -899,28 +1077,51 @@ useEffect(() => {
     }
   }
 
-  async function createLeave() {
+  async function saveLeave() {
     if (!token || !leaveForm.employeeId) return
     setLeaveSaving(true)
     try {
-      await apiRequest('/api/leaves', {
-        method: 'POST', token,
-        body: JSON.stringify({
-          employeeId: leaveForm.employeeId,
-          leaveType: leaveForm.leaveType,
-          isPaid: leaveForm.isPaid,
-          startDate: leaveForm.startDate,
-          endDate: leaveForm.endDate,
-          reason: leaveForm.reason.trim() || null,
-          notes: null,
-        }),
-      })
+      const body = {
+        employeeId: leaveForm.employeeId,
+        leaveType: leaveForm.leaveType,
+        isPaid: leaveForm.isPaid,
+        startDate: leaveForm.startDate,
+        endDate: leaveForm.endDate,
+        reason: leaveForm.reason.trim() || null,
+        notes: null,
+      }
+      if (leaveModal === 'edit' && editingLeaveId) {
+        await apiRequest(`/api/leaves/${editingLeaveId}`, { method: 'PUT', token, body: JSON.stringify(body) })
+      } else {
+        await apiRequest('/api/leaves', { method: 'POST', token, body: JSON.stringify(body) })
+      }
       setLeaveModal(null)
+      setEditingLeaveId(null)
       setLeaveForm({ employeeId: '', leaveType: 'Vacation', isPaid: true, startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10), reason: '' })
       await loadLeaves()
     } finally {
       setLeaveSaving(false)
     }
+  }
+
+  function openEditLeave(lv: LeaveRow) {
+    setLeaveForm({
+      employeeId: lv.employeeId,
+      leaveType: lv.leaveType === 'DayOff' ? 'DayOff' : 'Vacation',
+      isPaid: lv.isPaid,
+      startDate: lv.startDate,
+      endDate: lv.endDate,
+      reason: lv.reason ?? '',
+    })
+    setEditingLeaveId(lv.id)
+    setLeaveModal('edit')
+  }
+
+  async function cancelLeave(id: string) {
+    if (!token) return
+    if (!window.confirm(t('workHours.cancelLeaveConfirm'))) return
+    await apiRequest(`/api/leaves/${id}/cancel`, { method: 'POST', token })
+    await loadLeaves()
   }
 
   async function approveLeave(id: string) {
@@ -970,15 +1171,17 @@ useEffect(() => {
           {(() => {
             const showSub = tab === 'daily' || tab === 'weekly' || tab === 'monthly'
             const subTabCounts: Record<SubTab, number> = (() => {
-              if (!showSub) return { all: 0, absent: 0, late: 0, early: 0, overtime: 0 }
+              if (!showSub) return { all: 0, present: 0, absent: 0, late: 0, early: 0, overtime: 0, permission: 0 }
               // Sayğaclar cədvəl filtri ilə EYNİ şərtlərdən istifadə edir — yoxsa "1" göstərib boş cədvəl açılır.
               if (tab === 'daily') {
                 return {
                   all: daily.length,
+                  present: daily.filter(d => !d.isDayOff && !d.isAbsent && d.checkInUtc != null).length,
                   absent: daily.filter(d => !d.isDayOff && d.isAbsent).length,
                   late: daily.filter(d => !d.isDayOff && (d.lateMinutes ?? 0) > 0).length,
                   early: daily.filter(d => !d.isDayOff && (d.earlyLeaveMinutes ?? 0) > 0).length,
                   overtime: daily.filter(d => !d.isDayOff && d.overtimeHours > 0).length,
+                  permission: daily.filter(d => !d.isDayOff && (d.permissionHours ?? 0) > 0).length,
                 }
               }
               const empMap = new Map<string, PeriodRow[]>()
@@ -989,18 +1192,22 @@ useEffect(() => {
               const emps = Array.from(empMap.values())
               return {
                 all: emps.length,
+                present: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'present'))).length,
                 absent: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'absent'))).length,
                 late: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'late'))).length,
                 early: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'early'))).length,
                 overtime: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'overtime'))).length,
+                permission: emps.filter(rows => rows.some(r => rowMatchesSubTab(r, 'permission'))).length,
               }
             })()
             const subLabels: Record<SubTab, string> = {
               all: t('common.all'),
+              present: t('workHours.subTabPresent'),
               absent: t('workHours.subTabAbsent'),
               late: t('workHours.subTabLate'),
               early: t('workHours.subTabEarly'),
               overtime: t('workHours.subTabOvertime'),
+              permission: t('workHours.subTabPermission'),
             }
             const tabLabels: Record<PageTab, string> = {
               daily: t('workHours.tabDaily'),
@@ -1034,7 +1241,7 @@ useEffect(() => {
                   <>
                     <div className="h-px bg-black/[0.06] mx-1 my-1" />
                     <div className="flex gap-1">
-                      {(['all', 'absent', 'late', 'early', 'overtime'] as SubTab[]).map(st => (
+                      {(['all', 'present', 'absent', 'late', 'early', 'overtime', 'permission'] as SubTab[]).map(st => (
                         <button
                           key={st}
                           type="button"
@@ -1067,7 +1274,9 @@ useEffect(() => {
                 <span className="truncate">
                   {(() => {
                     const sel = employees.find((e) => e.id === filterEmployee)
-                    return sel ? `${sel.firstName} ${sel.lastName}` : t('workHours.allEmployees')
+                    if (sel) return `${sel.firstName} ${sel.lastName}`
+                    const dept = deptTree.find((d) => d.id === filterDepartment)
+                    return dept ? `${dept.name} · ${t('workHours.wholeDept')}` : t('workHours.allEmployees')
                   })()}
                 </span>
                 <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
@@ -1144,6 +1353,7 @@ useEffect(() => {
                         : monthRange(monthlyAnchor)
                     const params = new URLSearchParams({ from: range.from, to: range.to })
                     if (filterEmployee) params.set('employeeId', filterEmployee)
+                    else if (filterDepartment) params.set('departmentId', filterDepartment)
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
                 >
@@ -1162,6 +1372,7 @@ useEffect(() => {
                         : monthRange(monthlyAnchor)
                     const params = new URLSearchParams({ from: range.from, to: range.to })
                     if (filterEmployee) params.set('employeeId', filterEmployee)
+                    else if (filterDepartment) params.set('departmentId', filterDepartment)
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
                 >
@@ -1176,7 +1387,8 @@ useEffect(() => {
           {empPickerOpen && (
             <Modal isOpen title={t('workHours.pickEmployeeTitle')} onClose={() => setEmpPickerOpen(false)}>
               {(() => {
-                const closePick = (id: string) => { setFilterEmployee(id); setEmpPickerOpen(false) }
+                const closePick = (id: string) => { setFilterEmployee(id); setFilterDepartment(''); setEmpPickerOpen(false) }
+                const pickWholeDept = (deptId: string) => { setFilterDepartment(deptId); setFilterEmployee(''); setEmpPickerOpen(false) }
                 // Множество отделов-потомков выбранного (включая его самого) — сотрудники подотделов тоже видны.
                 const descendants = (rootId: string): Set<string> => {
                   const set = new Set<string>([rootId])
@@ -1249,10 +1461,26 @@ useEffect(() => {
                         <button
                           type="button"
                           onClick={() => closePick('')}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterEmployee === '' ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterEmployee === '' && filterDepartment === '' ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
                         >
                           {t('workHours.allEmployees')}
                         </button>
+                        {pickerDeptId && (() => {
+                          const deptCount = employees.filter((e) => e.department && deptScope!.has(e.department.id)).length
+                          const active = filterDepartment === pickerDeptId && !filterEmployee
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => pickWholeDept(pickerDeptId)}
+                              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className="material-symbols-outlined text-base shrink-0">groups</span>
+                                <span className="truncate">{t('workHours.selectWholeDept', { count: deptCount })}</span>
+                              </span>
+                            </button>
+                          )
+                        })()}
                         {pickerEmps.length === 0 ? (
                           <p className="px-3 py-4 text-xs text-text-light">{t('workHours.noEmployeesInDept')}</p>
                         ) : (
@@ -1378,10 +1606,12 @@ useEffect(() => {
             const filteredDaily = daily.filter(d => {
               if (d.isDayOff) return subTab === 'all'
               switch (subTab) {
+                case 'present': return !d.isAbsent && d.checkInUtc != null
                 case 'absent': return d.isAbsent
                 case 'late': return (d.lateMinutes ?? 0) > 0
                 case 'early': return (d.earlyLeaveMinutes ?? 0) > 0
                 case 'overtime': return d.overtimeHours > 0
+                case 'permission': return (d.permissionHours ?? 0) > 0
                 default: return true
               }
             })
@@ -1442,13 +1672,23 @@ useEffect(() => {
                               : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                           </td>
                           <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right font-mono text-text-dark">{d.totalHours > 0 ? formatHM(d.totalHours) : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right font-mono text-text-dark">
+                            {d.totalHours > 0 ? formatHM(d.totalHours) : <span className="text-text-light">—</span>}
+                            {(d.permissionHours ?? 0) > 0 && (
+                              <span className="ml-1 text-[10px] font-bold text-sky-600" title={`${d.permissionFrom}–${d.permissionTo}`}>
+                                {d.permissionShowInReport ? `−${formatHM(d.permissionHours!)}` : `(${formatHM(d.permissionHours!)})`}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>
                           <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right">
+                          <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
+                            <button type="button" onClick={() => openPermission(d)} className={`text-[10px] font-black uppercase tracking-wider hover:underline ${(d.permissionHours ?? 0) > 0 ? 'text-sky-600' : 'text-text-light'}`}>
+                              {t('workHours.permissionShort')}
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -1587,15 +1827,39 @@ useEffect(() => {
                     {t('workHours.newLeave')}
                   </Button>
                 </div>
+                {(() => {
+                  const leaveDepts = Array.from(new Set(leaves.map(l => l.department).filter((d): d is string => !!d))).sort()
+                  const q = leaveSearch.trim().toLowerCase()
+                  const leavesFiltered = leaves.filter(lv =>
+                    (!q || lv.employeeName.toLowerCase().includes(q)) &&
+                    (!leaveDept || lv.department === leaveDept))
+                  return (
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.leavesCount', { count: leaves.length })}</p>
+                  <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-black text-text-light uppercase tracking-widest">{t('workHours.leavesCount', { count: leavesFiltered.length })}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={leaveSearch}
+                        onChange={(e) => setLeaveSearch(e.target.value)}
+                        placeholder={t('workHours.empSearchPlaceholder')}
+                        className="w-44 rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                      <select
+                        value={leaveDept}
+                        onChange={(e) => setLeaveDept(e.target.value)}
+                        className="rounded-xl bg-background-light border-none px-3 py-2 text-xs font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      >
+                        <option value="">{t('people.allDepartments')}</option>
+                        {leaveDepts.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
                   </div>
                   {leavesLoading ? (
                     <div className="flex items-center justify-center py-16">
                       <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
                     </div>
-                  ) : leaves.length === 0 ? (
+                  ) : leavesFiltered.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light px-4 text-center">
                       <span className="material-symbols-outlined text-4xl">beach_access</span>
                       <p className="text-sm">{t('workHours.noLeavesYet')}</p>
@@ -1614,7 +1878,7 @@ useEffect(() => {
                           </tr>
                         </thead>
                         <tbody>
-                          {leaves.map((lv) => (
+                          {leavesFiltered.map((lv) => (
                             <tr key={lv.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                               <td className="px-5 py-3 font-bold text-text-dark">
                                 <p>{lv.employeeName}</p>
@@ -1642,7 +1906,7 @@ useEffect(() => {
                                   {t(`workHours.status.${lv.status}`, { defaultValue: lv.status })}
                                 </span>
                               </td>
-                              <td className="px-5 py-3 text-right space-x-2">
+                              <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                                 {lv.status === 'Pending' && (
                                   <>
                                     <button type="button" onClick={() => approveLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-green-700 hover:underline">
@@ -1652,6 +1916,16 @@ useEffect(() => {
                                       {t('workHours.reject')}
                                     </button>
                                   </>
+                                )}
+                                {lv.status !== 'Cancelled' && (
+                                  <button type="button" onClick={() => openEditLeave(lv)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">
+                                    {t('common.edit')}
+                                  </button>
+                                )}
+                                {(lv.status === 'Approved' || lv.status === 'Pending') && (
+                                  <button type="button" onClick={() => cancelLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-amber-700 hover:underline">
+                                    {t('workHours.cancelLeave')}
+                                  </button>
                                 )}
                                 {(lv.status === 'Rejected' || lv.status === 'Cancelled') && (
                                   <button type="button" onClick={() => deleteLeave(lv.id)} className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline">
@@ -1666,6 +1940,8 @@ useEffect(() => {
                     </div>
                   )}
                 </div>
+                  )
+                })()}
               </div>
 
               {/* Self-service requests */}
@@ -2118,6 +2394,70 @@ useEffect(() => {
         </div>
       </Modal>
 
+      {/* ── Разрешение на отлучку (почасовое) ── */}
+      <Modal
+        isOpen={permissionModal !== null}
+        onClose={() => setPermissionModal(null)}
+        title={t('workHours.permissionTitle', { name: permissionModal?.employeeName ?? '' })}
+      >
+        <div className="space-y-4 pt-2">
+          <p className="text-xs text-text-muted">
+            {t('common.date')}: <strong className="text-text-dark">{permissionModal ? formatDateOnly(permissionModal.date) : ''}</strong>
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.permissionFromTime')}</label>
+              <input
+                type="time"
+                value={permissionForm.from}
+                onChange={(e) => setPermissionForm(p => ({ ...p, from: e.target.value }))}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.permissionToTime')}</label>
+              <input
+                type="time"
+                value={permissionForm.to}
+                onChange={(e) => setPermissionForm(p => ({ ...p, to: e.target.value }))}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.reasonOptional')}</label>
+            <input
+              type="text"
+              value={permissionForm.reason}
+              onChange={(e) => setPermissionForm(p => ({ ...p, reason: e.target.value }))}
+              placeholder={t('workHours.reasonPlaceholder')}
+              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            />
+          </div>
+          <label className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-colors border ${permissionForm.showInReport ? 'bg-sky-50 border-sky-200' : 'border-transparent hover:bg-black/[0.04]'}`}>
+            <input
+              type="checkbox"
+              checked={permissionForm.showInReport}
+              onChange={(e) => setPermissionForm(p => ({ ...p, showInReport: e.target.checked }))}
+              className="w-4 h-4 mt-0.5 rounded accent-sky-500"
+            />
+            <div>
+              <p className="text-sm font-bold text-text-dark">{t('workHours.permissionShowInReport')}</p>
+              <p className="text-[10px] text-text-muted">{t('workHours.permissionDeductHint')}</p>
+            </div>
+          </label>
+          <div className="flex gap-3 pt-2">
+            {(permissionModal?.permissionHours ?? 0) > 0 && (
+              <Button variant="danger" onClick={deletePermission}>{t('common.delete')}</Button>
+            )}
+            <Button variant="outline" fullWidth onClick={() => setPermissionModal(null)}>{t('common.cancel')}</Button>
+            <Button fullWidth isLoading={permissionSaving} onClick={savePermission} disabled={!permissionForm.from || !permissionForm.to || permissionForm.to <= permissionForm.from}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       <Modal
         isOpen={correctionModal !== null}
         onClose={() => setCorrectionModal(null)}
@@ -2168,23 +2508,27 @@ useEffect(() => {
       </Modal>
 
       <Modal
-        isOpen={leaveModal === 'create'}
-        onClose={() => setLeaveModal(null)}
-        title={t('workHours.newLeave')}
+        isOpen={leaveModal === 'create' || leaveModal === 'edit'}
+        onClose={() => { setLeaveModal(null); setEditingLeaveId(null) }}
+        title={leaveModal === 'edit' ? t('workHours.editLeave') : t('workHours.newLeave')}
       >
         <div className="space-y-4 pt-2">
           <div className="space-y-1.5">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.employee')}</label>
-            <select
-              value={leaveForm.employeeId}
-              onChange={(e) => setLeaveForm(p => ({ ...p, employeeId: e.target.value }))}
-              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+            <button
+              type="button"
+              disabled={leaveModal === 'edit'}
+              onClick={() => setLeaveEmpPickerOpen(true)}
+              className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2 disabled:opacity-60"
             >
-              <option value="">{t('workHours.selectEmployee')}</option>
-              {employees.map(e => (
-                <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
-              ))}
-            </select>
+              <span className={`truncate ${leaveForm.employeeId ? '' : 'text-text-light'}`}>
+                {(() => {
+                  const sel = employees.find((e) => e.id === leaveForm.employeeId)
+                  return sel ? `${sel.firstName} ${sel.lastName}` : t('workHours.selectEmployee')
+                })()}
+              </span>
+              <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
+            </button>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -2242,13 +2586,23 @@ useEffect(() => {
             />
           </div>
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" fullWidth onClick={() => setLeaveModal(null)}>{t('common.cancel')}</Button>
-            <Button fullWidth isLoading={leaveSaving} onClick={createLeave} disabled={!leaveForm.employeeId}>
-              {t('common.create')}
+            <Button variant="outline" fullWidth onClick={() => { setLeaveModal(null); setEditingLeaveId(null) }}>{t('common.cancel')}</Button>
+            <Button fullWidth isLoading={leaveSaving} onClick={saveLeave} disabled={!leaveForm.employeeId}>
+              {leaveModal === 'edit' ? t('common.save') : t('common.create')}
             </Button>
           </div>
         </div>
       </Modal>
+
+      {/* Выбор сотрудника для отпуска — как фильтр-попап, но строго один человек */}
+      <EmployeeSinglePickerModal
+        isOpen={leaveEmpPickerOpen}
+        onClose={() => setLeaveEmpPickerOpen(false)}
+        employees={employees}
+        deptTree={deptTree}
+        selectedId={leaveForm.employeeId}
+        onPick={(id) => { setLeaveForm(p => ({ ...p, employeeId: id })); setLeaveEmpPickerOpen(false) }}
+      />
 
       {/* ── Quick Assign Modal ── */}
       {assignSchedule && (() => {

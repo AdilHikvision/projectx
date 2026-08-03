@@ -316,6 +316,24 @@ public sealed class DatabaseInitializer(
             ALTER TABLE work_schedules ADD COLUMN IF NOT EXISTS "LateToleranceMinutes" integer NOT NULL DEFAULT 0
             """, cancellationToken);
 
+        // Почасовые разрешения на отлучку (icazə) — часы отсутствия внутри рабочего дня.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS attendance_permissions (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "EmployeeId" uuid NOT NULL REFERENCES employees("Id") ON DELETE CASCADE,
+                "Date" date NOT NULL,
+                "FromTime" interval NOT NULL,
+                "ToTime" interval NOT NULL,
+                "Reason" character varying(500),
+                "ShowInReport" boolean NOT NULL DEFAULT true,
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_attendance_permissions_EmployeeId_Date" ON attendance_permissions ("EmployeeId", "Date")
+            """, cancellationToken);
+
         foreach (var role in SystemRoles.All)
         {
             if (!await roleManager.RoleExistsAsync(role))

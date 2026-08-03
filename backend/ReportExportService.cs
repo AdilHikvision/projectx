@@ -91,38 +91,64 @@ public static class ExcelReportBuilder
         IReadOnlyList<AttendancePeriodRow> rows,
         DateTime from, DateTime to, string? employeeFilter)
     {
+        const string Brand = "#6e56cf";       // фирменный фиолетовый (Violet Aurora)
+        const string BrandSoft = "#f0edfa";
+        const string Line = "#e4e1ee";
+        const string Muted = "#6e6980";
+
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add("Work Hours");
+        ws.ShowGridLines = false;
 
-        // Title
-        ws.Cell("A1").Value = "Work Hours Report";
-        ws.Cell("A1").Style.Font.Bold = true;
-        ws.Cell("A1").Style.Font.FontSize = 14;
-        ws.Cell("A2").Value = $"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}";
-        if (!string.IsNullOrWhiteSpace(employeeFilter))
-            ws.Cell("A3").Value = $"Employee: {employeeFilter}";
-
-        // Headers
-        int headerRow = 5;
         string[] headers = ["Employee", "Department", "Date", "Schedule", "Shift Start", "Shift End",
             "Check In", "Check Out", "Hours", "Overtime", "Late (min)", "Early (min)", "Status", "Corrected"];
+
+        // Title block
+        ws.Range(1, 1, 1, headers.Length).Merge();
+        ws.Cell(1, 1).Value = "Work Hours Report";
+        ws.Cell(1, 1).Style.Font.Bold = true;
+        ws.Cell(1, 1).Style.Font.FontSize = 16;
+        ws.Cell(1, 1).Style.Font.FontColor = XLColor.FromHtml(Brand);
+
+        ws.Range(2, 1, 2, headers.Length).Merge();
+        ws.Cell(2, 1).Value =
+            $"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+            + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"    ·    Employee: {employeeFilter}")
+            + $"    ·    Generated: {DateTime.Now:dd.MM.yyyy HH:mm}";
+        ws.Cell(2, 1).Style.Font.FontColor = XLColor.FromHtml(Muted);
+        ws.Cell(2, 1).Style.Font.FontSize = 10;
+
+        // Header row
+        int headerRow = 4;
         for (int i = 0; i < headers.Length; i++)
         {
             var cell = ws.Cell(headerRow, i + 1);
             cell.Value = headers[i];
             cell.Style.Font.Bold = true;
-            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
             cell.Style.Font.FontColor = XLColor.White;
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml(Brand);
             cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
         }
+        ws.Row(headerRow).Height = 24;
 
         // Data
         int row = headerRow + 1;
         foreach (var r in rows)
         {
+            bool weekend = r.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+            bool zebra = (row - headerRow) % 2 == 0;
+            string rowBg = weekend ? "#f4f2fb" : (zebra ? "#faf9fd" : "#ffffff");
+            ws.Range(row, 1, row, headers.Length).Style.Fill.BackgroundColor = XLColor.FromHtml(rowBg);
+
             ws.Cell(row, 1).Value = r.EmployeeName;
+            ws.Cell(row, 1).Style.Font.Bold = true;
             ws.Cell(row, 2).Value = r.Department ?? "";
-            ws.Cell(row, 3).Value = r.Date.ToString("dd.MM.yyyy");
+            ws.Cell(row, 2).Style.Font.FontColor = XLColor.FromHtml(Muted);
+            ws.Cell(row, 3).Value = r.Date.ToDateTime(TimeOnly.MinValue);
+            ws.Cell(row, 3).Style.DateFormat.Format = "dd.MM.yyyy";
+            ws.Cell(row, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            if (weekend) ws.Cell(row, 3).Style.Font.FontColor = XLColor.FromHtml("#8e77e8");
             ws.Cell(row, 4).Value = r.ScheduleName ?? "";
             ws.Cell(row, 5).Value = r.ShiftStart ?? "";
             ws.Cell(row, 6).Value = r.ShiftEnd ?? "";
@@ -130,38 +156,78 @@ public static class ExcelReportBuilder
                 ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckInUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "";
             ws.Cell(row, 8).Value = r.CheckOutUtc.HasValue
                 ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckOutUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "";
+            ws.Range(row, 5, row, 8).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
             ws.Cell(row, 9).Value = r.TotalHours;
             ws.Cell(row, 9).Style.NumberFormat.Format = "0.00";
+            ws.Cell(row, 9).Style.Font.Bold = true;
             ws.Cell(row, 10).Value = r.OvertimeHours > 0 ? (double?)r.OvertimeHours : null;
             ws.Cell(row, 10).Style.NumberFormat.Format = "0.00";
+            ws.Cell(row, 10).Style.Font.FontColor = XLColor.FromHtml(Brand);
             ws.Cell(row, 11).Value = r.LateMinutes.HasValue ? (int?)r.LateMinutes : null;
             if (r.LateMinutes > 0)
-                ws.Cell(row, 11).Style.Font.FontColor = XLColor.Red;
+            {
+                ws.Cell(row, 11).Style.Font.FontColor = XLColor.FromHtml("#dc2637");
+                ws.Cell(row, 11).Style.Font.Bold = true;
+            }
             ws.Cell(row, 12).Value = r.EarlyLeaveMinutes.HasValue ? (int?)r.EarlyLeaveMinutes : null;
             if (r.EarlyLeaveMinutes > 0)
                 ws.Cell(row, 12).Style.Font.FontColor = XLColor.FromHtml("#ea580c");
+
+            // Статус — цветной «чип»: заливка + цвет текста по состоянию дня.
+            var (stBg, stFg) = r.IsDayOff || (r.OnLeave && r.LeaveType == "DayOff") ? ("#eceaf2", Muted)
+                : r.OnLeave ? ("#fdf5e2", "#c07207")
+                : r.IsAbsent ? ("#fdeeef", "#dc2637")
+                : r.CheckInUtc.HasValue ? ("#e7f8f0", "#0e9f6e")
+                : (rowBg, "#16131f");
             ws.Cell(row, 13).Value = r.StatusLabel;
+            ws.Cell(row, 13).Style.Fill.BackgroundColor = XLColor.FromHtml(stBg);
+            ws.Cell(row, 13).Style.Font.FontColor = XLColor.FromHtml(stFg);
+            ws.Cell(row, 13).Style.Font.Bold = true;
+            ws.Cell(row, 13).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
             ws.Cell(row, 14).Value = r.Corrected ? "Yes" : "";
+            ws.Cell(row, 14).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             row++;
         }
 
         // Summary row
         if (rows.Count > 0)
         {
+            ws.Range(row, 1, row, headers.Length).Style.Fill.BackgroundColor = XLColor.FromHtml(BrandSoft);
+            ws.Range(row, 1, row, headers.Length).Style.Border.TopBorder = XLBorderStyleValues.Medium;
+            ws.Range(row, 1, row, headers.Length).Style.Border.TopBorderColor = XLColor.FromHtml(Brand);
             ws.Cell(row, 1).Value = "TOTAL";
             ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml(Brand);
             ws.Cell(row, 9).Value = rows.Sum(r => r.TotalHours);
-            ws.Cell(row, 9).Style.NumberFormat.Format = "0.00";
-            ws.Cell(row, 9).Style.Font.Bold = true;
             ws.Cell(row, 10).Value = rows.Sum(r => r.OvertimeHours);
-            ws.Cell(row, 10).Style.NumberFormat.Format = "0.00";
-            ws.Cell(row, 10).Style.Font.Bold = true;
-            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f0f0");
+            ws.Cell(row, 11).Value = rows.Sum(r => (double)(r.LateMinutes ?? 0));
+            ws.Cell(row, 12).Value = rows.Sum(r => (double)(r.EarlyLeaveMinutes ?? 0));
+            foreach (var col in new[] { 9, 10, 11, 12 })
+            {
+                ws.Cell(row, col).Style.Font.Bold = true;
+                ws.Cell(row, col).Style.NumberFormat.Format = col <= 10 ? "0.00" : "0";
+            }
+            ws.Row(row).Height = 20;
         }
 
+        // Сетка: тонкие линии внутри таблицы.
+        var tableRange = ws.Range(headerRow, 1, Math.Max(row, headerRow + 1), headers.Length);
+        tableRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.InsideBorderColor = XLColor.FromHtml(Line);
+        tableRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.OutsideBorderColor = XLColor.FromHtml(Line);
+
+        ws.SheetView.FreezeRows(headerRow);
+        if (rows.Count > 0)
+            ws.Range(headerRow, 1, row - 1, headers.Length).SetAutoFilter();
+
         ws.Columns().AdjustToContents();
-        ws.Column(7).Width = 12;
-        ws.Column(8).Width = 12;
+        ws.Column(1).Width = Math.Max(ws.Column(1).Width, 22);
+        ws.Column(7).Width = 11;
+        ws.Column(8).Width = 11;
+        ws.Column(13).Width = Math.Max(ws.Column(13).Width, 14);
 
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
@@ -188,7 +254,7 @@ public static class ExcelReportBuilder
             var cell = ws.Cell(headerRow, i + 1);
             cell.Value = headers[i];
             cell.Style.Font.Bold = true;
-            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#6e56cf");
             cell.Style.Font.FontColor = XLColor.White;
             cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         }
@@ -281,14 +347,14 @@ public static class ExcelReportBuilder
             c.Value = dates[i].ToString("dd MMM");
             var isWeekend = dates[i].DayOfWeek == DayOfWeek.Saturday || dates[i].DayOfWeek == DayOfWeek.Sunday;
             c.Style.Font.FontColor = isWeekend ? XLColor.FromHtml("#dc2626") : XLColor.White;
-            c.Style.Fill.BackgroundColor = isWeekend ? XLColor.FromHtml("#fef2f2") : XLColor.FromHtml("#4f46e5");
+            c.Style.Fill.BackgroundColor = isWeekend ? XLColor.FromHtml("#fef2f2") : XLColor.FromHtml("#6e56cf");
             c.Style.Font.Bold = true;
             c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         }
-        ws.Cell(headerRow, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+        ws.Cell(headerRow, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#6e56cf");
         ws.Cell(headerRow, 1).Style.Font.FontColor = XLColor.White;
         ws.Cell(headerRow, 1).Style.Font.Bold = true;
-        ws.Cell(headerRow, 2).Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+        ws.Cell(headerRow, 2).Style.Fill.BackgroundColor = XLColor.FromHtml("#6e56cf");
         ws.Cell(headerRow, 2).Style.Font.FontColor = XLColor.White;
         ws.Cell(headerRow, 2).Style.Font.Bold = true;
 
@@ -400,7 +466,7 @@ public static class ExcelReportBuilder
             var cell = ws.Cell(headerRow, i + 1);
             cell.Value = headers[i];
             cell.Style.Font.Bold = true;
-            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#6e56cf");
             cell.Style.Font.FontColor = XLColor.White;
             cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
         }
@@ -409,7 +475,7 @@ public static class ExcelReportBuilder
         {
             var dow = new DateTime(year, month, d).DayOfWeek;
             if (dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday)
-                ws.Cell(headerRow, 5 + d).Style.Fill.BackgroundColor = XLColor.FromHtml("#7c78d8");
+                ws.Cell(headerRow, 5 + d).Style.Fill.BackgroundColor = XLColor.FromHtml("#8e77e8");
         }
 
         int row = headerRow + 1;
@@ -485,12 +551,16 @@ public static class ExcelReportBuilder
 
 public static class PdfReportBuilder
 {
-    static readonly string PrimaryHex = "#4f46e5";
+    static readonly string PrimaryHex = "#6e56cf";
 
     public static byte[] BuildAttendance(
         IReadOnlyList<AttendancePeriodRow> rows,
         DateTime from, DateTime to, string? employeeFilter)
     {
+        const string Line = "#ecebf4";
+        const string Ink = "#1a1a2e";
+        const string Muted = "#6e6980";
+
         var doc = Document.Create(container =>
         {
             container.Page(page =>
@@ -501,13 +571,20 @@ public static class PdfReportBuilder
 
                 page.Header().Column(col =>
                 {
-                    col.Item().Text("Work Hours Report")
-                        .FontSize(16).Bold().FontColor(PrimaryHex);
-                    col.Item().Text($"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}")
-                        .FontSize(9).FontColor("#555555");
-                    if (!string.IsNullOrWhiteSpace(employeeFilter))
-                        col.Item().Text($"Employee: {employeeFilter}").FontSize(9);
-                    col.Item().PaddingTop(4).LineHorizontal(1).LineColor(PrimaryHex);
+                    col.Item().Row(r =>
+                    {
+                        r.RelativeItem().Column(left =>
+                        {
+                            left.Item().Text("Work Hours Report")
+                                .FontSize(16).Bold().FontColor(PrimaryHex);
+                            left.Item().Text($"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+                                    + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"   ·   Employee: {employeeFilter}"))
+                                .FontSize(9).FontColor(Muted);
+                        });
+                        r.AutoItem().AlignBottom().Text($"Generated: {DateTime.Now:dd.MM.yyyy HH:mm}")
+                            .FontSize(7.5f).FontColor("#a09aaf");
+                    });
+                    col.Item().PaddingTop(6).LineHorizontal(1.5f).LineColor(PrimaryHex);
                 });
 
                 page.Content().PaddingTop(8).Table(table =>
@@ -534,66 +611,84 @@ public static class PdfReportBuilder
                         foreach (var hdr in new[] { "Employee", "Department", "Date", "Schedule",
                             "Shift S", "Shift E", "In", "Out", "Hours", "OT", "Late", "Early", "Status" })
                         {
-                            h.Cell().Background(PrimaryHex).Padding(3)
+                            h.Cell().Background(PrimaryHex).PaddingVertical(4).PaddingHorizontal(3)
                                 .Text(hdr).FontColor("#ffffff").Bold().FontSize(7.5f);
                         }
                     });
 
+                    // Ячейка с нижней волосяной линией — таблица читается без плотной сетки.
+                    IContainer Body(string bg) => table.Cell()
+                        .Background(bg)
+                        .BorderBottom(0.5f).BorderColor(Line)
+                        .PaddingVertical(3).PaddingHorizontal(3);
+
                     bool alt = false;
                     foreach (var r in rows)
                     {
-                        string bg = alt ? "#f8f8ff" : "#ffffff";
+                        bool weekend = r.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                        string bg = weekend ? "#f4f2fb" : (alt ? "#faf9fd" : "#ffffff");
                         alt = !alt;
                         bool isLate = r.LateMinutes > 0;
-                        string textColor = "#1a1a2e";
 
-                        table.Cell().Background(bg).Padding(3).Text(r.EmployeeName).FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.Department ?? "").FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.Date.ToString("dd.MM.yy")).FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.ScheduleName ?? "").FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.ShiftStart ?? "").FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.ShiftEnd ?? "").FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.CheckInUtc.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckInUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "")
-                            .FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.CheckOutUtc.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckOutUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "")
-                            .FontSize(7.5f).FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3).Text(r.TotalHours.ToString("0.00")).FontSize(7.5f).Bold().FontColor(textColor);
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.OvertimeHours > 0 ? r.OvertimeHours.ToString("0.00") : "")
-                            .FontSize(7.5f).FontColor("#7c3aed");
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.LateMinutes.HasValue ? r.LateMinutes.ToString()! : "")
-                            .FontSize(7.5f).FontColor(isLate ? "#dc2626" : textColor);
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.EarlyLeaveMinutes.HasValue ? r.EarlyLeaveMinutes.ToString()! : "")
-                            .FontSize(7.5f).FontColor(r.EarlyLeaveMinutes > 0 ? "#ea580c" : textColor);
-                        table.Cell().Background(bg).Padding(3)
-                            .Text(r.StatusLabel).FontSize(7.5f).FontColor(textColor);
+                        Body(bg).Text(r.EmployeeName).FontSize(7.5f).SemiBold().FontColor(Ink);
+                        Body(bg).Text(r.Department ?? "").FontSize(7.5f).FontColor(Muted);
+                        Body(bg).AlignCenter().Text(r.Date.ToString("dd.MM.yy"))
+                            .FontSize(7.5f).FontColor(weekend ? "#8e77e8" : Ink);
+                        Body(bg).Text(r.ScheduleName ?? "").FontSize(7.5f).FontColor(Ink);
+                        Body(bg).AlignCenter().Text(r.ShiftStart ?? "").FontSize(7.5f).FontColor(Muted);
+                        Body(bg).AlignCenter().Text(r.ShiftEnd ?? "").FontSize(7.5f).FontColor(Muted);
+                        Body(bg).AlignCenter()
+                            .Text(r.CheckInUtc.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckInUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "—")
+                            .FontSize(7.5f).FontColor(Ink);
+                        Body(bg).AlignCenter()
+                            .Text(r.CheckOutUtc.HasValue ? TimeZoneInfo.ConvertTimeFromUtc(r.CheckOutUtc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "—")
+                            .FontSize(7.5f).FontColor(Ink);
+                        Body(bg).AlignRight().Text(r.TotalHours > 0 ? r.TotalHours.ToString("0.00") : "")
+                            .FontSize(7.5f).Bold().FontColor(Ink);
+                        Body(bg).AlignRight().Text(r.OvertimeHours > 0 ? r.OvertimeHours.ToString("0.00") : "")
+                            .FontSize(7.5f).FontColor(PrimaryHex);
+                        Body(bg).AlignRight().Text(r.LateMinutes > 0 ? r.LateMinutes.ToString()! : "")
+                            .FontSize(7.5f).Bold().FontColor(isLate ? "#dc2637" : Ink);
+                        Body(bg).AlignRight().Text(r.EarlyLeaveMinutes > 0 ? r.EarlyLeaveMinutes.ToString()! : "")
+                            .FontSize(7.5f).FontColor("#ea580c");
+
+                        var (stBg, stFg) = r.IsDayOff || (r.OnLeave && r.LeaveType == "DayOff") ? ("#eceaf2", Muted)
+                            : r.OnLeave ? ("#fdf5e2", "#c07207")
+                            : r.IsAbsent ? ("#fdeeef", "#dc2637")
+                            : r.CheckInUtc.HasValue ? ("#e7f8f0", "#0e9f6e")
+                            : (bg, Ink);
+                        Body(stBg).AlignCenter().Text(r.StatusLabel).FontSize(7.5f).SemiBold().FontColor(stFg);
                     }
 
                     // Summary
                     if (rows.Count > 0)
                     {
-                        table.Cell().ColumnSpan(8).Background("#f0f0f0").Padding(3)
-                            .Text("TOTAL").Bold().FontSize(7.5f);
-                        table.Cell().Background("#f0f0f0").Padding(3)
-                            .Text(rows.Sum(r => r.TotalHours).ToString("0.00")).Bold().FontSize(7.5f);
-                        table.Cell().Background("#f0f0f0").Padding(3)
-                            .Text(rows.Sum(r => r.OvertimeHours).ToString("0.00")).Bold().FontSize(7.5f);
-                        table.Cell().ColumnSpan(3).Background("#f0f0f0");
+                        IContainer Total() => table.Cell()
+                            .Background("#f0edfa")
+                            .BorderTop(1).BorderColor(PrimaryHex)
+                            .PaddingVertical(4).PaddingHorizontal(3);
+
+                        Total().Text("TOTAL").Bold().FontSize(7.5f).FontColor(PrimaryHex);
+                        table.Cell().ColumnSpan(7).Background("#f0edfa").BorderTop(1).BorderColor(PrimaryHex);
+                        Total().AlignRight().Text(rows.Sum(r => r.TotalHours).ToString("0.00")).Bold().FontSize(7.5f);
+                        Total().AlignRight().Text(rows.Sum(r => r.OvertimeHours).ToString("0.00")).Bold().FontSize(7.5f).FontColor(PrimaryHex);
+                        Total().AlignRight().Text(rows.Sum(r => r.LateMinutes ?? 0).ToString()).Bold().FontSize(7.5f).FontColor("#dc2637");
+                        Total().AlignRight().Text(rows.Sum(r => r.EarlyLeaveMinutes ?? 0).ToString()).Bold().FontSize(7.5f).FontColor("#ea580c");
+                        table.Cell().Background("#f0edfa").BorderTop(1).BorderColor(PrimaryHex);
                     }
                 });
 
-                page.Footer().AlignRight()
-                    .Text(x =>
+                page.Footer().Row(r =>
+                {
+                    r.RelativeItem().Text("ProjectX · Work Hours").FontSize(7).FontColor("#a09aaf");
+                    r.AutoItem().Text(x =>
                     {
                         x.Span("Page ").FontSize(7).FontColor("#888888");
                         x.CurrentPageNumber().FontSize(7);
                         x.Span(" of ").FontSize(7);
                         x.TotalPages().FontSize(7);
                     });
+                });
             });
         });
 
@@ -873,14 +968,14 @@ public static class PdfReportBuilder
 
                         table.Header(h =>
                         {
-                            void Head(string txt, string bg = "#4f46e5")
+                            void Head(string txt, string bg = "#6e56cf")
                                 => h.Cell().Background(bg).Padding(2).AlignCenter()
                                     .Text(txt).FontColor("#ffffff").Bold().FontSize(6.5f);
                             Head("S/S"); Head("Tab.№"); Head("Soyadı, adı, atasının adı"); Head("Vəzifəsi"); Head("Şöbə");
                             for (int d = 1; d <= daysInMonth; d++)
                             {
                                 var dow = new DateTime(year, month, d).DayOfWeek;
-                                Head(d.ToString(), dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday ? "#7c78d8" : "#4f46e5");
+                                Head(d.ToString(), dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday ? "#8e77e8" : "#6e56cf");
                             }
                             Head("C.gün"); Head("C.saat"); Head("Ə.gün"); Head("Ə.saat");
                         });

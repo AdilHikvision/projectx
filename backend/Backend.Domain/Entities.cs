@@ -383,6 +383,23 @@ public sealed class AttendanceCorrection : BaseEntity
     public Guid? CorrectedByUserId { get; set; }
 }
 
+/// <summary>
+/// Почасовое разрешение на отлучку («icazə»): сотрудник отпросился на несколько часов
+/// в конкретный день. Уникально по (EmployeeId, Date). Если ShowInReport=true —
+/// разрешение показывается в отчётах и его часы вычитаются из общего времени.
+/// </summary>
+public sealed class AttendancePermission : BaseEntity
+{
+    public Guid EmployeeId { get; set; }
+    public Employee Employee { get; set; } = null!;
+    public DateOnly Date { get; set; }
+    public TimeSpan FromTime { get; set; }
+    public TimeSpan ToTime { get; set; }
+    public string? Reason { get; set; }
+    /// <summary>Отображать в отчёте (и вычитать часы отсутствия из totalHours).</summary>
+    public bool ShowInReport { get; set; } = true;
+}
+
 public enum AttendanceEventType { In, Out }
 
 /// <summary>Фактическая запись прихода/ухода с устройства или добавленная вручную.</summary>

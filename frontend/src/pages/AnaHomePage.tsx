@@ -167,40 +167,32 @@ export function AnaHomePage() {
           </div>
         </div>
 
-        {/* KPI */}
+        {/* KPI — клик ведёт в дневной отчёт с соответствующим фильтром */}
         <div className="ana-kpis">
-          <div className="ana-kpi">
-            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#EFECFD' }}>{svg(IC_GROUP, '#6C5CE7')}</span></div>
-            <div>
-              <div className="ana-kpi-lbl">{t('anaHome.kpiTotal')}</div>
-              <div className="ana-kpi-num" style={{ color: '#252641' }}>{stats.total}</div>
-              <div className="ana-kpi-sub">{t('anaHome.persons')}</div>
+          {([
+            { cls: 'ana-kpi', sub: 'all', icBg: '#EFECFD', ic: svg(IC_GROUP, '#6C5CE7'), lbl: t('anaHome.kpiTotal'), num: stats.total, numColor: '#252641', subText: t('anaHome.persons') },
+            { cls: 'ana-kpi green', sub: 'present', icBg: '#EAF8F0', ic: svg(IC_CHECK, '#1E9B62'), lbl: t('anaHome.kpiPresent'), num: stats.present.length, numColor: '#1E9B62', subText: t('anaHome.personsPct', { pct: donutPresent }) },
+            { cls: 'ana-kpi orange', sub: 'late', icBg: '#FEF4E6', ic: svg(IC_CLOCK, '#D98324'), lbl: t('anaHome.kpiLate'), num: stats.late.length, numColor: '#D98324', subText: t('anaHome.personsPct', { pct: donutLate }) },
+            { cls: 'ana-kpi red', sub: 'absent', icBg: '#FDECEA', ic: svg(IC_X, '#D9534A'), lbl: t('anaHome.kpiAbsent'), num: stats.absent.length, numColor: '#D9534A', subText: t('anaHome.personsPct', { pct: stats.pct(stats.absent.length) }) },
+          ] as const).map((k) => (
+            <div
+              key={k.sub}
+              className={k.cls}
+              role="button"
+              tabIndex={0}
+              style={{ cursor: 'pointer' }}
+              title={t('anaHome.openDailyReport')}
+              onClick={() => navigate(`/work-hours?tab=daily&sub=${k.sub}`)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/work-hours?tab=daily&sub=${k.sub}`) }}
+            >
+              <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: k.icBg }}>{k.ic}</span></div>
+              <div>
+                <div className="ana-kpi-lbl">{k.lbl}</div>
+                <div className="ana-kpi-num" style={{ color: k.numColor }}>{k.num}</div>
+                <div className="ana-kpi-sub">{k.subText}</div>
+              </div>
             </div>
-          </div>
-          <div className="ana-kpi green">
-            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#EAF8F0' }}>{svg(IC_CHECK, '#1E9B62')}</span></div>
-            <div>
-              <div className="ana-kpi-lbl">{t('anaHome.kpiPresent')}</div>
-              <div className="ana-kpi-num" style={{ color: '#1E9B62' }}>{stats.present.length}</div>
-              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: donutPresent })}</div>
-            </div>
-          </div>
-          <div className="ana-kpi orange">
-            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#FEF4E6' }}>{svg(IC_CLOCK, '#D98324')}</span></div>
-            <div>
-              <div className="ana-kpi-lbl">{t('anaHome.kpiLate')}</div>
-              <div className="ana-kpi-num" style={{ color: '#D98324' }}>{stats.late.length}</div>
-              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: donutLate })}</div>
-            </div>
-          </div>
-          <div className="ana-kpi red">
-            <div className="ana-kpi-top"><span className="ana-kpi-ic" style={{ background: '#FDECEA' }}>{svg(IC_X, '#D9534A')}</span></div>
-            <div>
-              <div className="ana-kpi-lbl">{t('anaHome.kpiAbsent')}</div>
-              <div className="ana-kpi-num" style={{ color: '#D9534A' }}>{stats.absent.length}</div>
-              <div className="ana-kpi-sub">{t('anaHome.personsPct', { pct: stats.pct(stats.absent.length) })}</div>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* 3-sütun */}

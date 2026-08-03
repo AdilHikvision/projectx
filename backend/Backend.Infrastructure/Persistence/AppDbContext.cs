@@ -38,6 +38,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<AttendanceRequest> AttendanceRequests => Set<AttendanceRequest>();
     public DbSet<DeviceAuthLog> DeviceAuthLogs => Set<DeviceAuthLog>();
     public DbSet<AttendanceCorrection> AttendanceCorrections => Set<AttendanceCorrection>();
+    public DbSet<AttendancePermission> AttendancePermissions => Set<AttendancePermission>();
     public DbSet<AttendanceCriteria> AttendanceCriterias => Set<AttendanceCriteria>();
     public DbSet<GeoZone> GeoZones => Set<GeoZone>();
     public DbSet<EmployeeDayPattern> EmployeeDayPatterns => Set<EmployeeDayPattern>();
@@ -320,6 +321,15 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Comment).HasMaxLength(1000);
             entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => new { x.EmployeeId, x.DateUtc }).IsUnique();
+        });
+
+        builder.Entity<AttendancePermission>(entity =>
+        {
+            entity.ToTable("attendance_permissions");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Reason).HasMaxLength(500);
+            entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.EmployeeId, x.Date }).IsUnique();
         });
 
         builder.Entity<GeoZone>(entity =>

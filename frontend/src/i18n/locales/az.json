@@ -2365,7 +2365,20 @@
     "reportSentTo": "Hesabat {{email}} ünvanına göndərildi",
     "failedToSend": "Göndərilmədi",
     "noDatesMatch": "Bu aralıqda seçilmiş həftə günlərinə uyğun tarix yoxdur",
-    "assignmentFailed": "Təyinat alınmadı. Yenidən cəhd edin."
+    "assignmentFailed": "Təyinat alınmadı. Yenidən cəhd edin.",
+    "selectWholeDept": "Bütün şöbəni seç ({{count}})",
+    "wholeDept": "bütün şöbə",
+    "subTabPresent": "İşdə",
+    "editLeave": "Məzuniyyəti redaktə et",
+    "cancelLeave": "Ləğv et",
+    "cancelLeaveConfirm": "Bu məzuniyyət ləğv edilsin? O, davamiyyət və hesabatlarda nəzərə alınmayacaq.",
+    "subTabPermission": "İcazələr",
+    "permissionShort": "İcazə",
+    "permissionTitle": "İcazə — {{name}}",
+    "permissionFromTime": "Başlanğıc",
+    "permissionToTime": "Son",
+    "permissionShowInReport": "Hesabatda göstər",
+    "permissionDeductHint": "İcazə saatları ümumi iş vaxtından çıxılacaq. Seçilməzsə, icazə yalnız qeyd olunur."
   },
   "systemSettings": {
     "pageTitle": "Sistem Parametrləri",
@@ -2697,7 +2710,8 @@
     "actionLeaveDesc": "Məzuniyyət və digər icazələri qeyd edin",
     "actionReport": "Hesabat yarat",
     "actionReportDesc": "Davamiyyət hesabatını ixrac edin",
-    "weeklyStats": "Bu həftəlik statistika"
+    "weeklyStats": "Bu həftəlik statistika",
+    "openDailyReport": "Günlük hesabatı aç"
   },
   "errorDialog": {
     "title": "Nəsə səhv getdi",

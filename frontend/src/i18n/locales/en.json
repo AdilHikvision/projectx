@@ -2373,7 +2373,20 @@
     "reportSentTo": "Report sent to {{email}}",
     "failedToSend": "Failed to send",
     "noDatesMatch": "No dates match the selected days of week in this range",
-    "assignmentFailed": "Assignment failed. Please try again."
+    "assignmentFailed": "Assignment failed. Please try again.",
+    "selectWholeDept": "Select whole department ({{count}})",
+    "wholeDept": "whole department",
+    "subTabPresent": "At work",
+    "editLeave": "Edit leave",
+    "cancelLeave": "Cancel",
+    "cancelLeaveConfirm": "Cancel this leave? It will stop affecting attendance and reports.",
+    "subTabPermission": "Permissions",
+    "permissionShort": "Permission",
+    "permissionTitle": "Absence permission — {{name}}",
+    "permissionFromTime": "From",
+    "permissionToTime": "To",
+    "permissionShowInReport": "Show in report",
+    "permissionDeductHint": "Absence hours will be deducted from total worked time. If unchecked, the permission is only recorded."
   },
   "systemSettings": {
     "pageTitle": "System Settings",
@@ -2705,7 +2718,8 @@
     "actionLeaveDesc": "Register vacations and other leaves",
     "actionReport": "Create report",
     "actionReportDesc": "Export the attendance report",
-    "weeklyStats": "This week's statistics"
+    "weeklyStats": "This week's statistics",
+    "openDailyReport": "Open daily report"
   },
   "errorDialog": {
     "title": "Something went wrong",

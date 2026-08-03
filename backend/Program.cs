@@ -3793,8 +3793,9 @@ app.MapPut("/api/leaves/{id:guid}", async (Guid id, UpdateLeaveRequest req, AppD
 {
     var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
     if (leave is null) return Results.NotFound();
-    if (leave.Status == LeaveStatus.Approved) return Results.BadRequest(new { message = "Cannot edit an approved leave." });
+    // Админ с Leaves.Manage может править и одобренный отпуск: админ-назначение создаётся сразу Approved.
     if (!Enum.TryParse<LeaveType>(req.LeaveType, true, out var lt)) return Results.BadRequest(new { message = "Invalid leaveType." });
+    if (req.EndDate < req.StartDate) return Results.BadRequest(new { message = "EndDate must be >= StartDate." });
     leave.LeaveType = lt; leave.IsPaid = req.IsPaid; leave.StartDate = req.StartDate;
     leave.EndDate = req.EndDate; leave.Reason = req.Reason; leave.Notes = req.Notes;
     leave.UpdatedUtc = DateTime.UtcNow;
@@ -3809,6 +3810,21 @@ app.MapDelete("/api/leaves/{id:guid}", async (Guid id, AppDbContext db, Cancella
     db.EmployeeLeaves.Remove(leave);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
+}).RequireAuthorization("Leaves.Manage");
+
+// Отмена отпуска (Pending/Approved → Cancelled): запись остаётся в истории,
+// но перестаёт влиять на посещаемость и отчёты.
+app.MapPost("/api/leaves/{id:guid}/cancel", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var leave = await db.EmployeeLeaves.FirstOrDefaultAsync(l => l.Id == id, ct);
+    if (leave is null) return Results.NotFound();
+    if (leave.Status != LeaveStatus.Cancelled)
+    {
+        leave.Status = LeaveStatus.Cancelled;
+        leave.UpdatedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+    return Results.Ok(new { leave.Id, status = leave.Status.ToString() });
 }).RequireAuthorization("Leaves.Manage");
 
 app.MapPost("/api/leaves/{id:guid}/approve", async (Guid id, AppDbContext db, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, INotificationService notifService, CancellationToken ct) =>
@@ -3864,7 +3880,7 @@ app.MapGet("/api/attendance", async (Guid? employeeId, DateTime? from, DateTime?
 
 // Daily report за ОДИН день. Показывает сотрудников у которых назначен WorkSchedule
 // или есть хотя бы один день в Schedule Planner.
-app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var dayStartUtc = (date ?? DateTime.UtcNow).ToUniversalTime().Date;
     var dayEndUtc = dayStartUtc.AddDays(1);
@@ -3875,6 +3891,9 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
         .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    if (deptScope is not null)
+        employeesQuery = employeesQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
 
     // EmployeeNo (string) — это id из устройства. Джоиним DeviceAuthLogs по нему.
@@ -3929,6 +3948,11 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
         .GroupBy(l => l.EmployeeId)
         .ToDictionary(g => g.Key, g => g.First());
 
+    // Почасовые разрешения на этот день.
+    var permByEmp = await dbContext.AttendancePermissions.AsNoTracking()
+        .Where(p => p.Date == dayDate)
+        .ToDictionaryAsync(p => p.EmployeeId, cancellationToken);
+
     var rows = employees.Select(e =>
     {
         byEmployee.TryGetValue(e.Id, out var stat);
@@ -3940,6 +3964,13 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
         var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPattern, stat?.First, stat?.Last, corr, leave,
             nextDayFirstByEmployee.TryGetValue(e.Id, out var ndf) ? ndf : null);
 
+        // Разрешение: при ShowInReport часы отлучки вычитаются из общего времени.
+        permByEmp.TryGetValue(e.Id, out var perm);
+        var permHours = perm is null ? 0 : Math.Max(0, (perm.ToTime - perm.FromTime).TotalHours);
+        var totalHours = d.TotalHours;
+        if (perm is not null && perm.ShowInReport && totalHours > 0)
+            totalHours = Math.Round(Math.Max(0, totalHours - permHours), 2);
+
         return new
         {
             employeeId = e.Id,
@@ -3950,7 +3981,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
             shiftEnd = d.ShiftEnd?.ToString(@"hh\:mm"),
             checkInUtc = d.CheckInUtc,
             checkOutUtc = d.CheckOutUtc,
-            totalHours = d.TotalHours,
+            totalHours,
             normHours = d.NormHours,
             overtimeHours = d.OvertimeHours,
             isDayOff = d.IsDayOff,
@@ -3962,7 +3993,12 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
             lateMinutes = d.LateMinutes,
             earlyLeaveMinutes = d.EarlyLeaveMinutes,
             corrected = d.Corrected,
-            correctionComment = corr?.Comment
+            correctionComment = corr?.Comment,
+            permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
+            permissionTo = perm?.ToTime.ToString(@"hh\:mm"),
+            permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
+            permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport,
+            permissionReason = perm?.Reason
         };
     }).ToList();
 
@@ -3971,7 +4007,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, App
 
 // Период (week/month): для каждого дня в диапазоне даёт ту же daily-строку, что и /daily.
 // Возвращает плоский массив (по сотруднику × по дню), фронт группирует/агрегирует на своей стороне.
-app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var fromUtc = (from ?? DateTime.UtcNow.AddDays(-7)).ToUniversalTime().Date;
     var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
@@ -3986,6 +4022,9 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    if (deptScope is not null)
+        employeesQuery = employeesQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
 
     var empNos = employees
@@ -4021,6 +4060,12 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
         .GroupBy(l => l.EmployeeId)
         .ToDictionary(g => g.Key, g => g.ToList());
 
+    // Почасовые разрешения в диапазоне: (EmployeeId, Date) → разрешение.
+    var permByEmpDate = (await dbContext.AttendancePermissions.AsNoTracking()
+            .Where(p => p.Date >= fromDate && p.Date <= toDate)
+            .ToListAsync(cancellationToken))
+        .ToDictionary(p => (p.EmployeeId, p.Date));
+
     var rows = new List<object>();
     foreach (var e in employees)
     {
@@ -4043,6 +4088,12 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
             var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPat, rawFirst, rawLast, corr, leave,
                 byEmpNoDay.TryGetValue((empKeyLower, day.AddDays(1)), out var nextStat) ? nextStat.First : null);
 
+            permByEmpDate.TryGetValue((e.Id, dayKey), out var perm);
+            var permHours = perm is null ? 0 : Math.Max(0, (perm.ToTime - perm.FromTime).TotalHours);
+            var totalHours = d.TotalHours;
+            if (perm is not null && perm.ShowInReport && totalHours > 0)
+                totalHours = Math.Round(Math.Max(0, totalHours - permHours), 2);
+
             rows.Add(new
             {
                 employeeId = e.Id,
@@ -4053,7 +4104,7 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 shiftEnd = d.ShiftEnd?.ToString(@"hh\:mm"),
                 checkInUtc = d.CheckInUtc,
                 checkOutUtc = d.CheckOutUtc,
-                totalHours = d.TotalHours,
+                totalHours,
                 normHours = d.NormHours,
                 overtimeHours = d.OvertimeHours,
                 isDayOff = d.IsDayOff,
@@ -4063,7 +4114,9 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 leaveIsPaid = d.LeaveIsPaid,
                 lateMinutes = d.LateMinutes,
                 earlyLeaveMinutes = d.EarlyLeaveMinutes,
-                corrected = d.Corrected
+                corrected = d.Corrected,
+                permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
+                permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport
             });
         }
     }
@@ -4488,6 +4541,56 @@ app.MapDelete("/api/attendance/daily/correction", async (
     return Results.NoContent();
 }).RequireAuthorization("Attendance.Manage");
 
+// ── Почасовые разрешения на отлучку (icazə) ──────────────────────────────────
+// Upsert по (EmployeeId, Date): одно разрешение на сотрудника в день.
+app.MapPost("/api/attendance/permission", async (
+    AttendancePermissionRequest req, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    if (!TimeSpan.TryParse(req.FromTime, out var fromTime) || !TimeSpan.TryParse(req.ToTime, out var toTime))
+        return Results.BadRequest(new { message = "fromTime/toTime must be HH:mm" });
+    if (toTime <= fromTime)
+        return Results.BadRequest(new { message = "toTime must be after fromTime" });
+    var empExists = await dbContext.Employees.AnyAsync(e => e.Id == req.EmployeeId, cancellationToken);
+    if (!empExists) return Results.NotFound(new { message = "Employee not found." });
+
+    var existing = await dbContext.AttendancePermissions
+        .FirstOrDefaultAsync(p => p.EmployeeId == req.EmployeeId && p.Date == req.Date, cancellationToken);
+    if (existing is null)
+    {
+        existing = new AttendancePermission
+        {
+            EmployeeId = req.EmployeeId,
+            Date = req.Date,
+            FromTime = fromTime,
+            ToTime = toTime,
+            Reason = req.Reason,
+            ShowInReport = req.ShowInReport,
+        };
+        dbContext.AttendancePermissions.Add(existing);
+    }
+    else
+    {
+        existing.FromTime = fromTime;
+        existing.ToTime = toTime;
+        existing.Reason = req.Reason;
+        existing.ShowInReport = req.ShowInReport;
+        existing.UpdatedUtc = DateTime.UtcNow;
+    }
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { id = existing.Id });
+}).RequireAuthorization("Attendance.Manage");
+
+app.MapDelete("/api/attendance/permission", async (
+    Guid employeeId, DateOnly date, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var existing = await dbContext.AttendancePermissions
+        .FirstOrDefaultAsync(p => p.EmployeeId == employeeId && p.Date == date, cancellationToken);
+    if (existing is null) return Results.NotFound();
+    dbContext.AttendancePermissions.Remove(existing);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization("Attendance.Manage");
+
 // Синхронизация ACS → attendance_records (настройки и ручной диапазон; пути под /api/attendance — как sync-from-device)
 app.MapGet("/api/attendance/log-sync-settings", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -4786,8 +4889,27 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
 
 // ─── Report Exports ────────────────────────────────────────────────────────────
 
+// Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
+static async Task<HashSet<Guid>?> BuildDepartmentScopeAsync(Guid? departmentId, AppDbContext dbContext, CancellationToken ct)
+{
+    if (departmentId is null) return null;
+    var all = await dbContext.Departments.AsNoTracking()
+        .Select(d => new { d.Id, d.ParentId })
+        .ToListAsync(ct);
+    var scope = new HashSet<Guid> { departmentId.Value };
+    var grew = true;
+    while (grew)
+    {
+        grew = false;
+        foreach (var d in all)
+            if (d.ParentId.HasValue && scope.Contains(d.ParentId.Value) && scope.Add(d.Id))
+                grew = true;
+    }
+    return scope;
+}
+
 static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttendanceRows(
-    DateTime fromUtc, DateTime toUtc, Guid? employeeId, AppDbContext dbContext, CancellationToken ct)
+    DateTime fromUtc, DateTime toUtc, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct)
 {
     var fromDate = DateOnly.FromDateTime(fromUtc);
     var toDate = DateOnly.FromDateTime(toUtc);
@@ -4798,6 +4920,9 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) empQuery = empQuery.Where(e => e.Id == employeeId.Value);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, ct);
+    if (deptScope is not null)
+        empQuery = empQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await empQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(ct);
 
     // +1 день логов: check-out ночной смены последнего дня попадает на следующие сутки.
@@ -4817,6 +4942,12 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
             .Where(l => l.Status == LeaveStatus.Approved && l.StartDate <= toDate && l.EndDate >= fromDate && empIdsForLeave.Contains(l.EmployeeId))
             .ToListAsync(ct))
         .GroupBy(l => l.EmployeeId).ToDictionary(g => g.Key, g => g.ToList());
+
+    // Почасовые разрешения: при ShowInReport часы вычитаются из TotalHours (как на экране).
+    var permByEmpDate = (await dbContext.AttendancePermissions.AsNoTracking()
+            .Where(p => p.Date >= fromDate && p.Date <= toDate)
+            .ToListAsync(ct))
+        .ToDictionary(p => (p.EmployeeId, p.Date));
 
     var byEmpNoDay = logs
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
@@ -4846,6 +4977,11 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
             var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPat, rawFirst, rawLast, corr, leave,
                 byEmpNoDay.TryGetValue((empKeyLower, day.AddDays(1)), out var nextStat) ? nextStat.First : null);
 
+            permByEmpDate.TryGetValue((e.Id, dayKey), out var perm);
+            var exportTotalHours = d.TotalHours;
+            if (perm is not null && perm.ShowInReport && exportTotalHours > 0)
+                exportTotalHours = Math.Round(Math.Max(0, exportTotalHours - Math.Max(0, (perm.ToTime - perm.FromTime).TotalHours)), 2);
+
             rows.Add(new AttendancePeriodRow(
                 e.Id, name, e.Department?.Name, dayKey,
                 d.ScheduleName,
@@ -4853,7 +4989,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 d.ShiftEnd?.ToString(@"hh\:mm"),
                 d.CheckInUtc,
                 d.CheckOutUtc,
-                d.TotalHours,
+                exportTotalHours,
                 d.LateMinutes,
                 d.Corrected,
                 d.NormHours,
@@ -4868,25 +5004,34 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
     return (rows, employees.Count == 1 ? singleEmpName : null);
 }
 
-app.MapGet("/api/reports/work-hours/excel", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken ct) =>
+// Даты приходят как календарные дни ("2026-08-02") — биндим DateOnly и НЕ конвертируем
+// через ToUniversalTime(): DateTime с Kind=Unspecified трактовался как локальное время
+// сервера (+4 Баку) и период уезжал на день назад относительно выбранного в UI.
+app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
 {
-    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-30)).ToUniversalTime().Date;
-    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
-    if (toUtc < fromUtc) toUtc = fromUtc;
-    if ((toUtc - fromUtc).TotalDays > 366) toUtc = fromUtc.AddDays(366);
-    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, dbContext, ct);
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromDay = from ?? today.AddDays(-30);
+    var toDay = to ?? today;
+    if (toDay < fromDay) toDay = fromDay;
+    if (toDay.DayNumber - fromDay.DayNumber > 366) toDay = fromDay.AddDays(366);
+    var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, departmentId, dbContext, ct);
     var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
 }).RequireAuthorization("Reports.View");
 
-app.MapGet("/api/reports/work-hours/pdf", async (DateTime? from, DateTime? to, Guid? employeeId, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
 {
-    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-30)).ToUniversalTime().Date;
-    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
-    if (toUtc < fromUtc) toUtc = fromUtc;
-    if ((toUtc - fromUtc).TotalDays > 366) toUtc = fromUtc.AddDays(366);
-    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, dbContext, ct);
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var fromDay = from ?? today.AddDays(-30);
+    var toDay = to ?? today;
+    if (toDay < fromDay) toDay = fromDay;
+    if (toDay.DayNumber - fromDay.DayNumber > 366) toDay = fromDay.AddDays(366);
+    var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+    var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, departmentId, dbContext, ct);
     var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
     return Results.File(bytes, "application/pdf", $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
 }).RequireAuthorization("Reports.View");
@@ -10237,6 +10382,8 @@ public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string E
 public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
 public sealed record AttendanceCorrectionRequest(Guid EmployeeId, DateTime Date, DateTime? CheckInUtc, DateTime? CheckOutUtc, string? Comment);
+
+public sealed record AttendancePermissionRequest(Guid EmployeeId, DateOnly Date, string FromTime, string ToTime, string? Reason, bool ShowInReport);
 public sealed record AttendanceCriteriaDto(string Key, string? Label, string? Letter, string? Color, bool Enabled, int SortOrder, string? DisplayMode);
 public sealed record GeoZoneRequest(string Name, double Latitude, double Longitude, int RadiusMeters, bool IsActive);
 
