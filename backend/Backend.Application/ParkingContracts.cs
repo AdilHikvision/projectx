@@ -22,14 +22,28 @@ public sealed record ParkingAccessDecision(
     double? WaitMinutes = null,
     Guid? SessionId = null);
 
-/// <summary>Результат выезда: сколько сессий закрыто и на какую сумму (0 — бесплатно).</summary>
-public sealed record ParkingExitResult(int Closed, decimal Amount, Guid? SessionId = null);
+/// <summary>
+/// Результат выезда. Closed — сколько сессий закрыто, Amount — зафиксированный долг
+/// (выпустили без оплаты). Refused означает, что шлагбаум открывать нельзя:
+/// нужно доплатить на кассе, сумма — в SurchargeDue.
+/// </summary>
+public sealed record ParkingExitResult(
+    int Closed,
+    decimal Amount,
+    Guid? SessionId = null,
+    bool Refused = false,
+    string? Reason = null,
+    decimal SurchargeDue = 0m);
 
 /// <summary>Единая точка принятия решений о въезде/выезде — общая для API, POS и камер ANPR.</summary>
 public interface IParkingAccessService
 {
     Task<ParkingAccessDecision> DecideAsync(ParkingAccessInput input, CancellationToken cancellationToken);
-    Task<ParkingExitResult> RegisterExitAsync(string plate, string? camera, string? photoUrl, CancellationToken cancellationToken);
+    /// <param name="force">true — оператор выпускает вручную: сессия закрывается даже без оплаты,
+    /// неоплаченная сумма записывается как долг. false (камера) — при неоплате выезд отклоняется.</param>
+    Task<ParkingExitResult> RegisterExitAsync(string plate, string? camera, string? photoUrl, bool force, CancellationToken cancellationToken);
+    /// <summary>Сколько минут даётся на выезд после оплаты (настройка parking.exitGraceMinutes).</summary>
+    Task<int> GetExitGraceMinutesAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>Распознанный номер с камеры.</summary>

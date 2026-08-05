@@ -77,16 +77,19 @@ public sealed record ParkingSessionRow(
     decimal? Cost,
     string? PaymentMethod,
     DateTime? PaidUtc,
+    decimal? PaidAmount,
     bool Overstay,
     string? CameraName,
     string? Operator)
 {
     /// <summary>Выехал, стоимость начислена, оплаты не было.</summary>
-    public bool IsDebt => ExitedUtc.HasValue && Cost > 0 && PaidUtc is null;
+    /// <summary>Недобор: начислено больше, чем принято кассой.</summary>
+    public decimal DebtAmount => Math.Max(0m, (Cost ?? 0m) - (PaidAmount ?? 0m));
+    public bool IsDebt => ExitedUtc.HasValue && DebtAmount > 0m;
 
     public string StatusLabel =>
         !ExitedUtc.HasValue ? "Inside"
-        : IsDebt ? "Unpaid"
+        : IsDebt ? ((PaidAmount ?? 0m) > 0m ? "Underpaid" : "Unpaid")
         : Cost > 0 ? "Paid"
         : "Free";
 }
@@ -590,8 +593,8 @@ public static class ExcelReportBuilder
             ("Exits", closed.Count.ToString()),
             ("Still inside", rows.Count(r => !r.ExitedUtc.HasValue).ToString()),
             ("Avg duration, min", closed.Count > 0 ? Math.Round(closed.Average(r => r.DurationMinutes ?? 0)).ToString() : "0"),
-            ("Revenue", rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m).ToString("0.00")),
-            ("Debt", rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m).ToString("0.00")),
+            ("Revenue", rows.Sum(r => r.PaidAmount ?? 0m).ToString("0.00")),
+            ("Debt", rows.Sum(r => r.DebtAmount).ToString("0.00")),
             ("Overstays", rows.Count(r => r.Overstay).ToString()),
         };
         for (int i = 0; i < summary.Length; i++)
@@ -1158,8 +1161,8 @@ public static class PdfReportBuilder
         DateOnly from, DateOnly to)
     {
         var closed = rows.Where(r => r.ExitedUtc.HasValue).ToList();
-        var revenue = rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m);
-        var debt = rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m);
+        var revenue = rows.Sum(r => r.PaidAmount ?? 0m);
+        var debt = rows.Sum(r => r.DebtAmount);
 
         var doc = Document.Create(container =>
         {

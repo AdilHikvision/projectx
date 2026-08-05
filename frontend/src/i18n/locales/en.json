@@ -350,7 +350,8 @@
       },
       "unpaid": "Unpaid",
       "overstay": "Overstay",
-      "overstayHint": "Parked longer than the allowed limit"
+      "overstayHint": "Parked longer than the allowed limit",
+      "underpaid": "Surcharge unpaid"
     },
     "veh": {
       "country": "Country",
@@ -399,7 +400,11 @@
         "empty-plate": "plate is empty"
       },
       "debt": "Debt",
-      "overstay": "Time limit exceeded ({{limit}} min)"
+      "overstay": "Time limit exceeded ({{limit}} min)",
+      "exitBy": "Paid. Exit by {{time}}",
+      "graceExpired": "Exit window expired — a surcharge is due",
+      "surcharge": "Surcharge",
+      "paidExitBy": "Paid. Exit by {{time}}"
     },
     "modeTitle": "Operating mode",
     "cfg": {
@@ -434,7 +439,9 @@
         "violator": "Violator",
         "stolen": "Stolen",
         "banned": "Banned"
-      }
+      },
+      "exitGrace": "Minutes to exit after payment (0 = unlimited)",
+      "exitGraceHint": "After paying, the driver gets this much time to reach the barrier. Later on a surcharge for the extra time is due."
     }
   },
   "gym": {

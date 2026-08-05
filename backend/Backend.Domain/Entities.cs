@@ -1183,6 +1183,10 @@ public sealed class ParkingSession : BaseEntity
     /// <summary>Способ оплаты: cash|card|online|free|subscription.</summary>
     public string? PaymentMethod { get; set; }
     public DateTime? PaidUtc { get; set; }
+    /// <summary>Сколько реально принято кассой. Долг = Cost − PaidAmount (доплата за просроченное окно).</summary>
+    public decimal? PaidAmount { get; set; }
+    /// <summary>До какого момента нужно выехать после оплаты. Позже — доплата за лишнее время.</summary>
+    public DateTime? PaidUntilUtc { get; set; }
     public Guid? TariffId { get; set; }
     /// <summary>Когда зафиксирован перепростой (стоянка дольше разрешённого лимита); null — не было.</summary>
     public DateTime? OverstayUtc { get; set; }

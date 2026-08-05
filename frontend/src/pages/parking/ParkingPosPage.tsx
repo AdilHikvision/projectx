@@ -23,6 +23,8 @@ interface PosResult {
   openSession: {
     sessionId: string; enteredUtc: string; minutes: number; amount: number
     requiresPayment: boolean; tariffName: string | null; cameraName: string | null; photoUrl: string | null
+    /** Когда оплатили и до какого момента нужно выехать. */
+    paidUtc?: string | null; paidUntilUtc?: string | null; graceExpired?: boolean
   } | null
   recentSessions: { enteredUtc: string; exitedUtc: string | null; cost: number | null; paymentMethod: string | null; isDebt?: boolean }[]
   /** Сумма прошлых выездов без оплаты. */
@@ -45,13 +47,14 @@ export function ParkingPosPage() {
   const [payMethod, setPayMethod] = useState('cash')
   const [error, setError] = useState<string | null>(null)
   const [paidOk, setPaidOk] = useState(false)
+  const [paidUntil, setPaidUntil] = useState<string | null>(null)
   const [entering, setEntering] = useState(false)
   const [entryDenied, setEntryDenied] = useState<string | null>(null)
 
   const lookup = async () => {
     const p = plate.trim()
     if (!token || !p) return
-    setLoading(true); setError(null); setPaidOk(false)
+    setLoading(true); setError(null); setPaidOk(false); setPaidUntil(null)
     try {
       const r = await apiRequest<PosResult>(`/api/parking/pos-lookup?plate=${encodeURIComponent(p)}`, { token })
       setResult(r)
@@ -64,7 +67,12 @@ export function ParkingPosPage() {
     if (!token || !result?.openSession) return
     setPaying(true); setError(null)
     try {
-      await apiRequest('/api/parking/pay', { method: 'POST', token, body: JSON.stringify({ sessionId: result.openSession.sessionId, method: payMethod, operator: 'POS' }) })
+      const res = await apiRequest<{ paidUntilUtc: string | null; graceMinutes: number }>('/api/parking/pay', {
+        method: 'POST', token,
+        body: JSON.stringify({ sessionId: result.openSession.sessionId, method: payMethod, operator: 'POS' }),
+      })
+      // Кассиру важно назвать водителю время, до которого нужно выехать.
+      setPaidUntil(res.paidUntilUtc)
       setPaidOk(true)
       const r = await apiRequest<PosResult>(`/api/parking/pos-lookup?plate=${encodeURIComponent(result.plate)}`, { token })
       setResult(r)
@@ -115,7 +123,10 @@ export function ParkingPosPage() {
           {error && <p className="mt-3 text-center text-sm font-bold text-error-text">{error}</p>}
           {paidOk && (
             <p className="mt-3 text-center text-sm font-black text-green-700 flex items-center justify-center gap-1">
-              <span className="material-symbols-outlined text-lg">check_circle</span> {t('parking.pos.paidOpened')}
+              <span className="material-symbols-outlined text-lg">check_circle</span>
+              {paidUntil
+                ? t('parking.pos.paidExitBy', { time: fmtDT(paidUntil) })
+                : t('parking.pos.paidOpened')}
             </p>
           )}
         </div>
@@ -200,7 +211,20 @@ export function ParkingPosPage() {
                   {os.cameraName && <p className="text-text-light">{t('parking.hist.camera')}: <span className="font-bold text-text-dark">{os.cameraName}</span></p>}
                   {os.tariffName && <p className="text-text-light">{t('parking.hist.tariff')}: <span className="font-bold text-text-dark">{os.tariffName}</span></p>}
                 </div>
-                <p className="text-2xl font-black text-text-dark">{t('parking.hist.toPay')}: {os.amount.toFixed(2)} AZN</p>
+                {/* Уже оплачено: показываем, до какого времени нужно выехать, и просрочку. */}
+                {os.paidUtc && (
+                  <div className={`rounded-xl px-4 py-3 text-sm font-bold ${os.graceExpired ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                    <span className="material-symbols-outlined text-base align-middle mr-1">
+                      {os.graceExpired ? 'timer_off' : 'schedule'}
+                    </span>
+                    {os.graceExpired
+                      ? t('parking.pos.graceExpired')
+                      : t('parking.pos.exitBy', { time: os.paidUntilUtc ? fmtDT(os.paidUntilUtc) : '—' })}
+                  </div>
+                )}
+                <p className="text-2xl font-black text-text-dark">
+                  {t(os.paidUtc && os.amount > 0 ? 'parking.pos.surcharge' : 'parking.hist.toPay')}: {os.amount.toFixed(2)} AZN
+                </p>
                 <div className="flex gap-2">
                   {os.requiresPayment && (
                     <select className="h-11 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark outline-none" value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>

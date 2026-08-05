@@ -350,7 +350,8 @@
       },
       "unpaid": "Ödənilməyib",
       "overstay": "Vaxt aşımı",
-      "overstayHint": "İcazə verilən limitdən uzun dayanma"
+      "overstayHint": "İcazə verilən limitdən uzun dayanma",
+      "underpaid": "Əlavə ödəniş edilməyib"
     },
     "veh": {
       "country": "Ölkə",
@@ -399,7 +400,11 @@
         "empty-plate": "nömrə göstərilməyib"
       },
       "debt": "Borc",
-      "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)"
+      "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)",
+      "exitBy": "Ödənilib. {{time}} tarixinədək çıxın",
+      "graceExpired": "Çıxış vaxtı bitdi — əlavə ödəniş tələb olunur",
+      "surcharge": "Əlavə ödəniş",
+      "paidExitBy": "Ödənilib. {{time}} tarixinədək çıxın"
     },
     "modeTitle": "İş rejimi",
     "cfg": {
@@ -434,7 +439,9 @@
         "violator": "Qayda pozucusu",
         "stolen": "Oğurlanmış",
         "banned": "Qadağan edilib"
-      }
+      },
+      "exitGrace": "Ödənişdən sonra çıxış üçün dəqiqə (0 = limitsiz)",
+      "exitGraceHint": "Ödənişdən sonra sürücüyə şlaqbauma çatmaq üçün bu qədər vaxt verilir. Sonra artıq vaxta görə əlavə ödəniş tələb olunur."
     }
   },
   "gym": {

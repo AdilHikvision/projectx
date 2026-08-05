@@ -9190,8 +9190,9 @@ app.MapGet("/api/parking/snapshots/{file}", (string file, IConfiguration configu
 
 app.MapPost("/api/parking/exit", async (ParkingExitRequest req, IParkingAccessService access, CancellationToken ct) =>
 {
-    var res = await access.RegisterExitAsync(req.Plate, null, null, ct);
-    return Results.Ok(new { ok = true, closed = res.Closed });
+    // Ручной выезд оператором: выпускаем даже при неоплате, недобор фиксируется как долг.
+    var res = await access.RegisterExitAsync(req.Plate, null, null, force: true, ct);
+    return Results.Ok(new { ok = true, closed = res.Closed, debt = res.Amount });
 }).RequireAuthorization("Parking.Operate");
 
 // ── Тарифы, абонементы, оплата выезда, история и журнал событий ──────────────
@@ -9340,7 +9341,9 @@ app.MapPost("/api/parking/exit-quote", async (ParkingExitRequest req, AppDbConte
     var minutes = (int)Math.Round((now - session.EnteredUtc).TotalMinutes);
     // Оплата не нужна: бесплатная сессия (permit/абонемент) или нет тарифа.
     var free = !session.IsPaid || tariff is null;
-    var amount = free ? 0m : ComputeParkingCost(tariff!, session.EnteredUtc, now);
+    // Уже платил — считаем доплату за время сверх оплаченного, иначе за всё время стоянки.
+    var chargeFrom = session.PaidUtc ?? session.EnteredUtc;
+    var amount = free ? 0m : ComputeParkingCost(tariff!, chargeFrom, now);
     return Results.Ok(new
     {
         sessionId = session.Id,
@@ -9350,11 +9353,15 @@ app.MapPost("/api/parking/exit-quote", async (ParkingExitRequest req, AppDbConte
         amount,
         tariffId = tariff?.Id,
         tariffName = tariff?.Name,
-        requiresPayment = amount > 0
+        requiresPayment = amount > 0,
+        paidUtc = session.PaidUtc,
+        paidUntilUtc = session.PaidUntilUtc,
+        // Окно на выезд истекло: сумма выше — это доплата, а не первая оплата.
+        graceExpired = session.PaidUntilUtc.HasValue && now > session.PaidUntilUtc.Value
     });
 }).RequireAuthorization("Parking.Operate");
 
-app.MapPost("/api/parking/pay", async (ParkingPayRequest req, AppDbContext db, CancellationToken ct) =>
+app.MapPost("/api/parking/pay", async (ParkingPayRequest req, AppDbContext db, IParkingAccessService access, CancellationToken ct) =>
 {
     var session = await db.ParkingSessions.FirstOrDefaultAsync(x => x.Id == req.SessionId && x.ExitedUtc == null, ct);
     if (session is null) return Results.NotFound(new { message = "Open session not found." });
@@ -9362,18 +9369,49 @@ app.MapPost("/api/parking/pay", async (ParkingPayRequest req, AppDbContext db, C
     var tariff = await db.ParkingTariffs.AsNoTracking().Where(x => x.IsActive)
         .OrderByDescending(x => x.IsDefault).ThenBy(x => x.SortOrder).FirstOrDefaultAsync(ct);
     var now = DateTime.UtcNow;
-    var amount = (!session.IsPaid || tariff is null) ? 0m : ComputeParkingCost(tariff!, session.EnteredUtc, now);
+    // Доплата после просроченного окна считается за время сверх уже оплаченного,
+    // первая оплата — за всё время с въезда.
+    var chargeFrom = session.PaidUtc ?? session.EnteredUtc;
+    var amount = (!session.IsPaid || tariff is null) ? 0m : ComputeParkingCost(tariff!, chargeFrom, now);
 
-    session.ExitedUtc = now;
-    session.Cost = amount;
-    session.PaymentMethod = amount > 0 ? (string.IsNullOrWhiteSpace(req.Method) ? "cash" : req.Method.Trim().ToLowerInvariant()) : (session.PaymentMethod ?? "free");
-    session.PaidUtc = amount > 0 ? now : null;
+    // Сессию не закрываем: после оплаты водителю даётся окно на выезд, и закрывает её
+    // фактический проезд через шлагбаум. Иначе машина «выезжала» в момент оплаты и могла
+    // стоять сколько угодно бесплатно.
+    var grace = await access.GetExitGraceMinutesAsync(ct);
+    session.Cost = (session.Cost ?? 0m) + amount;
+    if (amount > 0)
+    {
+        session.PaidAmount = (session.PaidAmount ?? 0m) + amount;
+        session.PaidUtc = now;
+        session.PaymentMethod = string.IsNullOrWhiteSpace(req.Method) ? "cash" : req.Method.Trim().ToLowerInvariant();
+    }
+    else
+    {
+        session.PaidUtc ??= now;
+        session.PaymentMethod ??= "free";
+    }
+    session.PaidUntilUtc = grace > 0 ? now.AddMinutes(grace) : null;
     session.TariffId = tariff?.Id;
     if (!string.IsNullOrWhiteSpace(req.Operator)) session.Operator = req.Operator.Trim();
     session.UpdatedUtc = now;
-    db.ParkingEvents.Add(new ParkingEvent { Type = "barrier_open", Message = amount > 0 ? $"paid {amount:0.##} ({session.PaymentMethod})" : "exit", Plate = session.Plate, Source = req.Operator ?? "system" });
+    db.ParkingEvents.Add(new ParkingEvent
+    {
+        Type = "barrier_open",
+        Message = amount > 0
+            ? $"paid {amount:0.##} ({session.PaymentMethod}), exit by {session.PaidUntilUtc:HH:mm}"
+            : "paid 0 (free)",
+        Plate = session.Plate,
+        Source = req.Operator ?? "system"
+    });
     await db.SaveChangesAsync(ct);
-    return Results.Ok(new { ok = true, amount, paymentMethod = session.PaymentMethod });
+    return Results.Ok(new
+    {
+        ok = true,
+        amount,
+        paymentMethod = session.PaymentMethod,
+        paidUntilUtc = session.PaidUntilUtc,
+        graceMinutes = grace
+    });
 }).RequireAuthorization("Parking.Operate");
 
 // История въездов/выездов (с оплатой, камерой, фото, оператором).
@@ -9398,7 +9436,7 @@ app.MapGet("/api/parking/history", async (string? plate, DateTime? from, DateTim
         x.CameraName, x.PhotoUrl, x.RecognitionConfidence, x.Operator,
         x.Cost, x.PaymentMethod, x.PaidUtc, x.IsPaid,
         // Долг: выехал, стоимость начислена, но оплаты не было.
-        isDebt = x.ExitedUtc != null && x.Cost > 0 && x.PaidUtc == null,
+        isDebt = x.ExitedUtc != null && (x.Cost ?? 0m) > (x.PaidAmount ?? 0m),
         overstay = x.OverstayUtc != null
     }));
 }).RequireAuthorization("Parking.View");
@@ -9448,7 +9486,9 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
         var tariff = await db.ParkingTariffs.AsNoTracking().Where(x => x.IsActive)
             .OrderByDescending(x => x.IsDefault).ThenBy(x => x.SortOrder).FirstOrDefaultAsync(ct);
         var now = DateTime.UtcNow;
-        var amount = (!session.IsPaid || tariff is null) ? 0m : ComputeParkingCost(tariff, session.EnteredUtc, now);
+        // Уже оплачено — показываем доплату за время после оплаты, а не всю стоянку заново.
+        var chargeFrom = session.PaidUtc ?? session.EnteredUtc;
+        var amount = (!session.IsPaid || tariff is null) ? 0m : ComputeParkingCost(tariff, chargeFrom, now);
         openSession = new
         {
             sessionId = session.Id,
@@ -9458,20 +9498,23 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
             requiresPayment = amount > 0,
             tariffName = tariff?.Name,
             cameraName = session.CameraName,
-            photoUrl = session.PhotoUrl
+            photoUrl = session.PhotoUrl,
+            paidUtc = session.PaidUtc,
+            paidUntilUtc = session.PaidUntilUtc,
+            graceExpired = session.PaidUntilUtc.HasValue && now > session.PaidUntilUtc.Value
         };
     }
 
     var recent = await db.ParkingSessions.AsNoTracking()
         .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null)
         .OrderByDescending(x => x.EnteredUtc).Take(5)
-        .Select(x => new { x.EnteredUtc, x.ExitedUtc, x.Cost, x.PaymentMethod, isDebt = x.Cost > 0 && x.PaidUtc == null })
+        .Select(x => new { x.EnteredUtc, x.ExitedUtc, x.Cost, x.PaymentMethod, isDebt = (x.Cost ?? 0m) > (x.PaidAmount ?? 0m) })
         .ToListAsync(ct);
 
     // Долг: прошлые выезды без оплаты. Кассир видит сумму сразу при поиске номера.
     var debt = await db.ParkingSessions.AsNoTracking()
-        .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null && x.PaidUtc == null && x.Cost > 0)
-        .SumAsync(x => x.Cost ?? 0m, ct);
+        .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null && (x.Cost ?? 0m) > (x.PaidAmount ?? 0m))
+        .SumAsync(x => (x.Cost ?? 0m) - (x.PaidAmount ?? 0m), ct);
     var timeLimitMinutes = await ParkingAccessService.ResolveTimeLimitAsync(db, norm, ct);
 
     var permitActive = vehicle?.Permits.Any(p => p.IsActive && p.ValidFrom <= today && (p.ValidTo == null || p.ValidTo >= today)) ?? false;
@@ -9769,6 +9812,7 @@ static async Task<(List<ParkingSessionRow> Rows, DateOnly From, DateOnly To)> Bu
         s.Cost,
         s.PaymentMethod,
         s.PaidUtc,
+        s.PaidAmount,
         s.OverstayUtc != null,
         s.CameraName,
         s.Operator)).ToList();
@@ -9800,8 +9844,8 @@ app.MapPost("/api/parking/reports/sessions/send-email", async (
     var companyName = (await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", ct))?.Value ?? "ProjectX";
 
     var closed = rows.Where(r => r.ExitedUtc.HasValue).ToList();
-    var revenue = rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m);
-    var debt = rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m);
+    var revenue = rows.Sum(r => r.PaidAmount ?? 0m);
+    var debt = rows.Sum(r => r.DebtAmount);
 
     var sb = new System.Text.StringBuilder();
     sb.Append("<thead><tr>");

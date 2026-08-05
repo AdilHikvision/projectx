@@ -244,7 +244,15 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         return new ParkingAccessDecision(allow, reason, Mode: mode, SubMode: isPaidMode ? null : subMode, SessionId: openedSessionId);
     }
 
-    public async Task<ParkingExitResult> RegisterExitAsync(string plate, string? camera, string? photoUrl, CancellationToken ct)
+    /// <summary>Сколько минут даётся на выезд после оплаты; 0 — окно не ограничено.</summary>
+    public async Task<int> GetExitGraceMinutesAsync(CancellationToken ct)
+    {
+        var raw = (await db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Key == "parking.exitGraceMinutes", ct))?.Value;
+        return int.TryParse(raw, out var m) && m >= 0 ? m : 15;
+    }
+
+    public async Task<ParkingExitResult> RegisterExitAsync(string plate, string? camera, string? photoUrl, bool force, CancellationToken ct)
     {
         var norm = NormalizePlate(plate);
         if (norm.Length == 0) return new ParkingExitResult(0, 0m);
@@ -264,6 +272,45 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
 
         var now = DateTime.UtcNow;
+
+        // Платная сессия: без оплаты или с просроченным окном выезда шлагбаум не открываем —
+        // водитель идёт на кассу. Оператор может выпустить принудительно (force).
+        if (!force)
+        {
+            var tariffForCheck = await db.ParkingTariffs.AsNoTracking().Where(x => x.IsActive)
+                .OrderByDescending(x => x.IsDefault).ThenBy(x => x.SortOrder).FirstOrDefaultAsync(ct);
+            foreach (var s in open.Where(s => s.IsPaid && tariffForCheck is not null))
+            {
+                if (s.PaidUtc is null)
+                {
+                    // Ещё не платил: если стоянка бесплатна по времени (льготные минуты) — выпускаем.
+                    if (ComputeCost(tariffForCheck!, s.EnteredUtc, now) <= 0) continue;
+                    db.ParkingEvents.Add(new ParkingEvent
+                    {
+                        Type = "denied", Message = "Exit refused: not paid", Plate = plate.Trim(), Source = camera ?? "system"
+                    });
+                    await db.SaveChangesAsync(ct);
+                    return new ParkingExitResult(0, 0m, s.Id, Refused: true, Reason: "unpaid",
+                        SurchargeDue: ComputeCost(tariffForCheck!, s.EnteredUtc, now));
+                }
+
+                if (s.PaidUntilUtc is { } deadline && now > deadline)
+                {
+                    // Окно вышло: доплата считается за время сверх оплаченного.
+                    var surcharge = ComputeCost(tariffForCheck!, s.PaidUtc.Value, now);
+                    db.ParkingEvents.Add(new ParkingEvent
+                    {
+                        Type = "denied",
+                        Message = $"Exit refused: paid window expired at {deadline:HH:mm}, surcharge {surcharge:0.##}",
+                        Plate = plate.Trim(),
+                        Source = camera ?? "system"
+                    });
+                    await db.SaveChangesAsync(ct);
+                    return new ParkingExitResult(0, 0m, s.Id, Refused: true, Reason: "grace-expired", SurchargeDue: surcharge);
+                }
+            }
+        }
+
         var tariff = await db.ParkingTariffs.AsNoTracking().Where(x => x.IsActive)
             .OrderByDescending(x => x.IsDefault).ThenBy(x => x.SortOrder).FirstOrDefaultAsync(ct);
         var limitMinutes = await ResolveTimeLimitAsync(db, norm, ct);
@@ -287,6 +334,19 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
                     s.Cost = cost;
                     s.TariffId = tariff.Id;
                     amount += cost;
+                }
+            }
+            // Оплатил, но выехал позже отведённого окна (обычно оператор выпустил вручную):
+            // время сверх оплаченного — долг. Принятую сумму (PaidAmount) не трогаем,
+            // поэтому в отчётах видно и выручку, и недобор по этой сессии.
+            else if (s.IsPaid && tariff is not null && s.PaidUtc is not null
+                     && s.PaidUntilUtc is { } paidUntil && now > paidUntil)
+            {
+                var surcharge = ComputeCost(tariff, s.PaidUtc.Value, now);
+                if (surcharge > 0)
+                {
+                    s.Cost = (s.Cost ?? 0m) + surcharge;
+                    amount += surcharge;
                 }
             }
 

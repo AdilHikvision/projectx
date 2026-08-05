@@ -56,8 +56,15 @@ public sealed class ParkingAnprHandler(
 
         if (direction == ParkingCameraDirection.Exit)
         {
-            var exit = await access.RegisterExitAsync(plateEvent.Plate, device.Name, null, ct);
+            // force: false — камера не выпускает без оплаты и после просроченного окна выезда.
+            var exit = await access.RegisterExitAsync(plateEvent.Plate, device.Name, null, force: false, ct);
             _recent[deviceIdentifier] = new Recent(norm, DateTime.UtcNow, exit.SessionId, null);
+            if (exit.Refused)
+            {
+                logger.LogInformation("ANPR {Device}: exit refused for {Plate} ({Reason}), due {Due}",
+                    device.Name, plateEvent.Plate, exit.Reason, exit.SurchargeDue);
+                return;
+            }
             logger.LogInformation("ANPR {Device}: exit {Plate}, closed {Closed} session(s)", device.Name, plateEvent.Plate, exit.Closed);
             if (exit.Closed > 0) await TryOpenBarrierAsync(db, device, ct);
             return;

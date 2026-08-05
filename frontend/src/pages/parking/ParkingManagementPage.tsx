@@ -108,6 +108,8 @@ export function ParkingManagementPage() {
     // Pulsuz rejim parametrləri: pulsuz dayanmanın maksimum müddəti və təkrar girişə qadağa (dəq).
     const [freeMaxMinutes, setFreeMaxMinutes] = useState('')
     const [reentryMinutes, setReentryMinutes] = useState('')
+    // Платный режим: сколько минут даётся на выезд после оплаты (parking.exitGraceMinutes).
+    const [exitGraceMinutes, setExitGraceMinutes] = useState('15')
     const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
     const [zones, setZones] = useState<Zone[]>([])
     const [floors, setFloors] = useState<Floor[]>([])
@@ -167,6 +169,8 @@ export function ParkingManagementPage() {
             .then((r) => { if (r?.value) setFreeMaxMinutes(r.value) }).catch(() => { })
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.reentryMinutes', { token })
             .then((r) => { if (r?.value) setReentryMinutes(r.value) }).catch(() => { })
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.exitGraceMinutes', { token })
+            .then((r) => { if (r?.value) setExitGraceMinutes(r.value) }).catch(() => { /* нет ключа — остаётся 15 */ })
         void reloadPlates()
         void reloadOccupancy()
     }, [token])
@@ -313,6 +317,19 @@ export function ParkingManagementPage() {
                                         onChange={(e) => setReentryMinutes(e.target.value)}
                                         onBlur={() => void saveFreeSetting('parking.reentryMinutes', reentryMinutes || '0')} />
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Платный режим: сколько минут даётся на выезд после оплаты. */}
+                        {parkingMode === 'Paid' && (
+                            <div className="rounded-xl border border-border-base p-3 sm:max-w-md">
+                                <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.exitGrace')}</div>
+                                <input type="number" min={0}
+                                    className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                    value={exitGraceMinutes}
+                                    onChange={(e) => setExitGraceMinutes(e.target.value)}
+                                    onBlur={() => void saveFreeSetting('parking.exitGraceMinutes', exitGraceMinutes || '0')} />
+                                <div className="mt-1.5 text-[11px] leading-relaxed text-text-light">{t('parking.cfg.exitGraceHint')}</div>
                             </div>
                         )}
 
