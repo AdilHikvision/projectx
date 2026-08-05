@@ -401,7 +401,41 @@
       "debt": "Borc",
       "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)"
     },
-    "modeTitle": "İş rejimi"
+    "modeTitle": "İş rejimi",
+    "cfg": {
+      "freeSubMode": "Pulsuz alt-rejim",
+      "subModeList": "Siyahı",
+      "subModeCapacity": "Tutum",
+      "subModeListHint": "«Siyahı» — yalnız ağ siyahıdakı nömrələr keçir",
+      "subModeCapacityHint": "«Tutum» — boş yer olduqca bütün nömrələr keçir",
+      "freeLimit": "Pulsuz dayanma limiti (dəq, 0 = limitsiz)",
+      "reentry": "Təkrar giriş qadağası (dəq, 0 = yoxdur)",
+      "commonSpaces": "Ümumi yerlər (boş / cəmi)",
+      "vipSpaces": "VIP yerlər (boş / cəmi)",
+      "plateLists": "Nömrə siyahıları (ağ / qara)",
+      "allowList": "Ağ siyahı",
+      "blockList": "Qara siyahı",
+      "allowListTitle": "Ağ siyahı — keçir",
+      "blockListTitle": "Qara siyahı — bloklanır",
+      "categoryAny": "Kateqoriya —",
+      "reasonAny": "Səbəb —",
+      "validToHint": "Buraxılışın bitmə tarixi",
+      "limitShort": "Limit dəq",
+      "limitHint": "Dayanma limiti (dəq)",
+      "min": "dəq",
+      "category": {
+        "employee": "Əməkdaş",
+        "management": "Rəhbərlik",
+        "vip": "VIP",
+        "service": "Xidməti"
+      },
+      "reason": {
+        "unpaid": "Ödənilməyib",
+        "violator": "Qayda pozucusu",
+        "stolen": "Oğurlanmış",
+        "banned": "Qadağan edilib"
+      }
+    }
   },
   "gym": {
     "underDevelopment": "Bu bölmə hazırlanır və tezliklə əlçatan olacaq.",
