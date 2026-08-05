@@ -254,7 +254,9 @@
         "avgDuration": "Avg duration",
         "byDay": "Entries by day",
         "sessions": "Sessions"
-      }
+      },
+      "sendReport": "Send report",
+      "sendReportHint": "The report for {{from}} — {{to}} will be sent to this address."
     },
     "tariff": {
       "pageTitle": "Tariffs & subscriptions",
@@ -2681,7 +2683,11 @@
       "approvalRejected": "Request rejected",
       "leaveApproved": "Leave approved",
       "leaveRejected": "Leave rejected",
-      "dailyReport": "Daily report — {{date}}"
+      "dailyReport": "Daily report — {{date}}",
+      "parkingBlacklist": "Blacklisted plate at entry",
+      "parkingFull": "Parking is full",
+      "parkingDebt": "Left without payment",
+      "parkingOverstay": "Parking time exceeded"
     },
     "bodies": {
       "deviceOffline": "Device «{{device}}» lost connection.",
@@ -2692,7 +2698,11 @@
       "leaveRejected": "Your leave request ({{leaveType}}, {{from}} – {{to}}) has been rejected.{{reason}}",
       "dailyReport": "Present: {{present}} of {{total}}. Absent: {{absent}}.",
       "selfServiceLeaveRequest": "{{name}} requested {{leaveType}} from {{from}} to {{to}}.",
-      "dailyReportWithLeave": "Present: {{present}} of {{total}}. Absent: {{absent}}. On leave: {{onLeave}}."
+      "dailyReportWithLeave": "Present: {{present}} of {{total}}. Absent: {{absent}}. On leave: {{onLeave}}.",
+      "parkingBlacklist": "Entry attempt: {{plate}} ({{source}})",
+      "parkingFull": "Entry refused for {{plate}} — no free spaces",
+      "parkingDebt": "Vehicle {{plate}} left without paying",
+      "parkingOverstay": "Vehicle {{plate}} has been parked longer than allowed"
     },
     "enums": {
       "CheckIn": "Check-in",

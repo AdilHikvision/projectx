@@ -256,7 +256,9 @@
         "avgDuration": "Средняя длительность",
         "byDay": "Въезды по дням",
         "sessions": "Сессии"
-      }
+      },
+      "sendReport": "Отправить отчёт",
+      "sendReportHint": "Отчёт за период {{from}} — {{to}} будет отправлен на указанный адрес."
     },
     "tariff": {
       "pageTitle": "Тарифы и абонементы",
@@ -2696,7 +2698,11 @@
       "approvalRejected": "Заявка отклонена",
       "leaveApproved": "Отпуск одобрен",
       "leaveRejected": "Отпуск отклонён",
-      "dailyReport": "Ежедневный отчёт — {{date}}"
+      "dailyReport": "Ежедневный отчёт — {{date}}",
+      "parkingBlacklist": "Чёрный список на въезде",
+      "parkingFull": "Парковка заполнена",
+      "parkingDebt": "Выезд без оплаты",
+      "parkingOverstay": "Превышено время стоянки"
     },
     "bodies": {
       "deviceOffline": "Устройство «{{device}}» потеряло связь.",
@@ -2707,7 +2713,11 @@
       "leaveRejected": "Ваш запрос на отпуск ({{leaveType}}, {{from}} – {{to}}) отклонён.{{reason}}",
       "dailyReport": "Присутствовало: {{present}} из {{total}}. Отсутствовало: {{absent}}.",
       "selfServiceLeaveRequest": "{{name}} запросил(а) {{leaveType}} с {{from}} по {{to}}.",
-      "dailyReportWithLeave": "Присутствовало: {{present}} из {{total}}. Отсутствовало: {{absent}}. В отпуске: {{onLeave}}."
+      "dailyReportWithLeave": "Присутствовало: {{present}} из {{total}}. Отсутствовало: {{absent}}. В отпуске: {{onLeave}}.",
+      "parkingBlacklist": "Попытка въезда: {{plate}} ({{source}})",
+      "parkingFull": "Отказано во въезде {{plate}} — свободных мест нет",
+      "parkingDebt": "Автомобиль {{plate}} выехал, не оплатив стоянку",
+      "parkingOverstay": "Автомобиль {{plate}} стоит дольше разрешённого"
     },
     "enums": {
       "CheckIn": "Вход",

@@ -254,7 +254,9 @@
         "avgDuration": "Orta müddət",
         "byDay": "Günlər üzrə girişlər",
         "sessions": "Sessiyalar"
-      }
+      },
+      "sendReport": "Hesabatı göndər",
+      "sendReportHint": "{{from}} — {{to}} dövrü üzrə hesabat bu ünvana göndəriləcək."
     },
     "tariff": {
       "pageTitle": "Tariflər və abunəliklər",
@@ -2673,7 +2675,11 @@
       "approvalRejected": "Sorğu rədd edildi",
       "leaveApproved": "Məzuniyyət təsdiqləndi",
       "leaveRejected": "Məzuniyyət rədd edildi",
-      "dailyReport": "Günlük hesabat — {{date}}"
+      "dailyReport": "Günlük hesabat — {{date}}",
+      "parkingBlacklist": "Girişdə qara siyahı",
+      "parkingFull": "Parkinq doludur",
+      "parkingDebt": "Ödənişsiz çıxış",
+      "parkingOverstay": "Dayanma vaxtı aşılıb"
     },
     "bodies": {
       "deviceOffline": "Cihaz «{{device}}» əlaqəni kəsdi.",
@@ -2684,7 +2690,11 @@
       "leaveRejected": "Məzuniyyət sorğunuz ({{leaveType}}, {{from}} – {{to}}) rədd edildi.{{reason}}",
       "dailyReport": "İşdə: {{present}} / {{total}}. Qayıb: {{absent}}.",
       "selfServiceLeaveRequest": "{{name}} {{from}}–{{to}} tarixləri üçün {{leaveType}} sorğusu göndərdi.",
-      "dailyReportWithLeave": "İşdə: {{present}} / {{total}}. Qayıb: {{absent}}. Məzuniyyətdə: {{onLeave}}."
+      "dailyReportWithLeave": "İşdə: {{present}} / {{total}}. Qayıb: {{absent}}. Məzuniyyətdə: {{onLeave}}.",
+      "parkingBlacklist": "Giriş cəhdi: {{plate}} ({{source}})",
+      "parkingFull": "{{plate}} üçün giriş rədd edildi — boş yer yoxdur",
+      "parkingDebt": "{{plate}} avtomobili ödəniş etmədən çıxdı",
+      "parkingOverstay": "{{plate}} avtomobili icazə veriləndən uzun dayanır"
     },
     "enums": {
       "CheckIn": "Giriş",

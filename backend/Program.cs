@@ -89,6 +89,7 @@ builder.Services.AddSingleton<INotificationService, NotificationService>();
 builder.Services.AddSingleton<IEmailService, EmailService>();
 builder.Services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
 builder.Services.AddHostedService<DailyReportNotificationService>();
+builder.Services.AddHostedService<ParkingNotificationService>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>()
@@ -9743,6 +9744,111 @@ app.MapGet("/api/parking/summary", async (AppDbContext db, CancellationToken ct)
 }).RequireAuthorization("Parking.View");
 
 // Отчёт по сессиям: диапазон дат + разбивка по дням.
+// Строки отчёта по проездам — общий источник для экрана, Excel, PDF и письма.
+static async Task<(List<ParkingSessionRow> Rows, DateOnly From, DateOnly To)> BuildParkingReportRowsAsync(
+    DateTime? from, DateTime? to, Guid? zoneId, AppDbContext db, CancellationToken ct)
+{
+    var fromUtc = (from ?? DateTime.UtcNow.AddDays(-7)).ToUniversalTime().Date;
+    var toUtc = (to ?? DateTime.UtcNow).ToUniversalTime().Date;
+    if (toUtc < fromUtc) toUtc = fromUtc;
+    if ((toUtc - fromUtc).TotalDays > 92) toUtc = fromUtc.AddDays(92);
+    var endExcl = toUtc.AddDays(1);
+
+    var query = db.ParkingSessions.AsNoTracking().Where(s => s.EnteredUtc >= fromUtc && s.EnteredUtc < endExcl);
+    if (zoneId.HasValue) query = query.Where(s => s.ZoneId == zoneId);
+    var sessions = await query.OrderByDescending(s => s.EnteredUtc).ToListAsync(ct);
+    var zoneNames = await db.ParkingZones.AsNoTracking().ToDictionaryAsync(z => z.Id, z => z.Name, ct);
+
+    var rows = sessions.Select(s => new ParkingSessionRow(
+        s.Plate,
+        s.ZoneId.HasValue && zoneNames.TryGetValue(s.ZoneId.Value, out var zn) ? zn : null,
+        s.EnteredUtc,
+        s.ExitedUtc,
+        s.ExitedUtc.HasValue ? (int?)Math.Round((s.ExitedUtc.Value - s.EnteredUtc).TotalMinutes) : null,
+        s.IsPaid,
+        s.Cost,
+        s.PaymentMethod,
+        s.PaidUtc,
+        s.OverstayUtc != null,
+        s.CameraName,
+        s.Operator)).ToList();
+
+    return (rows, DateOnly.FromDateTime(fromUtc), DateOnly.FromDateTime(toUtc));
+}
+
+app.MapGet("/api/parking/reports/sessions/excel", async (DateTime? from, DateTime? to, Guid? zoneId, AppDbContext db, CancellationToken ct) =>
+{
+    var (rows, f, t) = await BuildParkingReportRowsAsync(from, to, zoneId, db, ct);
+    var bytes = ExcelReportBuilder.BuildParkingSessions(rows, f, t);
+    return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"parking-{f:yyyy-MM-dd}_{t:yyyy-MM-dd}.xlsx");
+}).RequireAuthorization("Parking.View");
+
+app.MapGet("/api/parking/reports/sessions/pdf", async (DateTime? from, DateTime? to, Guid? zoneId, AppDbContext db, CancellationToken ct) =>
+{
+    var (rows, f, t) = await BuildParkingReportRowsAsync(from, to, zoneId, db, ct);
+    var bytes = PdfReportBuilder.BuildParkingSessions(rows, f, t);
+    return Results.File(bytes, "application/pdf", $"parking-{f:yyyy-MM-dd}_{t:yyyy-MM-dd}.pdf");
+}).RequireAuthorization("Parking.View");
+
+app.MapPost("/api/parking/reports/sessions/send-email", async (
+    SendParkingReportRequest request, AppDbContext db, IEmailService emailService, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.To))
+        return Results.BadRequest(new { message = "Recipient email is required." });
+
+    var (rows, f, t) = await BuildParkingReportRowsAsync(request.From, request.To_, request.ZoneId, db, ct);
+    var companyName = (await db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", ct))?.Value ?? "ProjectX";
+
+    var closed = rows.Where(r => r.ExitedUtc.HasValue).ToList();
+    var revenue = rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m);
+    var debt = rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m);
+
+    var sb = new System.Text.StringBuilder();
+    sb.Append("<thead><tr>");
+    foreach (var hdr in new[] { "Plate", "Zone", "Entered", "Exited", "Min", "Status", "Cost", "Payment" })
+        sb.Append($"<th style='padding:5px 8px;background:#4f46e5;color:#fff;text-align:left;font-size:11px'>{hdr}</th>");
+    sb.Append("</tr></thead><tbody>");
+    // В письмо кладём первые 200 строк: полная выгрузка — во вложении Excel/PDF по ссылке.
+    foreach (var r in rows.Take(200))
+    {
+        var bg = r.IsDebt ? "#fdeeef" : "#ffffff";
+        string Cell(string v, string extra = "") =>
+            $"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;background:{bg};font-size:11px;{extra}'>{System.Net.WebUtility.HtmlEncode(v)}</td>";
+        sb.Append("<tr>");
+        sb.Append(Cell(r.Plate, "font-weight:bold"));
+        sb.Append(Cell(r.ZoneName ?? ""));
+        sb.Append(Cell(r.EnteredUtc.ToLocalTime().ToString("dd.MM HH:mm")));
+        sb.Append(Cell(r.ExitedUtc?.ToLocalTime().ToString("dd.MM HH:mm") ?? "—"));
+        sb.Append(Cell(r.DurationMinutes?.ToString() ?? "—", r.Overstay ? "color:#c07207;font-weight:bold" : ""));
+        sb.Append(Cell(r.StatusLabel, r.IsDebt ? "color:#dc2637;font-weight:bold" : ""));
+        sb.Append(Cell((r.Cost ?? 0m).ToString("0.00")));
+        sb.Append(Cell(r.PaymentMethod ?? ""));
+        sb.Append("</tr>");
+    }
+    sb.Append("</tbody>");
+
+    var subject = $"Parking report — {f:yyyy-MM-dd} … {t:yyyy-MM-dd}";
+    var body = $@"<div style='font-family:Arial,sans-serif;color:#1e293b'>
+<h2 style='color:#4f46e5;margin:0 0 8px 0'>Parking report — {System.Net.WebUtility.HtmlEncode(companyName)}</h2>
+<p style='color:#475569'>Period: <b>{f:yyyy-MM-dd} … {t:yyyy-MM-dd}</b></p>
+<p style='color:#475569'>Entries: <b>{rows.Count}</b> · Exits: <b>{closed.Count}</b> · Inside: <b>{rows.Count - closed.Count}</b>
+ · Revenue: <b>{revenue:0.00}</b> · Debt: <b style='color:#dc2637'>{debt:0.00}</b> · Overstays: <b>{rows.Count(r => r.Overstay)}</b></p>
+<table style='border-collapse:collapse;font-size:11px'>{sb}</table>
+{(rows.Count > 200 ? $"<p style='color:#94a3b8;font-size:11px'>Showing first 200 of {rows.Count} rows.</p>" : "")}
+<p style='color:#94a3b8;font-size:11px;margin-top:12px'>Generated {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC</p>
+</div>";
+
+    try
+    {
+        await emailService.SendAsync(request.To, subject, body, ct);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    return Results.Ok(new { message = $"Report sent to {request.To}." });
+}).RequireAuthorization("Parking.View");
+
 app.MapGet("/api/parking/reports/sessions", async (DateTime? from, DateTime? to, Guid? zoneId, AppDbContext db, CancellationToken ct) =>
 {
     var fromUtc = (from ?? DateTime.UtcNow.AddDays(-7)).ToUniversalTime().Date;
@@ -10336,6 +10442,8 @@ public sealed record ParkingPayRequest(Guid SessionId, string? Method, string? O
 public sealed record ParkingEventRequest(string Type, string? Message, string? Plate, string? Source);
 public sealed record ParkingAccessRequest(string Plate, Guid? ZoneId, string? SpaceType, bool? OpenSession, string? Camera = null, string? PhotoUrl = null, double? Confidence = null, string? Operator = null);
 public sealed record ParkingExitRequest(string Plate);
+/// <summary>To_ — конец периода: имя To уже занято адресом получателя.</summary>
+public sealed record SendParkingReportRequest(string To, DateTime? From = null, DateTime? To_ = null, Guid? ZoneId = null);
 public sealed record ParkingSpaceBulkRequest(string? Prefix, int StartNumber, int Count, int Pad, string Type);
 
 // Gym Inventory / Warehouse

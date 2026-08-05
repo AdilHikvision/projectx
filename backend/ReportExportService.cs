@@ -66,6 +66,31 @@ public sealed record MonthlyTabelRow(
 /// <summary>Стиль критерия табеля (из attendance_criteria, с дефолтами для отсутствующих ключей).</summary>
 public sealed record TabelCritStyle(string Key, string Label, string Letter, string Color, string DisplayMode, bool Enabled);
 
+/// <summary>Строка отчёта по проездам парковки (въезд/выезд, стоимость, оплата).</summary>
+public sealed record ParkingSessionRow(
+    string Plate,
+    string? ZoneName,
+    DateTime EnteredUtc,
+    DateTime? ExitedUtc,
+    int? DurationMinutes,
+    bool IsPaid,
+    decimal? Cost,
+    string? PaymentMethod,
+    DateTime? PaidUtc,
+    bool Overstay,
+    string? CameraName,
+    string? Operator)
+{
+    /// <summary>Выехал, стоимость начислена, оплаты не было.</summary>
+    public bool IsDebt => ExitedUtc.HasValue && Cost > 0 && PaidUtc is null;
+
+    public string StatusLabel =>
+        !ExitedUtc.HasValue ? "Inside"
+        : IsDebt ? "Unpaid"
+        : Cost > 0 ? "Paid"
+        : "Free";
+}
+
 public sealed record PayrollReportRow(
     string EmployeeName,
     string? EmployeeNo,
@@ -539,6 +564,89 @@ public static class ExcelReportBuilder
         for (int d = 1; d <= daysInMonth; d++) ws.Column(5 + d).Width = 4.5;
         for (int i = 1; i <= 4; i++) ws.Column(5 + daysInMonth + i).Width = 9;
         ws.SheetView.FreezeColumns(3);
+        ws.SheetView.FreezeRows(headerRow);
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    /// <summary>Отчёт по проездам парковки: сводка сверху, построчная расшифровка ниже.</summary>
+    public static byte[] BuildParkingSessions(
+        IReadOnlyList<ParkingSessionRow> rows,
+        DateOnly from, DateOnly to)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Parking");
+
+        ws.Cell("A1").Value = $"Parking report — {from:yyyy-MM-dd} … {to:yyyy-MM-dd}";
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 14;
+
+        var closed = rows.Where(r => r.ExitedUtc.HasValue).ToList();
+        var summary = new (string Label, string Value)[]
+        {
+            ("Entries", rows.Count.ToString()),
+            ("Exits", closed.Count.ToString()),
+            ("Still inside", rows.Count(r => !r.ExitedUtc.HasValue).ToString()),
+            ("Avg duration, min", closed.Count > 0 ? Math.Round(closed.Average(r => r.DurationMinutes ?? 0)).ToString() : "0"),
+            ("Revenue", rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m).ToString("0.00")),
+            ("Debt", rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m).ToString("0.00")),
+            ("Overstays", rows.Count(r => r.Overstay).ToString()),
+        };
+        for (int i = 0; i < summary.Length; i++)
+        {
+            ws.Cell(2, i + 1).Value = summary[i].Label;
+            ws.Cell(2, i + 1).Style.Font.Bold = true;
+            ws.Cell(2, i + 1).Style.Font.FontColor = XLColor.FromHtml("#6e56cf");
+            ws.Cell(3, i + 1).Value = summary[i].Value;
+        }
+
+        int headerRow = 5;
+        string[] headers = ["Plate", "Zone", "Entered", "Exited", "Duration, min", "Camera", "Operator", "Status", "Cost", "Payment", "Overstay"];
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var cell = ws.Cell(headerRow, i + 1);
+            cell.Value = headers[i];
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#6e56cf");
+            cell.Style.Font.FontColor = XLColor.White;
+        }
+
+        int row = headerRow + 1;
+        foreach (var r in rows)
+        {
+            ws.Cell(row, 1).Value = r.Plate;
+            ws.Cell(row, 2).Value = r.ZoneName ?? "";
+            ws.Cell(row, 3).Value = r.EnteredUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            ws.Cell(row, 4).Value = r.ExitedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "";
+            ws.Cell(row, 5).Value = r.DurationMinutes ?? 0;
+            ws.Cell(row, 6).Value = r.CameraName ?? "";
+            ws.Cell(row, 7).Value = r.Operator ?? "";
+            ws.Cell(row, 8).Value = r.StatusLabel;
+            ws.Cell(row, 9).Value = r.Cost ?? 0m;
+            ws.Cell(row, 10).Value = r.PaymentMethod ?? "";
+            ws.Cell(row, 11).Value = r.Overstay ? "yes" : "";
+            // Долг выделяем цветом — иначе строка теряется среди оплаченных.
+            if (r.IsDebt)
+            {
+                ws.Cell(row, 8).Style.Font.FontColor = XLColor.FromHtml("#dc2637");
+                ws.Cell(row, 8).Style.Font.Bold = true;
+            }
+            if (r.Overstay) ws.Cell(row, 11).Style.Font.FontColor = XLColor.FromHtml("#c07207");
+            row++;
+        }
+
+        if (rows.Count > 0)
+        {
+            ws.Cell(row, 8).Value = "TOTAL";
+            ws.Cell(row, 8).Style.Font.Bold = true;
+            ws.Cell(row, 9).Value = rows.Sum(r => r.Cost ?? 0m);
+            ws.Cell(row, 9).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f0f0");
+        }
+
+        ws.Columns().AdjustToContents();
         ws.SheetView.FreezeRows(headerRow);
 
         using var ms = new MemoryStream();
@@ -1028,6 +1136,92 @@ public static class PdfReportBuilder
                             });
                         }
                     });
+                });
+
+                page.Footer().AlignRight().Text(x =>
+                {
+                    x.Span("Page ").FontSize(7).FontColor("#888888");
+                    x.CurrentPageNumber().FontSize(7);
+                    x.Span(" of ").FontSize(7);
+                    x.TotalPages().FontSize(7);
+                });
+            });
+        });
+
+        using var ms = new MemoryStream();
+        doc.GeneratePdf(ms);
+        return ms.ToArray();
+    }
+/// <summary>Отчёт по проездам парковки: сводка и построчная расшифровка с пометкой долгов.</summary>
+    public static byte[] BuildParkingSessions(
+        IReadOnlyList<ParkingSessionRow> rows,
+        DateOnly from, DateOnly to)
+    {
+        var closed = rows.Where(r => r.ExitedUtc.HasValue).ToList();
+        var revenue = rows.Where(r => r.PaidUtc.HasValue).Sum(r => r.Cost ?? 0m);
+        var debt = rows.Where(r => r.IsDebt).Sum(r => r.Cost ?? 0m);
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Landscape());
+                page.Margin(1.5f, Unit.Centimetre);
+                page.DefaultTextStyle(t => t.FontSize(8).FontFamily("Arial"));
+
+                page.Header().Column(col =>
+                {
+                    col.Item().Text($"Parking report — {from:yyyy-MM-dd} … {to:yyyy-MM-dd}")
+                        .FontSize(16).Bold().FontColor(PrimaryHex);
+                    col.Item().Text($"Entries: {rows.Count} · Exits: {closed.Count} · Inside: {rows.Count(r => !r.ExitedUtc.HasValue)} · Revenue: {revenue:0.00} · Debt: {debt:0.00} · Overstays: {rows.Count(r => r.Overstay)}")
+                        .FontSize(9).FontColor("#555555");
+                    col.Item().Text($"Generated: {DateTime.Now:dd.MM.yyyy HH:mm}").FontSize(8).FontColor("#888888");
+                    col.Item().PaddingTop(4).LineHorizontal(1).LineColor(PrimaryHex);
+                });
+
+                page.Content().PaddingTop(8).Table(table =>
+                {
+                    table.ColumnsDefinition(c =>
+                    {
+                        c.RelativeColumn(2);   // Plate
+                        c.RelativeColumn(2);   // Zone
+                        c.ConstantColumn(85);  // Entered
+                        c.ConstantColumn(85);  // Exited
+                        c.ConstantColumn(45);  // Duration
+                        c.RelativeColumn(2);   // Camera
+                        c.ConstantColumn(55);  // Status
+                        c.ConstantColumn(50);  // Cost
+                        c.ConstantColumn(50);  // Payment
+                    });
+
+                    table.Header(h =>
+                    {
+                        foreach (var hdr in new[] { "Plate", "Zone", "Entered", "Exited", "Min", "Camera", "Status", "Cost", "Payment" })
+                        {
+                            h.Cell().Background(PrimaryHex).Padding(3)
+                                .Text(hdr).FontColor("#ffffff").Bold().FontSize(7.5f);
+                        }
+                    });
+
+                    bool alt = false;
+                    foreach (var r in rows)
+                    {
+                        // Долг подсвечиваем строкой целиком, перепростой — только длительностью.
+                        string bg = r.IsDebt ? "#fdeeef" : (alt ? "#f8f8ff" : "#ffffff");
+                        alt = !alt;
+
+                        table.Cell().Background(bg).Padding(3).Text(r.Plate).Bold().FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.ZoneName ?? "").FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.EnteredUtc.ToLocalTime().ToString("dd.MM HH:mm")).FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.ExitedUtc?.ToLocalTime().ToString("dd.MM HH:mm") ?? "—").FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.DurationMinutes?.ToString() ?? "—")
+                            .FontColor(r.Overstay ? "#c07207" : "#1e293b").FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.CameraName ?? r.Operator ?? "").FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.StatusLabel)
+                            .FontColor(r.IsDebt ? "#dc2637" : "#1e293b").Bold().FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text((r.Cost ?? 0m).ToString("0.00")).FontSize(7.5f);
+                        table.Cell().Background(bg).Padding(3).Text(r.PaymentMethod ?? "").FontSize(7.5f);
+                    }
                 });
 
                 page.Footer().AlignRight().Text(x =>

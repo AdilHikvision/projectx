@@ -610,6 +610,10 @@ public static class NotificationTypes
     public const string ApprovalApproved = "ApprovalApproved";
     public const string ApprovalRejected = "ApprovalRejected";
     public const string DailyReport = "DailyReport";
+    public const string ParkingBlacklist = "ParkingBlacklist";
+    public const string ParkingFull = "ParkingFull";
+    public const string ParkingDebt = "ParkingDebt";
+    public const string ParkingOverstay = "ParkingOverstay";
 }
 
 /// <summary>Уведомление для пользователя. UserId = null означает broadcast всем.</summary>

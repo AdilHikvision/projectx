@@ -4,7 +4,7 @@ import { AppLayout } from '../../components/templates'
 import { Button, Input } from '../../components/atoms'
 import { PageHeader, Modal } from '../../components/organisms'
 import { ConfirmDialog } from '../../components/molecules'
-import { apiRequest } from '../../lib/api'
+import { apiRequest, getApiBaseUrl } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
 
 /* ═══ Aktiv Parking — нативные страницы (жильцы, транспорт, пропуска, отчёты, главная).
@@ -499,11 +499,53 @@ export function ParkingReportsPage() {
   const [zones, setZones] = useState<ZoneRef[]>([])
   const [data, setData] = useState<SessionsReport | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'excel' | 'pdf' | 'email' | null>(null)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [emailResult, setEmailResult] = useState<string | null>(null)
 
   useEffect(() => {
     if (!token) return
     apiRequest<{ id: string; name: string }[]>('/api/parking/zones', { token }).then(setZones).catch(() => setZones([]))
   }, [token])
+
+  /** Файл скачиваем вручную: apiRequest умеет только JSON. */
+  const download = async (kind: 'excel' | 'pdf') => {
+    if (!token) return
+    setBusy(kind); setError(null)
+    try {
+      const params = new URLSearchParams({ from, to })
+      if (zoneId) params.set('zoneId', zoneId)
+      const res = await fetch(`${getApiBaseUrl()}/api/parking/reports/sessions/${kind}?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `parking-${from}_${to}.${kind === 'excel' ? 'xlsx' : 'pdf'}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'error')
+    } finally { setBusy(null) }
+  }
+
+  const sendEmail = async () => {
+    if (!token || !emailTo.trim()) return
+    setBusy('email'); setEmailResult(null)
+    try {
+      const r = await apiRequest<{ message: string }>('/api/parking/reports/sessions/send-email', {
+        method: 'POST', token,
+        // To_ — конец периода: имя To на сервере занято адресом получателя.
+        body: JSON.stringify({ to: emailTo.trim(), from, to_: to, zoneId: zoneId || null }),
+      })
+      setEmailResult(r.message)
+    } catch (e) {
+      setEmailResult(e instanceof Error ? e.message : 'error')
+    } finally { setBusy(null) }
+  }
 
   useEffect(() => {
     if (!token) return
@@ -538,6 +580,19 @@ export function ParkingReportsPage() {
               <option value="">{t('parking.ap.allZones')}</option>
               {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
             </select>
+          </div>
+
+          {/* Выгрузка и отправка отчёта — как в отчётах по рабочему времени */}
+          <div className="ml-auto flex items-end gap-2">
+            <Button variant="outline" icon="table_view" isLoading={busy === 'excel'} onClick={() => void download('excel')}>
+              {t('workHours.excel')}
+            </Button>
+            <Button variant="outline" icon="picture_as_pdf" isLoading={busy === 'pdf'} onClick={() => void download('pdf')}>
+              PDF
+            </Button>
+            <Button icon="mail" onClick={() => { setEmailTo(''); setEmailResult(null); setEmailOpen(true) }}>
+              {t('parking.ap.sendReport')}
+            </Button>
           </div>
         </div>
 
@@ -606,6 +661,28 @@ export function ParkingReportsPage() {
           </div>
         </div>
       </div>
+
+      {emailOpen && (
+        <Modal isOpen title={t('parking.ap.sendReport')} onClose={() => setEmailOpen(false)}>
+          <div className="space-y-4">
+            <p className="text-xs text-text-light">{t('parking.ap.sendReportHint', { from, to })}</p>
+            <Input
+              type="email"
+              value={emailTo}
+              onChange={(e) => setEmailTo(e.target.value)}
+              placeholder="name@company.com"
+              icon="mail"
+            />
+            {emailResult && <p className="text-xs font-bold text-text-dark">{emailResult}</p>}
+            <div className="flex gap-2 pt-2">
+              <Button fullWidth isLoading={busy === 'email'} disabled={!emailTo.trim()} onClick={() => void sendEmail()}>
+                {t('common.send')}
+              </Button>
+              <Button fullWidth variant="outline" onClick={() => setEmailOpen(false)}>{t('common.close')}</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </AppLayout>
   )
 }
