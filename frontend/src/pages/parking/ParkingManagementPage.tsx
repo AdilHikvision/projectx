@@ -5,6 +5,7 @@ import { Button, Input } from '../../components/atoms'
 import { PageHeader, Modal } from '../../components/organisms'
 import { apiRequest } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
+import { useModule } from '../../context/ModuleContext'
 
 // ─── Domain types (mirror backend DTOs) ─────────────────────────────────────────
 type SpaceType = 'Regular' | 'Vip' | 'Disabled' | 'Electric' | 'Motorcycle'
@@ -92,8 +93,10 @@ export function ParkingManagementPage() {
     const { token } = useAuth()
 
     const [view, setView] = useState<'manage' | 'scheme'>('manage')
-    // Parkinq iş rejimi: ödənişli və ya pulsuz (ümumi parking məntiqi) — system-settings `parking.mode`
-    const [parkingMode, setParkingMode] = useState<'Paid' | 'Free'>('Free')
+    // Режим работы (платный/бесплатный) берём из общего контекста — он же питает сайдбар,
+    // поэтому страница и меню всегда показывают одно и то же. Меняется в служебном окне.
+    const { parkingPaid } = useModule()
+    const parkingMode: 'Paid' | 'Free' = parkingPaid ? 'Paid' : 'Free'
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
     const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null }[]>([])
@@ -152,13 +155,6 @@ export function ParkingManagementPage() {
     }
 
     useEffect(() => { void loadZones() }, [token])
-    // Parkinq rejimini yüklə (yoxdursa default Pulsuz)
-    useEffect(() => {
-        if (!token) return
-        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
-            .then((r) => { if (r?.value === 'Paid' || r?.value === 'Free') setParkingMode(r.value) })
-            .catch(() => { /* 404 = hələ təyin olunmayıb → Pulsuz qalır */ })
-    }, [token])
     // Alt-rejim + nömrə siyahıları + tutum yüklə
     const reloadPlates = () => apiRequest<typeof plates>('/api/parking/plates', { token }).then(setPlates).catch(() => { })
     const reloadOccupancy = () => apiRequest<NonNullable<typeof occupancy>>('/api/parking/occupancy', { token }).then(setOccupancy).catch(() => { })

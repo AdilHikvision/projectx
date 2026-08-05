@@ -15,7 +15,7 @@ type ParkingMode = 'Free' | 'Paid'
 export function ModuleActivation() {
     const { t } = useTranslation()
     const { token } = useAuth()
-    const { isActivationOpen, closeActivation, enabledModules, saveEnabledModules } = useModule()
+    const { isActivationOpen, closeActivation, enabledModules, saveEnabledModules, applyParkingMode } = useModule()
 
     const [selected, setSelected] = useState<ModuleKey[]>(enabledModules)
     const [saving, setSaving] = useState(false)
@@ -75,6 +75,8 @@ export function ModuleActivation() {
                     body: JSON.stringify({ key: 'parking.mode', value: parkingMode }),
                 })
                 setSavedParkingMode(parkingMode)
+                // Сразу применяем в интерфейсе: пункты «Касса» и «Тарифы» появятся без перезагрузки.
+                applyParkingMode(parkingMode)
             }
             setSaved(true)
         } catch (e) {

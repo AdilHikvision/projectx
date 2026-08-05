@@ -8,6 +8,9 @@ const STORAGE_KEY = 'projectx.module'
 const ENABLED_CACHE_KEY = 'projectx.modules.enabled'
 /** Ключ в /api/system-settings — набор активных модулей на всю установку. */
 const ENABLED_SETTING_KEY = 'EnabledModules'
+/** Режим парковки держим здесь, а не в сайдбаре: сайдбар пересоздаётся на каждой
+ *  странице, и пункты «Касса»/«Тарифы» мигали бы при каждом переходе. */
+const PARKING_MODE_CACHE_KEY = 'projectx.parking.mode'
 
 const ALL_KEYS = MODULE_LIST.map((m) => m.key)
 
@@ -27,6 +30,10 @@ interface ModuleContextValue {
     openPicker: () => void
     closePicker: () => void
     selectModule: (key: ModuleKey) => void
+    /** Платный режим парковки: от него зависят пункты «Касса» и «Тарифы». */
+    parkingPaid: boolean
+    /** Применить режим парковки локально (после сохранения в служебном окне). */
+    applyParkingMode: (mode: 'Free' | 'Paid') => void
     /** Служебное окно активации (Ctrl+Shift+Backspace+1). */
     isActivationOpen: boolean
     openActivation: () => void
@@ -47,6 +54,9 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
         const cached = parseKeys(localStorage.getItem(ENABLED_CACHE_KEY))
         return cached.length > 0 ? cached : ALL_KEYS
     })
+    const [parkingPaid, setParkingPaid] = useState<boolean>(
+        () => localStorage.getItem(PARKING_MODE_CACHE_KEY) === 'Paid',
+    )
     const [isPickerOpen, setPickerOpen] = useState(false)
     const [isActivationOpen, setActivationOpen] = useState(false)
 
@@ -67,6 +77,21 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
                 localStorage.setItem(ENABLED_CACHE_KEY, next.join(','))
             })
             .catch(() => { /* ключа ещё нет — значит включено всё */ })
+        return () => { cancelled = true }
+    }, [token])
+
+    // Режим парковки читаем один раз на сессию — сайдбар берёт его отсюда.
+    useEffect(() => {
+        if (!token) return
+        let cancelled = false
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
+            .then((r) => {
+                if (cancelled) return
+                const paid = r?.value === 'Paid'
+                setParkingPaid(paid)
+                localStorage.setItem(PARKING_MODE_CACHE_KEY, paid ? 'Paid' : 'Free')
+            })
+            .catch(() => { /* ключа ещё нет — остаётся бесплатный режим */ })
         return () => { cancelled = true }
     }, [token])
 
@@ -109,6 +134,10 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
         setActiveModule(key)
         setPickerOpen(false)
     }, [])
+    const applyParkingMode = useCallback((mode: 'Free' | 'Paid') => {
+        setParkingPaid(mode === 'Paid')
+        localStorage.setItem(PARKING_MODE_CACHE_KEY, mode)
+    }, [])
 
     const saveEnabledModules = useCallback(async (keys: ModuleKey[]) => {
         const next = ALL_KEYS.filter((k) => keys.includes(k))
@@ -130,12 +159,15 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
         openPicker,
         closePicker,
         selectModule,
+        parkingPaid,
+        applyParkingMode,
         isActivationOpen,
         openActivation,
         closeActivation,
         saveEnabledModules,
     }), [
         activeModule, enabledModules, isPickerOpen, openPicker, closePicker, selectModule,
+        parkingPaid, applyParkingMode,
         isActivationOpen, openActivation, closeActivation, saveEnabledModules,
     ])
 

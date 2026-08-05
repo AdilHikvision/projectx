@@ -1,11 +1,9 @@
-import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavItem } from '../../molecules';
 import { Logo } from '../../atoms';
 import { useAuth } from '../../../auth/AuthContext';
 import { useModule } from '../../../context/ModuleContext';
 import { MODULES, type ModuleKey } from '../../../config/modules';
-import { apiRequest } from '../../../lib/api';
 
 interface NavConfig {
     to: string;
@@ -64,21 +62,13 @@ const SYSTEM_NAV: NavConfig[] = [
 ];
 
 export function Sidebar() {
-    const { hasAnyPermission, token } = useAuth();
+    const { hasAnyPermission } = useAuth();
     const { t } = useTranslation();
-    const { activeModule, openPicker, canSwitchModules } = useModule();
+    // Режим парковки живёт в ModuleContext: сайдбар пересоздаётся на каждой странице,
+    // и своё состояние сбрасывалось бы в «бесплатный» — пункты «Касса» и «Тарифы»
+    // мигали бы при каждом переходе, пока идёт запрос.
+    const { activeModule, openPicker, canSwitchModules, parkingPaid } = useModule();
     const module = MODULES[activeModule];
-
-    // Режим парковки: пункты POS/Тарифы видны только при платном режиме.
-    const [parkingPaid, setParkingPaid] = useState(false);
-    useEffect(() => {
-        if (activeModule !== 'parking' || !token) return;
-        let cancelled = false;
-        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
-            .then((r) => { if (!cancelled) setParkingPaid(r?.value === 'Paid'); })
-            .catch(() => { if (!cancelled) setParkingPaid(false); });
-        return () => { cancelled = true; };
-    }, [activeModule, token]);
 
     const isAllowed = (item: NavConfig): boolean => {
         if (item.modules && !item.modules.includes(activeModule)) return false;
