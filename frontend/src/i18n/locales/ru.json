@@ -1596,6 +1596,33 @@
       "Pending": "Ожидает",
       "Approved": "Одобрено",
       "Rejected": "Отклонено"
+    },
+    "monthSummary": "Сводка за месяц",
+    "notifications": "Уведомления",
+    "markAllRead": "Прочитать все",
+    "payslips": "Расчётные листы",
+    "summary": {
+      "workedDays": "Отработано дней",
+      "leaveDays": "Дней отпуска",
+      "pendingRequests": "Заявок в ожидании",
+      "records": "Отметок"
+    },
+    "payslip": {
+      "net": "К выплате",
+      "workedDays": "Отработано дней",
+      "workedHours": "Отработано часов",
+      "overtimeHours": "Сверхурочные, ч",
+      "basePay": "Оклад",
+      "overtimePay": "За сверхурочные",
+      "allowances": "Надбавки",
+      "bonuses": "Премии",
+      "gross": "Начислено",
+      "deductions": "Удержания",
+      "tax": "Налог ({{rate}}%)",
+      "status": {
+        "Approved": "Утверждён",
+        "Paid": "Выплачен"
+      }
     }
   },
   "companyTab": {

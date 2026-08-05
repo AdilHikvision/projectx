@@ -5,6 +5,7 @@ import { Button, Logo } from '../components/atoms'
 import { Modal } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { SelfServiceCalendar } from './SelfServiceCalendar'
+import { SelfServiceSummary, SelfServiceNotifications, SelfServicePayslips } from './SelfServiceExtras'
 import { SUPPORTED_LANGUAGES } from '../i18n'
 
 const SS_TOKEN_KEY = 'projectx.ss.token'
@@ -468,8 +469,17 @@ export function SelfServicePage() {
           )}
         </div>
 
+        {/* Сводка за месяц: сколько отработано, отпуск, что в ожидании */}
+        <SelfServiceSummary />
+
+        {/* Уведомления сотруднику (одобрения, напоминания) */}
+        <SelfServiceNotifications />
+
         {/* Attendance calendar (check-in/out, day-offs, vacations, absences) */}
         <SelfServiceCalendar />
+
+        {/* Расчётные листы по утверждённым периодам */}
+        <SelfServicePayslips />
 
         {/* Action Buttons */}
         <div>

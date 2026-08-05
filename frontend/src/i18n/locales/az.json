@@ -1585,6 +1585,33 @@
       "Pending": "Gözləyir",
       "Approved": "Təsdiqlənib",
       "Rejected": "Rədd edilib"
+    },
+    "monthSummary": "Bu ay",
+    "notifications": "Bildirişlər",
+    "markAllRead": "Hamısını oxunmuş et",
+    "payslips": "Əmək haqqı hesabatları",
+    "summary": {
+      "workedDays": "İşlənmiş günlər",
+      "leaveDays": "Məzuniyyət günləri",
+      "pendingRequests": "Gözləyən müraciətlər",
+      "records": "Qeydlər"
+    },
+    "payslip": {
+      "net": "Ödəniləcək",
+      "workedDays": "İşlənmiş günlər",
+      "workedHours": "İşlənmiş saatlar",
+      "overtimeHours": "Əlavə iş, saat",
+      "basePay": "Vəzifə maaşı",
+      "overtimePay": "Əlavə iş üçün",
+      "allowances": "Əlavələr",
+      "bonuses": "Mükafatlar",
+      "gross": "Hesablanıb",
+      "deductions": "Tutulmalar",
+      "tax": "Vergi ({{rate}}%)",
+      "status": {
+        "Approved": "Təsdiqlənib",
+        "Paid": "Ödənilib"
+      }
     }
   },
   "companyTab": {

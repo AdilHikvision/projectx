@@ -1585,6 +1585,33 @@
       "Pending": "Pending",
       "Approved": "Approved",
       "Rejected": "Rejected"
+    },
+    "monthSummary": "This month",
+    "notifications": "Notifications",
+    "markAllRead": "Mark all read",
+    "payslips": "Payslips",
+    "summary": {
+      "workedDays": "Days worked",
+      "leaveDays": "Leave days",
+      "pendingRequests": "Pending requests",
+      "records": "Punches"
+    },
+    "payslip": {
+      "net": "Net pay",
+      "workedDays": "Days worked",
+      "workedHours": "Hours worked",
+      "overtimeHours": "Overtime, h",
+      "basePay": "Base pay",
+      "overtimePay": "Overtime pay",
+      "allowances": "Allowances",
+      "bonuses": "Bonuses",
+      "gross": "Gross pay",
+      "deductions": "Deductions",
+      "tax": "Tax ({{rate}}%)",
+      "status": {
+        "Approved": "Approved",
+        "Paid": "Paid"
+      }
     }
   },
   "companyTab": {
