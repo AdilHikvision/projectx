@@ -60,6 +60,22 @@ interface Scheme {
     }[]
 }
 
+/** Владелец мест: N мест и любое число закреплённых номеров. */
+interface Holder {
+    id: string
+    name: string
+    phone: string | null
+    unit: string | null
+    spacesLimit: number
+    isActive: boolean
+    notes: string | null
+    plates: string[]
+    /** Сколько машин владельца стоит внутри прямо сейчас. */
+    occupied: number
+}
+
+const emptyHolder = { name: '', phone: '', unit: '', spacesLimit: '1', isActive: true, notes: '' }
+
 const SPACE_TYPES: SpaceType[] = ['Regular', 'Vip', 'Disabled', 'Electric', 'Motorcycle']
 
 // ─── AktivParking scoped restyle (page-only, prefixed .pk-*) ────────────────────
@@ -99,7 +115,12 @@ export function ParkingManagementPage() {
     const parkingMode: 'Paid' | 'Free' = parkingPaid ? 'Paid' : 'Free'
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
-    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null }[]>([])
+    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null; holderId?: string | null; holderName?: string | null }[]>([])
+    // Владельцы мест: у одного N мест и любое число машин.
+    const [holders, setHolders] = useState<Holder[]>([])
+    const [newPlateHolder, setNewPlateHolder] = useState('')
+    const [holderForm, setHolderForm] = useState(emptyHolder)
+    const [editingHolderId, setEditingHolderId] = useState<string | null>(null)
     const [newPlate, setNewPlate] = useState('')
     const [newPlateList, setNewPlateList] = useState<'Allow' | 'Block'>('Allow')
     const [newPlateCategory, setNewPlateCategory] = useState('')
@@ -159,6 +180,7 @@ export function ParkingManagementPage() {
     useEffect(() => { void loadZones() }, [token])
     // Alt-rejim + nömrə siyahıları + tutum yüklə
     const reloadPlates = () => apiRequest<typeof plates>('/api/parking/plates', { token }).then(setPlates).catch(() => { })
+    const reloadHolders = () => apiRequest<Holder[]>('/api/parking/holders', { token }).then(setHolders).catch(() => { })
     const reloadOccupancy = () => apiRequest<NonNullable<typeof occupancy>>('/api/parking/occupancy', { token }).then(setOccupancy).catch(() => { })
     useEffect(() => {
         if (!token) return
@@ -172,6 +194,7 @@ export function ParkingManagementPage() {
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.exitGraceMinutes', { token })
             .then((r) => { if (r?.value) setExitGraceMinutes(r.value) }).catch(() => { /* нет ключа — остаётся 15 */ })
         void reloadPlates()
+        void reloadHolders()
         void reloadOccupancy()
     }, [token])
 
@@ -198,16 +221,44 @@ export function ParkingManagementPage() {
                     category: newPlateCategory || null,
                     validTo: newPlateList === 'Allow' && newPlateValidTo ? newPlateValidTo : null,
                     timeLimitMinutes: newPlateList === 'Allow' && newPlateTimeLimit ? Math.max(1, parseInt(newPlateTimeLimit, 10) || 0) : null,
+                    holderId: newPlateList === 'Allow' && newPlateHolder ? newPlateHolder : null,
                 }),
             })
-            setNewPlate(''); setNewPlateCategory(''); setNewPlateValidTo(''); setNewPlateTimeLimit('')
+            setNewPlate(''); setNewPlateCategory(''); setNewPlateValidTo(''); setNewPlateTimeLimit(''); setNewPlateHolder('')
+            await reloadHolders()
             await reloadPlates()
         }
         catch { /* ignore */ }
     }
     const delPlate = async (id: string) => {
-        try { await apiRequest(`/api/parking/plates/${id}`, { method: 'DELETE', token }); setPlates((ps) => ps.filter((x) => x.id !== id)) }
+        try { await apiRequest(`/api/parking/plates/${id}`, { method: 'DELETE', token }); setPlates((ps) => ps.filter((x) => x.id !== id)); await reloadHolders() }
         catch { /* ignore */ }
+    }
+
+    // ─── Владельцы мест ───
+    const saveHolder = async () => {
+        const name = holderForm.name.trim()
+        if (!name) return
+        const body = JSON.stringify({
+            name,
+            phone: holderForm.phone.trim() || null,
+            unit: holderForm.unit.trim() || null,
+            spacesLimit: Math.max(1, parseInt(holderForm.spacesLimit, 10) || 1),
+            isActive: holderForm.isActive,
+            notes: holderForm.notes.trim() || null,
+        })
+        try {
+            if (editingHolderId) await apiRequest(`/api/parking/holders/${editingHolderId}`, { method: 'PUT', token, body })
+            else await apiRequest('/api/parking/holders', { method: 'POST', token, body })
+            setHolderForm(emptyHolder); setEditingHolderId(null)
+            await reloadHolders()
+        } catch { /* ignore */ }
+    }
+    const delHolder = async (id: string) => {
+        try {
+            await apiRequest(`/api/parking/holders/${id}`, { method: 'DELETE', token })
+            await reloadHolders(); await reloadPlates()
+        } catch { /* ignore */ }
     }
     useEffect(() => {
         if (!selectedZoneId) { setFloors([]); setSelectedFloorId(null); return }
@@ -383,6 +434,15 @@ export function ParkingManagementPage() {
                                         <input type="number" min={0} placeholder={t('parking.cfg.limitShort')} title={t('parking.cfg.limitHint')}
                                             className="w-24 rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
                                             value={newPlateTimeLimit} onChange={(e) => setNewPlateTimeLimit(e.target.value)} />
+                                        {/* Привязка номера к владельцу: его квота мест ограничит въезд остальных машин. */}
+                                        <select value={newPlateHolder} onChange={(e) => setNewPlateHolder(e.target.value)}
+                                            title={t('parking.holder.assignHint')}
+                                            className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
+                                            <option value="">{t('parking.holder.none')}</option>
+                                            {holders.filter((h) => h.isActive).map((h) => (
+                                                <option key={h.id} value={h.id}>{h.name} ({h.spacesLimit})</option>
+                                            ))}
+                                        </select>
                                     </>
                                 )}
                                 <Button icon="add" onClick={addPlate}>{t('common.add')}</Button>
@@ -402,6 +462,7 @@ export function ParkingManagementPage() {
                                                         {p.category ? t(`parking.cfg.${lt === 'Allow' ? 'category' : 'reason'}.${p.category}`, { defaultValue: p.category }) : ''}
                                                         {p.validTo ? ` · ${p.validTo}` : ''}
                                                         {p.timeLimitMinutes ? ` · ${p.timeLimitMinutes} ${t('parking.cfg.min')}` : ''}
+                                                        {p.holderName ? ` · ${p.holderName}` : ''}
                                                     </span>
                                                     <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text shrink-0">close</button>
                                                 </div>
@@ -412,6 +473,78 @@ export function ParkingManagementPage() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Владельцы мест — только в режиме «по списку»: именно там работает квота. */}
+                    {parkingMode === 'Free' && freeSubMode === 'List' && (
+                        <div className="ap-panel space-y-4 rounded-2xl border border-border-base bg-surface p-5">
+                            <div>
+                                <div className="text-sm font-bold text-text-dark">{t('parking.holder.title')}</div>
+                                <div className="mt-0.5 text-xs text-text-muted">{t('parking.holder.hint')}</div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Input value={holderForm.name} onChange={(e) => setHolderForm({ ...holderForm, name: e.target.value })}
+                                    placeholder={t('parking.holder.name')} />
+                                <Input value={holderForm.phone} onChange={(e) => setHolderForm({ ...holderForm, phone: e.target.value })}
+                                    placeholder={t('parking.holder.phone')} />
+                                <Input value={holderForm.unit} onChange={(e) => setHolderForm({ ...holderForm, unit: e.target.value })}
+                                    placeholder={t('parking.holder.unit')} />
+                                <input type="number" min={1} title={t('parking.holder.spacesLimit')}
+                                    className="w-24 rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                    value={holderForm.spacesLimit}
+                                    onChange={(e) => setHolderForm({ ...holderForm, spacesLimit: e.target.value })} />
+                                <Button icon={editingHolderId ? 'save' : 'add'} onClick={saveHolder} disabled={!holderForm.name.trim()}>
+                                    {editingHolderId ? t('common.save') : t('common.add')}
+                                </Button>
+                                {editingHolderId && (
+                                    <Button variant="outline" onClick={() => { setHolderForm(emptyHolder); setEditingHolderId(null) }}>
+                                        {t('common.cancel')}
+                                    </Button>
+                                )}
+                            </div>
+
+                            {holders.length === 0 ? (
+                                <div className="text-xs text-text-light">{t('common.noData')}</div>
+                            ) : (
+                                <div className="space-y-1.5">
+                                    {holders.map((h) => {
+                                        const full = h.occupied >= h.spacesLimit
+                                        return (
+                                            <div key={h.id} className="flex items-center gap-3 rounded-lg bg-slate-75 px-3 py-2">
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block truncate text-sm font-bold text-text-dark">
+                                                        {h.name}
+                                                        {h.unit ? <span className="ml-1 text-xs font-medium text-text-muted">· {h.unit}</span> : null}
+                                                        {!h.isActive && <span className="ml-1 text-xs font-medium text-text-light">({t('common.inactive')})</span>}
+                                                    </span>
+                                                    <span className="block truncate text-[11px] text-text-muted">
+                                                        {h.phone ? `${h.phone} · ` : ''}
+                                                        {h.plates.length > 0 ? h.plates.join(', ') : t('parking.holder.noPlates')}
+                                                    </span>
+                                                </span>
+                                                {/* Занято мест из выделенных: полная квота — остальные машины не пустят. */}
+                                                <span className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-black ${full ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}
+                                                    title={t('parking.holder.occupiedHint')}>
+                                                    {h.occupied} / {h.spacesLimit}
+                                                </span>
+                                                <button type="button" title={t('common.edit')}
+                                                    onClick={() => {
+                                                        setEditingHolderId(h.id)
+                                                        setHolderForm({
+                                                            name: h.name, phone: h.phone ?? '', unit: h.unit ?? '',
+                                                            spacesLimit: String(h.spacesLimit), isActive: h.isActive, notes: h.notes ?? '',
+                                                        })
+                                                    }}
+                                                    className="material-symbols-outlined shrink-0 text-base text-text-light hover:text-primary">edit</button>
+                                                <button type="button" title={t('common.delete')} onClick={() => delHolder(h.id)}
+                                                    className="material-symbols-outlined shrink-0 text-base text-text-light hover:text-error-text">close</button>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* View tabs */}
                     <div className="flex gap-1 border-b border-border-base">

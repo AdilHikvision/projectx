@@ -1158,6 +1158,28 @@ public sealed class ParkingPlate : BaseEntity
     public DateOnly? ValidTo { get; set; }
     /// <summary>Ограничение времени стоянки в минутах (белый список); null — без ограничения.</summary>
     public int? TimeLimitMinutes { get; set; }
+    /// <summary>Владелец мест, за которым закреплён номер (белый список); null — номер сам по себе.</summary>
+    public Guid? HolderId { get; set; }
+    public ParkingHolder? Holder { get; set; }
+}
+
+/// <summary>
+/// Владелец парковочных мест: за ним закреплено N мест и любое число автомобилей.
+/// Машины пускают, пока заняты не все его места, — так семья или компания с двумя
+/// местами и пятью машинами не поставит внутрь больше двух.
+/// </summary>
+public sealed class ParkingHolder : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    /// <summary>Квартира, офис или иная привязка — для удобства поиска.</summary>
+    public string? Unit { get; set; }
+    /// <summary>Сколько машин владельца может находиться внутри одновременно.</summary>
+    public int SpacesLimit { get; set; } = 1;
+    public bool IsActive { get; set; } = true;
+    public string? Notes { get; set; }
+
+    public ICollection<ParkingPlate> Plates { get; set; } = new List<ParkingPlate>();
 }
 
 /// <summary>Сессия парковки (машина внутри) — занятость, история въездов/выездов, оплата.</summary>

@@ -233,11 +233,29 @@ public sealed class DatabaseInitializer(
                 ADD COLUMN IF NOT EXISTS "OwnerName" character varying(200),
                 ADD COLUMN IF NOT EXISTS "OwnerPhone" character varying(64)
             """, cancellationToken);
+        // Владельцы мест: за одним закреплено N мест и любое число номеров.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS parking_holders (
+                "Id" uuid NOT NULL PRIMARY KEY,
+                "Name" character varying(200) NOT NULL,
+                "Phone" character varying(64),
+                "Unit" character varying(64),
+                "SpacesLimit" integer NOT NULL DEFAULT 1,
+                "IsActive" boolean NOT NULL DEFAULT TRUE,
+                "Notes" character varying(1000),
+                "CreatedUtc" timestamp with time zone NOT NULL,
+                "UpdatedUtc" timestamp with time zone
+            )
+            """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE parking_plates
                 ADD COLUMN IF NOT EXISTS "Category" character varying(32),
                 ADD COLUMN IF NOT EXISTS "ValidTo" date,
-                ADD COLUMN IF NOT EXISTS "TimeLimitMinutes" integer
+                ADD COLUMN IF NOT EXISTS "TimeLimitMinutes" integer,
+                ADD COLUMN IF NOT EXISTS "HolderId" uuid REFERENCES parking_holders("Id") ON DELETE SET NULL
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_plates_HolderId" ON parking_plates ("HolderId")
             """, cancellationToken);
         // ANPR-камеры: направление проезда и зона задаются на самом устройстве.
         await dbContext.Database.ExecuteSqlRawAsync("""

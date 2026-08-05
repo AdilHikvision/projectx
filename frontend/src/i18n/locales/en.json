@@ -397,7 +397,8 @@
         "not-in-allowlist": "plate is not in the allowlist",
         "allowlist-expired": "allowlist entry expired",
         "reentry-cooldown": "re-entry too soon",
-        "empty-plate": "plate is empty"
+        "empty-plate": "plate is empty",
+        "holder-spaces-busy": "all holder spaces are taken"
       },
       "debt": "Debt",
       "overstay": "Time limit exceeded ({{limit}} min)",
@@ -442,6 +443,18 @@
       },
       "exitGrace": "Minutes to exit after payment (0 = unlimited)",
       "exitGraceHint": "After paying, the driver gets this much time to reach the barrier. Later on a surcharge for the extra time is due."
+    },
+    "holder": {
+      "title": "Space holders",
+      "hint": "A holder gets a number of spaces and any number of vehicles. While all their spaces are taken, their other cars are not let in.",
+      "name": "Name or company",
+      "phone": "Phone",
+      "unit": "Flat / office",
+      "spacesLimit": "Number of spaces",
+      "noPlates": "No plates assigned",
+      "none": "No holder",
+      "assignHint": "Assign the plate to a space holder",
+      "occupiedHint": "Spaces taken out of allocated"
     }
   },
   "gym": {

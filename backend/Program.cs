@@ -9090,13 +9090,92 @@ app.MapAssistantChat();
 // ─── Parking access logic (списки номеров, занятость, движок решения) ───
 static string NormalizePlate(string? p) => new string((p ?? "").ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
 
+// ── Владельцы мест: за одним закреплено N мест и любое число автомобилей ──────
+app.MapGet("/api/parking/holders", async (AppDbContext db, CancellationToken ct) =>
+{
+    var holders = await db.ParkingHolders.AsNoTracking().OrderBy(x => x.Name).ToListAsync(ct);
+    var plates = await db.ParkingPlates.AsNoTracking()
+        .Where(p => p.HolderId != null && p.IsActive && p.ListType == ParkingPlateList.Allow)
+        .Select(p => new { p.HolderId, p.Plate, p.PlateNormalized })
+        .ToListAsync(ct);
+    var openPlates = await db.ParkingSessions.AsNoTracking()
+        .Where(s => s.ExitedUtc == null)
+        .Select(s => s.PlateNormalized)
+        .ToListAsync(ct);
+
+    return Results.Ok(holders.Select(h =>
+    {
+        var own = plates.Where(p => p.HolderId == h.Id).ToList();
+        return new
+        {
+            h.Id, h.Name, h.Phone, h.Unit, h.SpacesLimit, h.IsActive, h.Notes,
+            plates = own.Select(p => p.Plate).ToArray(),
+            // Сколько мест владельца занято прямо сейчас — видно, кого не пустят.
+            occupied = own.Count(p => openPlates.Contains(p.PlateNormalized))
+        };
+    }));
+}).RequireAuthorization("Parking.View");
+
+app.MapPost("/api/parking/holders", async (ParkingHolderRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var name = (req.Name ?? "").Trim();
+    if (name.Length == 0) return Results.BadRequest(new { message = "Name is required." });
+    var entity = new ParkingHolder
+    {
+        Name = name,
+        Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim(),
+        Unit = string.IsNullOrWhiteSpace(req.Unit) ? null : req.Unit.Trim(),
+        SpacesLimit = Math.Max(1, req.SpacesLimit),
+        IsActive = req.IsActive,
+        Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
+        CreatedUtc = DateTime.UtcNow
+    };
+    db.ParkingHolders.Add(entity);
+    await db.SaveChangesAsync(ct);
+    return Results.Created($"/api/parking/holders/{entity.Id}", new { id = entity.Id });
+}).RequireAuthorization("Parking.Manage");
+
+app.MapPut("/api/parking/holders/{id:guid}", async (Guid id, ParkingHolderRequest req, AppDbContext db, CancellationToken ct) =>
+{
+    var entity = await db.ParkingHolders.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (entity is null) return Results.NotFound();
+    var name = (req.Name ?? "").Trim();
+    if (name.Length == 0) return Results.BadRequest(new { message = "Name is required." });
+    entity.Name = name;
+    entity.Phone = string.IsNullOrWhiteSpace(req.Phone) ? null : req.Phone.Trim();
+    entity.Unit = string.IsNullOrWhiteSpace(req.Unit) ? null : req.Unit.Trim();
+    entity.SpacesLimit = Math.Max(1, req.SpacesLimit);
+    entity.IsActive = req.IsActive;
+    entity.Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { ok = true });
+}).RequireAuthorization("Parking.Manage");
+
+app.MapDelete("/api/parking/holders/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
+{
+    var entity = await db.ParkingHolders.FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (entity is null) return Results.NotFound();
+    // Номера владельца остаются в белом списке, просто теряют привязку (FK SetNull).
+    db.ParkingHolders.Remove(entity);
+    await db.SaveChangesAsync(ct);
+    return Results.NoContent();
+}).RequireAuthorization("Parking.Manage");
+
 app.MapGet("/api/parking/plates", async (AppDbContext db, string? listType, CancellationToken ct) =>
 {
     var q = db.ParkingPlates.AsNoTracking().Where(x => x.IsActive);
     if (!string.IsNullOrWhiteSpace(listType) && Enum.TryParse<ParkingPlateList>(listType, true, out var lt))
         q = q.Where(x => x.ListType == lt);
     var list = await q.OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
-    return Results.Ok(list.Select(x => new { x.Id, x.Plate, listType = x.ListType.ToString(), x.Note, x.CreatedUtc, x.Category, validTo = x.ValidTo?.ToString("yyyy-MM-dd"), x.TimeLimitMinutes }));
+    var holders = await db.ParkingHolders.AsNoTracking().ToDictionaryAsync(h => h.Id, h => h.Name, ct);
+    return Results.Ok(list.Select(x => new
+    {
+        x.Id, x.Plate, listType = x.ListType.ToString(), x.Note, x.CreatedUtc, x.Category,
+        validTo = x.ValidTo?.ToString("yyyy-MM-dd"), x.TimeLimitMinutes,
+        x.HolderId,
+        holderName = x.HolderId.HasValue && holders.TryGetValue(x.HolderId.Value, out var hn) ? hn : null
+    }));
 }).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext db, CancellationToken ct) =>
@@ -9110,9 +9189,10 @@ app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext 
     {
         existing.IsActive = true; existing.Note = req.Note; existing.Plate = req.Plate.Trim();
         existing.Category = category; existing.ValidTo = req.ValidTo; existing.TimeLimitMinutes = req.TimeLimitMinutes;
+        existing.HolderId = req.HolderId;
         existing.UpdatedUtc = DateTime.UtcNow;
     }
-    else db.ParkingPlates.Add(new ParkingPlate { Plate = req.Plate.Trim(), PlateNormalized = norm, ListType = lt, Note = req.Note, Category = category, ValidTo = req.ValidTo, TimeLimitMinutes = req.TimeLimitMinutes });
+    else db.ParkingPlates.Add(new ParkingPlate { Plate = req.Plate.Trim(), PlateNormalized = norm, ListType = lt, Note = req.Note, Category = category, ValidTo = req.ValidTo, TimeLimitMinutes = req.TimeLimitMinutes, HolderId = req.HolderId });
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true });
 }).RequireAuthorization("Parking.Manage");
@@ -10477,7 +10557,8 @@ public sealed record ParkingZoneRequest(string Name, string? Code, string? Descr
 public sealed record ParkingFloorRequest(string Name, int Level, bool IsActive, int SortOrder);
 public sealed record ParkingRowRequest(string Name, int SortOrder);
 public sealed record ParkingSpaceRequest(string Code, string Type, bool IsActive, int SortOrder, string? Notes);
-public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null, int? TimeLimitMinutes = null);
+public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null, int? TimeLimitMinutes = null, Guid? HolderId = null);
+public sealed record ParkingHolderRequest(string Name, string? Phone, string? Unit, int SpacesLimit, bool IsActive = true, string? Notes = null);
 public sealed record ParkingVehicleRequest(string Plate, string? Brand, string? Color, string? Notes, bool IsActive = true, string? Country = null, string? Company = null, string? VehicleType = null, string? PhotoUrl = null, string? OwnerName = null, string? OwnerPhone = null);
 public sealed record ParkingPermitRequest(Guid VehicleId, Guid? ZoneId, DateOnly ValidFrom, DateOnly? ValidTo, bool IsActive = true, string? Notes = null);
 public sealed record ParkingTariffRequest(string Name, string Kind, int FreeMinutes, decimal PricePerHour, decimal PricePerDay, decimal FixedPrice, decimal? MaxPerDay, decimal? NightPricePerHour, TimeSpan? NightFrom, TimeSpan? NightTo, decimal? WeekendPricePerHour, bool IsActive = true, bool IsDefault = false, int SortOrder = 0);

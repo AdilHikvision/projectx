@@ -76,6 +76,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ParkingRow> ParkingRows => Set<ParkingRow>();
     public DbSet<ParkingSpace> ParkingSpaces => Set<ParkingSpace>();
     public DbSet<ParkingPlate> ParkingPlates => Set<ParkingPlate>();
+    public DbSet<ParkingHolder> ParkingHolders => Set<ParkingHolder>();
     public DbSet<ParkingSession> ParkingSessions => Set<ParkingSession>();
     public DbSet<ParkingResident> ParkingResidents => Set<ParkingResident>();
     public DbSet<ParkingVehicle> ParkingVehicles => Set<ParkingVehicle>();
@@ -704,6 +705,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasIndex(x => x.IsActive);
         });
 
+        builder.Entity<ParkingHolder>(entity =>
+        {
+            entity.ToTable("parking_holders");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Phone).HasMaxLength(64);
+            entity.Property(x => x.Unit).HasMaxLength(64);
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => x.IsActive);
+        });
+
         builder.Entity<ParkingPlate>(entity =>
         {
             entity.ToTable("parking_plates");
@@ -712,6 +724,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Category).HasMaxLength(32);
             entity.HasIndex(x => new { x.PlateNormalized, x.ListType });
+            // Удаляем владельца — номера остаются в списке, просто без привязки.
+            entity.HasOne(x => x.Holder).WithMany(x => x.Plates)
+                .HasForeignKey(x => x.HolderId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => x.HolderId);
         });
 
         builder.Entity<ParkingSession>(entity =>

@@ -397,7 +397,8 @@
         "not-in-allowlist": "nömrə ağ siyahıda deyil",
         "allowlist-expired": "ağ siyahıdakı müddət bitib",
         "reentry-cooldown": "təkrar giriş çox tezdir",
-        "empty-plate": "nömrə göstərilməyib"
+        "empty-plate": "nömrə göstərilməyib",
+        "holder-spaces-busy": "sahibin bütün yerləri doludur"
       },
       "debt": "Borc",
       "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)",
@@ -442,6 +443,18 @@
       },
       "exitGrace": "Ödənişdən sonra çıxış üçün dəqiqə (0 = limitsiz)",
       "exitGraceHint": "Ödənişdən sonra sürücüyə şlaqbauma çatmaq üçün bu qədər vaxt verilir. Sonra artıq vaxta görə əlavə ödəniş tələb olunur."
+    },
+    "holder": {
+      "title": "Yer sahibləri",
+      "hint": "Sahibə bir neçə yer və istənilən sayda avtomobil təhkim olunur. Bütün yerləri dolu olduqca digər maşınlar buraxılmır.",
+      "name": "Ad və ya təşkilat",
+      "phone": "Telefon",
+      "unit": "Mənzil / ofis",
+      "spacesLimit": "Yerlərin sayı",
+      "noPlates": "Nömrə təhkim olunmayıb",
+      "none": "Sahibsiz",
+      "assignHint": "Nömrəni yer sahibinə təhkim et",
+      "occupiedHint": "Ayrılmış yerlərdən tutulub"
     }
   },
   "gym": {

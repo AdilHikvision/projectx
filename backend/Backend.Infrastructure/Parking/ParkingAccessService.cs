@@ -210,6 +210,8 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
 
         bool allow;
         string reason;
+        // Подробность для журнала: у отказа по местам владельца полезно видеть счёт.
+        string? deniedDetail = null;
         if (isPaidMode)
         {
             allow = await HasFreeSpace();
@@ -222,6 +224,31 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
                 .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == norm, ct);
             allow = wl is not null && (wl.ValidTo == null || wl.ValidTo >= today);
             reason = wl is null ? "not-in-allowlist" : (allow ? "allowlist" : "allowlist-expired");
+
+            // У владельца может быть несколько мест и много машин: пускаем, пока заняты
+            // не все его места. Иначе вторая машина ждёт, когда выедет первая.
+            if (allow && wl!.HolderId is { } holderId)
+            {
+                var holder = await db.ParkingHolders.AsNoTracking().FirstOrDefaultAsync(h => h.Id == holderId, ct);
+                if (holder is { IsActive: true })
+                {
+                    var holderPlates = await db.ParkingPlates.AsNoTracking()
+                        .Where(p => p.HolderId == holderId && p.IsActive && p.ListType == ParkingPlateList.Allow)
+                        .Select(p => p.PlateNormalized)
+                        .ToListAsync(ct);
+                    // Саму въезжающую машину не считаем: если она уже внутри, это повторное событие.
+                    var occupied = await db.ParkingSessions.AsNoTracking()
+                        .CountAsync(s => s.ExitedUtc == null
+                            && s.PlateNormalized != norm
+                            && holderPlates.Contains(s.PlateNormalized), ct);
+                    if (occupied >= Math.Max(1, holder.SpacesLimit))
+                    {
+                        allow = false;
+                        reason = "holder-spaces-busy";
+                        deniedDetail = $"Holder «{holder.Name}»: {occupied}/{holder.SpacesLimit} spaces busy";
+                    }
+                }
+            }
         }
         else
         {
@@ -235,7 +262,7 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
         else
         {
-            LogEvent("denied", reason);
+            LogEvent("denied", deniedDetail ?? reason);
             await db.SaveChangesAsync(ct);
         }
 
