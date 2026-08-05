@@ -24,7 +24,11 @@ interface PosResult {
     sessionId: string; enteredUtc: string; minutes: number; amount: number
     requiresPayment: boolean; tariffName: string | null; cameraName: string | null; photoUrl: string | null
   } | null
-  recentSessions: { enteredUtc: string; exitedUtc: string | null; cost: number | null; paymentMethod: string | null }[]
+  recentSessions: { enteredUtc: string; exitedUtc: string | null; cost: number | null; paymentMethod: string | null; isDebt?: boolean }[]
+  /** Сумма прошлых выездов без оплаты. */
+  debt?: number
+  /** Разрешённое время стоянки для этого номера, минут; null — без ограничения. */
+  timeLimitMinutes?: number | null
 }
 
 const fmtDT = (iso: string | null | undefined) =>
@@ -142,6 +146,20 @@ export function ParkingPosPage() {
               {v?.permitActive && (
                 <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-700">
                   <span className="material-symbols-outlined text-sm">verified_user</span> {t('parking.pos.permitActive')}
+                </span>
+              )}
+              {/* Долг за прошлые выезды без оплаты — кассир видит его сразу. */}
+              {!!result.debt && result.debt > 0 && (
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black bg-red-100 text-red-700">
+                  <span className="material-symbols-outlined text-sm">money_off</span>
+                  {t('parking.pos.debt')}: {result.debt.toFixed(2)} AZN
+                </span>
+              )}
+              {/* Перепростой: показываем, когда машина уже превысила лимит. */}
+              {result.timeLimitMinutes != null && os != null && os.minutes > result.timeLimitMinutes && (
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black bg-amber-100 text-amber-800">
+                  <span className="material-symbols-outlined text-sm">timer_off</span>
+                  {t('parking.pos.overstay', { limit: result.timeLimitMinutes })}
                 </span>
               )}
             </div>

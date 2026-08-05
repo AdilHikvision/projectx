@@ -17,6 +17,79 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
     public static string NormalizePlate(string? p) =>
         new((p ?? "").ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
 
+    /// <summary>
+    /// Стоимость стоянки по тарифу. Часовой: почасовая ставка с ночным/выходным окном
+    /// и потолком за сутки. Считается здесь, чтобы касса, выезд по камере и расчёт долга
+    /// пользовались одной формулой.
+    /// </summary>
+    public static decimal ComputeCost(ParkingTariff t, DateTime enteredUtc, DateTime exitedUtc)
+    {
+        var totalMinutes = Math.Max(0, (exitedUtc - enteredUtc).TotalMinutes);
+        if (totalMinutes <= t.FreeMinutes) return 0m;
+
+        if (t.Kind == ParkingTariffKind.Fixed) return t.FixedPrice;
+        if (t.Kind == ParkingTariffKind.Daily)
+        {
+            var days = (int)Math.Ceiling((totalMinutes - t.FreeMinutes) / (60.0 * 24.0));
+            return Math.Max(1, days) * t.PricePerDay;
+        }
+
+        // Hourly: идём по часовым слотам от (вход + бесплатные минуты) в локальном времени.
+        static bool InNightWindow(TimeSpan tod, TimeSpan from, TimeSpan to) =>
+            from <= to ? (tod >= from && tod < to) : (tod >= from || tod < to);
+
+        var chargeStart = enteredUtc.AddMinutes(t.FreeMinutes);
+        var hours = (int)Math.Ceiling((exitedUtc - chargeStart).TotalMinutes / 60.0);
+        decimal total = 0m, dayAccum = 0m;
+        var dayAnchor = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(chargeStart, DateTimeKind.Utc), TimeZoneInfo.Local).Date;
+        for (var i = 0; i < hours; i++)
+        {
+            var slotLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(chargeStart.AddHours(i), DateTimeKind.Utc), TimeZoneInfo.Local);
+            if (slotLocal.Date != dayAnchor) { dayAnchor = slotLocal.Date; dayAccum = 0m; }
+            var isWeekend = slotLocal.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+            decimal rate = t.PricePerHour;
+            if (isWeekend && t.WeekendPricePerHour.HasValue) rate = t.WeekendPricePerHour.Value;
+            else if (t.NightPricePerHour.HasValue && t.NightFrom.HasValue && t.NightTo.HasValue && InNightWindow(slotLocal.TimeOfDay, t.NightFrom.Value, t.NightTo.Value))
+                rate = t.NightPricePerHour.Value;
+            var charge = rate;
+            if (t.MaxPerDay.HasValue)
+            {
+                charge = Math.Min(charge, Math.Max(0, t.MaxPerDay.Value - dayAccum));
+                dayAccum += charge;
+            }
+            total += charge;
+        }
+        return Math.Round(total, 2);
+    }
+
+    /// <summary>
+    /// Сколько минут этому номеру разрешено стоять: персональный лимит из белого списка,
+    /// иначе общий из настройки parking.freeMaxMinutes («Лимит бесплатной стоянки» на странице
+    /// управления). null — без ограничения. Пропуска и абонементы лимиту не подчиняются:
+    /// это служебный и оплаченный транспорт.
+    /// </summary>
+    public static async Task<int?> ResolveTimeLimitAsync(AppDbContext db, string plateNormalized, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var hasSubscription = await db.ParkingSubscriptions.AsNoTracking()
+            .AnyAsync(s => s.IsActive && s.PlateNormalized == plateNormalized && s.StartDate <= today && s.EndDate >= today, ct);
+        if (hasSubscription) return null;
+
+        var hasPermit = await db.ParkingPermits.AsNoTracking().Include(p => p.Vehicle)
+            .AnyAsync(p => p.IsActive && p.Vehicle!.IsActive && p.Vehicle.PlateNormalized == plateNormalized
+                && p.ValidFrom <= today && (p.ValidTo == null || p.ValidTo >= today), ct);
+        if (hasPermit) return null;
+
+        var allow = await db.ParkingPlates.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == plateNormalized, ct);
+        if (allow?.TimeLimitMinutes is > 0) return allow.TimeLimitMinutes;
+
+        var raw = (await db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Key == "parking.freeMaxMinutes", ct))?.Value;
+        return int.TryParse(raw, out var minutes) && minutes > 0 ? minutes : null;
+    }
+
     public async Task<ParkingAccessDecision> DecideAsync(ParkingAccessInput input, CancellationToken ct)
     {
         var norm = NormalizePlate(input.Plate);
@@ -191,6 +264,10 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
 
         var now = DateTime.UtcNow;
+        var tariff = await db.ParkingTariffs.AsNoTracking().Where(x => x.IsActive)
+            .OrderByDescending(x => x.IsDefault).ThenBy(x => x.SortOrder).FirstOrDefaultAsync(ct);
+        var limitMinutes = await ResolveTimeLimitAsync(db, norm, ct);
+
         Guid? lastId = null;
         decimal amount = 0m;
         foreach (var s in open)
@@ -199,6 +276,33 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             s.UpdatedUtc = now;
             if (photoUrl != null) s.PhotoUrl ??= photoUrl;
             lastId = s.Id;
+
+            // Выезд без кассы: стоимость всё равно считаем и фиксируем как долг —
+            // иначе в отчётах такая стоянка выглядела бы бесплатной.
+            if (s.IsPaid && tariff is not null && s.PaidUtc == null)
+            {
+                var cost = ComputeCost(tariff, s.EnteredUtc, now);
+                if (cost > 0)
+                {
+                    s.Cost = cost;
+                    s.TariffId = tariff.Id;
+                    amount += cost;
+                }
+            }
+
+            // Перепростой: фиксируем один раз, чтобы не плодить одинаковые события.
+            var stayed = (now - s.EnteredUtc).TotalMinutes;
+            if (limitMinutes is { } limit && stayed > limit && s.OverstayUtc == null)
+            {
+                s.OverstayUtc = now;
+                db.ParkingEvents.Add(new ParkingEvent
+                {
+                    Type = "overstay",
+                    Message = $"Stayed {Math.Round(stayed)}m, limit {limit}m",
+                    Plate = plate.Trim(),
+                    Source = camera ?? "system"
+                });
+            }
         }
 
         db.ParkingEvents.Add(new ParkingEvent
@@ -208,6 +312,17 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             Plate = plate.Trim(),
             Source = camera ?? "system"
         });
+        if (amount > 0)
+        {
+            db.ParkingEvents.Add(new ParkingEvent
+            {
+                Type = "debt",
+                Message = $"Left without payment: {amount:0.##}",
+                Plate = plate.Trim(),
+                Source = camera ?? "system"
+            });
+            logger.LogWarning("Parking: {Plate} left without payment, debt {Amount}", plate, amount);
+        }
         await db.SaveChangesAsync(ct);
         return new ParkingExitResult(open.Count, amount, lastId);
     }

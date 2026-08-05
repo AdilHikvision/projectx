@@ -345,7 +345,10 @@
         "admin_login": "Admin login",
         "denied": "Entry denied",
         "alarm": "ALARM"
-      }
+      },
+      "unpaid": "Unpaid",
+      "overstay": "Overstay",
+      "overstayHint": "Parked longer than the allowed limit"
     },
     "veh": {
       "country": "Country",
@@ -392,7 +395,9 @@
         "allowlist-expired": "allowlist entry expired",
         "reentry-cooldown": "re-entry too soon",
         "empty-plate": "plate is empty"
-      }
+      },
+      "debt": "Debt",
+      "overstay": "Time limit exceeded ({{limit}} min)"
     }
   },
   "gym": {

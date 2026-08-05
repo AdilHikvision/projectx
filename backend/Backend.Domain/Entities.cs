@@ -1180,6 +1180,8 @@ public sealed class ParkingSession : BaseEntity
     public string? PaymentMethod { get; set; }
     public DateTime? PaidUtc { get; set; }
     public Guid? TariffId { get; set; }
+    /// <summary>Когда зафиксирован перепростой (стоянка дольше разрешённого лимита); null — не было.</summary>
+    public DateTime? OverstayUtc { get; set; }
 }
 
 /// <summary>Вид тарифа парковки.</summary>

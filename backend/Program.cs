@@ -15,6 +15,7 @@ using Backend.Infrastructure.Devices;
 using Backend.Infrastructure.Devices.Sdk;
 using Backend;
 using Backend.Infrastructure.Identity;
+using Backend.Infrastructure.Parking;
 using Backend.Infrastructure.Persistence;
 using Backend.Infrastructure.Security;
 using Backend.Infrastructure.System;
@@ -8825,7 +8826,7 @@ app.MapGet("/api/parking/zones", async (AppDbContext db, CancellationToken ct) =
         z,
         floorCounts.FirstOrDefault(c => c.ZoneId == z.Id)?.Count ?? 0,
         spaceCounts.FirstOrDefault(c => c.ZoneId == z.Id)?.Count ?? 0)));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/zones", async (ParkingZoneRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8841,7 +8842,7 @@ app.MapPost("/api/parking/zones", async (ParkingZoneRequest req, AppDbContext db
     db.ParkingZones.Add(z);
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingZoneDto(z));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/zones/{id:guid}", async (Guid id, ParkingZoneRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8856,7 +8857,7 @@ app.MapPut("/api/parking/zones/{id:guid}", async (Guid id, ParkingZoneRequest re
     z.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingZoneDto(z));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/zones/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -8865,7 +8866,7 @@ app.MapDelete("/api/parking/zones/{id:guid}", async (Guid id, AppDbContext db, C
     db.ParkingZones.Remove(z); // cascade removes floors → rows → spaces
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // ─── Floors ───
 app.MapGet("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, AppDbContext db, CancellationToken ct) =>
@@ -8881,7 +8882,7 @@ app.MapGet("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, AppDbC
         f,
         rowCounts.FirstOrDefault(c => c.FloorId == f.Id)?.Count ?? 0,
         spaceCounts.FirstOrDefault(c => c.FloorId == f.Id)?.Count ?? 0)));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, ParkingFloorRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8898,7 +8899,7 @@ app.MapPost("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, Parki
     db.ParkingFloors.Add(f);
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingFloorDto(f));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/floors/{id:guid}", async (Guid id, ParkingFloorRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8912,7 +8913,7 @@ app.MapPut("/api/parking/floors/{id:guid}", async (Guid id, ParkingFloorRequest 
     f.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingFloorDto(f));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/floors/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -8921,7 +8922,7 @@ app.MapDelete("/api/parking/floors/{id:guid}", async (Guid id, AppDbContext db, 
     db.ParkingFloors.Remove(f);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // ─── Rows ───
 app.MapGet("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, AppDbContext db, CancellationToken ct) =>
@@ -8932,7 +8933,7 @@ app.MapGet("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, AppDb
     var spaceCounts = await db.ParkingSpaces.AsNoTracking().Where(s => s.Row!.FloorId == floorId)
         .GroupBy(s => s.RowId).Select(g => new { RowId = g.Key, Count = g.Count() }).ToListAsync(ct);
     return Results.Ok(rows.Select(r => ParkingRowDto(r, spaceCounts.FirstOrDefault(c => c.RowId == r.Id)?.Count ?? 0)));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, ParkingRowRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8942,7 +8943,7 @@ app.MapPost("/api/parking/floors/{floorId:guid}/rows", async (Guid floorId, Park
     db.ParkingRows.Add(r);
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingRowDto(r));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/rows/{id:guid}", async (Guid id, ParkingRowRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8954,7 +8955,7 @@ app.MapPut("/api/parking/rows/{id:guid}", async (Guid id, ParkingRowRequest req,
     r.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingRowDto(r));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/rows/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -8963,7 +8964,7 @@ app.MapDelete("/api/parking/rows/{id:guid}", async (Guid id, AppDbContext db, Ca
     db.ParkingRows.Remove(r);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // ─── Spaces ───
 app.MapGet("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, AppDbContext db, CancellationToken ct) =>
@@ -8972,7 +8973,7 @@ app.MapGet("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, AppDbCont
     var spaces = await db.ParkingSpaces.AsNoTracking()
         .Where(s => s.RowId == rowId).OrderBy(s => s.SortOrder).ThenBy(s => s.Code).ToListAsync(ct);
     return Results.Ok(spaces.Select(ParkingSpaceDto));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, ParkingSpaceRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -8991,7 +8992,7 @@ app.MapPost("/api/parking/rows/{rowId:guid}/spaces", async (Guid rowId, ParkingS
     db.ParkingSpaces.Add(s);
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingSpaceDto(s));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Массовая генерация мест в ряду: префикс + диапазон номеров (например A-01 … A-20).
 app.MapPost("/api/parking/rows/{rowId:guid}/spaces/bulk", async (Guid rowId, ParkingSpaceBulkRequest req, AppDbContext db, CancellationToken ct) =>
@@ -9019,7 +9020,7 @@ app.MapPost("/api/parking/rows/{rowId:guid}/spaces/bulk", async (Guid rowId, Par
     db.ParkingSpaces.AddRange(created);
     await db.SaveChangesAsync(ct);
     return Results.Ok(created.Select(ParkingSpaceDto));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/spaces/{id:guid}", async (Guid id, ParkingSpaceRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9035,7 +9036,7 @@ app.MapPut("/api/parking/spaces/{id:guid}", async (Guid id, ParkingSpaceRequest 
     s.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(ParkingSpaceDto(s));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/spaces/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9044,7 +9045,7 @@ app.MapDelete("/api/parking/spaces/{id:guid}", async (Guid id, AppDbContext db, 
     db.ParkingSpaces.Remove(s);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // ─── Scheme / layout: всё дерево одной зоны для визуализации ───
 app.MapGet("/api/parking/zones/{zoneId:guid}/scheme", async (Guid zoneId, AppDbContext db, CancellationToken ct) =>
@@ -9081,7 +9082,7 @@ app.MapGet("/api/parking/zones/{zoneId:guid}/scheme", async (Guid zoneId, AppDbC
             }),
         }),
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapAssistantChat();
 
@@ -9095,7 +9096,7 @@ app.MapGet("/api/parking/plates", async (AppDbContext db, string? listType, Canc
         q = q.Where(x => x.ListType == lt);
     var list = await q.OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
     return Results.Ok(list.Select(x => new { x.Id, x.Plate, listType = x.ListType.ToString(), x.Note, x.CreatedUtc, x.Category, validTo = x.ValidTo?.ToString("yyyy-MM-dd"), x.TimeLimitMinutes }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9113,7 +9114,7 @@ app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext 
     else db.ParkingPlates.Add(new ParkingPlate { Plate = req.Plate.Trim(), PlateNormalized = norm, ListType = lt, Note = req.Note, Category = category, ValidTo = req.ValidTo, TimeLimitMinutes = req.TimeLimitMinutes });
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/plates/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9122,7 +9123,7 @@ app.MapDelete("/api/parking/plates/{id:guid}", async (Guid id, AppDbContext db, 
     db.ParkingPlates.Remove(p);
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapGet("/api/parking/occupancy", async (AppDbContext db, Guid? zoneId, CancellationToken ct) =>
 {
@@ -9140,7 +9141,7 @@ app.MapGet("/api/parking/occupancy", async (AppDbContext db, Guid? zoneId, Cance
         commonFree = Math.Max(0, commonCap - commonUsed),
         vipFree = Math.Max(0, vipCap - vipUsed)
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 // Решение принимает общий сервис — тот же, которым пользуются ANPR-камеры и ручной въезд с POS.
 app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IParkingAccessService access, CancellationToken ct) =>
@@ -9159,7 +9160,7 @@ app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IPa
         waitMinutes = d.WaitMinutes,
         sessionId = d.SessionId
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Operate");
 
 // Проверка разбора события камеры: сюда можно вставить сырой XML/JSON из ISAPI и увидеть,
 // какой номер из него извлекается. Нужно при пусконаладке новой модели камеры.
@@ -9172,7 +9173,7 @@ app.MapPost("/api/parking/anpr-parse-test", async (HttpRequest request, Cancella
     return parsed is null
         ? Results.Ok(new { recognized = false })
         : Results.Ok(new { recognized = true, plate = parsed.Plate, confidence = parsed.Confidence, country = parsed.Country, direction = parsed.Direction, occurredUtc = parsed.OccurredUtc });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Снимок с камеры, сохранённый при проезде.
 app.MapGet("/api/parking/snapshots/{file}", (string file, IConfiguration configuration) =>
@@ -9184,56 +9185,20 @@ app.MapGet("/api/parking/snapshots/{file}", (string file, IConfiguration configu
     var dir = configuration["Storage:ParkingPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "parking");
     var full = Path.Combine(dir, name);
     return File.Exists(full) ? Results.File(full, "image/jpeg") : Results.NotFound();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/exit", async (ParkingExitRequest req, IParkingAccessService access, CancellationToken ct) =>
 {
     var res = await access.RegisterExitAsync(req.Plate, null, null, ct);
     return Results.Ok(new { ok = true, closed = res.Closed });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Operate");
 
 // ── Тарифы, абонементы, оплата выезда, история и журнал событий ──────────────
 
-// Стоимость стоянки по тарифу. Часовой: почасовая ставка с ночным/выходным окном и потолком за сутки.
-static decimal ComputeParkingCost(ParkingTariff t, DateTime enteredUtc, DateTime exitedUtc)
-{
-    var totalMinutes = Math.Max(0, (exitedUtc - enteredUtc).TotalMinutes);
-    if (totalMinutes <= t.FreeMinutes) return 0m;
-
-    if (t.Kind == ParkingTariffKind.Fixed) return t.FixedPrice;
-    if (t.Kind == ParkingTariffKind.Daily)
-    {
-        var days = (int)Math.Ceiling((totalMinutes - t.FreeMinutes) / (60.0 * 24.0));
-        return Math.Max(1, days) * t.PricePerDay;
-    }
-
-    // Hourly: идём по часовым слотам от (вход + бесплатные минуты) в локальном времени.
-    static bool InNightWindow(TimeSpan tod, TimeSpan from, TimeSpan to) =>
-        from <= to ? (tod >= from && tod < to) : (tod >= from || tod < to);
-
-    var chargeStart = enteredUtc.AddMinutes(t.FreeMinutes);
-    var hours = (int)Math.Ceiling((exitedUtc - chargeStart).TotalMinutes / 60.0);
-    decimal total = 0m, dayAccum = 0m;
-    var dayAnchor = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(chargeStart, DateTimeKind.Utc), TimeZoneInfo.Local).Date;
-    for (var i = 0; i < hours; i++)
-    {
-        var slotLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(chargeStart.AddHours(i), DateTimeKind.Utc), TimeZoneInfo.Local);
-        if (slotLocal.Date != dayAnchor) { dayAnchor = slotLocal.Date; dayAccum = 0m; }
-        var isWeekend = slotLocal.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
-        decimal rate = t.PricePerHour;
-        if (isWeekend && t.WeekendPricePerHour.HasValue) rate = t.WeekendPricePerHour.Value;
-        else if (t.NightPricePerHour.HasValue && t.NightFrom.HasValue && t.NightTo.HasValue && InNightWindow(slotLocal.TimeOfDay, t.NightFrom.Value, t.NightTo.Value))
-            rate = t.NightPricePerHour.Value;
-        var charge = rate;
-        if (t.MaxPerDay.HasValue)
-        {
-            charge = Math.Min(charge, Math.Max(0, t.MaxPerDay.Value - dayAccum));
-            dayAccum += charge;
-        }
-        total += charge;
-    }
-    return Math.Round(total, 2);
-}
+// Стоимость стоянки считает ParkingAccessService — тем же кодом, что и выезд по камере,
+// чтобы касса и шлагбаум никогда не разошлись в сумме.
+static decimal ComputeParkingCost(ParkingTariff t, DateTime enteredUtc, DateTime exitedUtc) =>
+    ParkingAccessService.ComputeCost(t, enteredUtc, exitedUtc);
 
 // Tariffs CRUD
 app.MapGet("/api/parking/tariffs", async (AppDbContext db, CancellationToken ct) =>
@@ -9246,7 +9211,7 @@ app.MapGet("/api/parking/tariffs", async (AppDbContext db, CancellationToken ct)
         nightFrom = x.NightFrom?.ToString(@"hh\:mm"), nightTo = x.NightTo?.ToString(@"hh\:mm"),
         x.WeekendPricePerHour, x.IsActive, x.IsDefault, x.SortOrder
     }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/tariffs", async (ParkingTariffRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9266,7 +9231,7 @@ app.MapPost("/api/parking/tariffs", async (ParkingTariffRequest req, AppDbContex
     db.ParkingTariffs.Add(entity);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/parking/tariffs/{entity.Id}", new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/tariffs/{id:guid}", async (Guid id, ParkingTariffRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9285,7 +9250,7 @@ app.MapPut("/api/parking/tariffs/{id:guid}", async (Guid id, ParkingTariffReques
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/tariffs/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9294,7 +9259,7 @@ app.MapDelete("/api/parking/tariffs/{id:guid}", async (Guid id, AppDbContext db,
     db.ParkingTariffs.Remove(entity);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Subscriptions CRUD
 app.MapGet("/api/parking/subscriptions", async (AppDbContext db, CancellationToken ct) =>
@@ -9312,7 +9277,7 @@ app.MapGet("/api/parking/subscriptions", async (AppDbContext db, CancellationTok
             : (!x.Unlimited && x.EntriesLimit != null && x.EntriesUsed >= x.EntriesLimit) ? "exhausted"
             : "active"
     }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/subscriptions", async (ParkingSubscriptionRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9331,7 +9296,7 @@ app.MapPost("/api/parking/subscriptions", async (ParkingSubscriptionRequest req,
     db.ParkingSubscriptions.Add(entity);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/parking/subscriptions/{entity.Id}", new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/subscriptions/{id:guid}", async (Guid id, ParkingSubscriptionRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9348,7 +9313,7 @@ app.MapPut("/api/parking/subscriptions/{id:guid}", async (Guid id, ParkingSubscr
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/subscriptions/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9357,7 +9322,7 @@ app.MapDelete("/api/parking/subscriptions/{id:guid}", async (Guid id, AppDbConte
     db.ParkingSubscriptions.Remove(entity);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Выезд в платном режиме: расчёт стоимости по тарифу (quote) → оплата → шлагбаум.
 app.MapPost("/api/parking/exit-quote", async (ParkingExitRequest req, AppDbContext db, CancellationToken ct) =>
@@ -9386,7 +9351,7 @@ app.MapPost("/api/parking/exit-quote", async (ParkingExitRequest req, AppDbConte
         tariffName = tariff?.Name,
         requiresPayment = amount > 0
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Operate");
 
 app.MapPost("/api/parking/pay", async (ParkingPayRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9408,7 +9373,7 @@ app.MapPost("/api/parking/pay", async (ParkingPayRequest req, AppDbContext db, C
     db.ParkingEvents.Add(new ParkingEvent { Type = "barrier_open", Message = amount > 0 ? $"paid {amount:0.##} ({session.PaymentMethod})" : "exit", Plate = session.Plate, Source = req.Operator ?? "system" });
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true, amount, paymentMethod = session.PaymentMethod });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Operate");
 
 // История въездов/выездов (с оплатой, камерой, фото, оператором).
 app.MapGet("/api/parking/history", async (string? plate, DateTime? from, DateTime? to, AppDbContext db, CancellationToken ct) =>
@@ -9430,9 +9395,12 @@ app.MapGet("/api/parking/history", async (string? plate, DateTime? from, DateTim
         x.EnteredUtc, x.ExitedUtc,
         durationMinutes = x.ExitedUtc.HasValue ? (int?)Math.Round((x.ExitedUtc.Value - x.EnteredUtc).TotalMinutes) : null,
         x.CameraName, x.PhotoUrl, x.RecognitionConfidence, x.Operator,
-        x.Cost, x.PaymentMethod, x.PaidUtc, x.IsPaid
+        x.Cost, x.PaymentMethod, x.PaidUtc, x.IsPaid,
+        // Долг: выехал, стоимость начислена, но оплаты не было.
+        isDebt = x.ExitedUtc != null && x.Cost > 0 && x.PaidUtc == null,
+        overstay = x.OverstayUtc != null
     }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 // История посещений конкретного автомобиля.
 app.MapGet("/api/parking/vehicles/{id:guid}/history", async (Guid id, AppDbContext db, CancellationToken ct) =>
@@ -9448,7 +9416,7 @@ app.MapGet("/api/parking/vehicles/{id:guid}/history", async (Guid id, AppDbConte
         durationMinutes = x.ExitedUtc.HasValue ? (int?)Math.Round((x.ExitedUtc.Value - x.EnteredUtc).TotalMinutes) : null,
         x.Cost, x.PaymentMethod, x.CameraName
     }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 // POS: полная сводка по номеру — машина, списки, абонемент, открытая сессия с суммой к оплате.
 app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, CancellationToken ct) =>
@@ -9496,8 +9464,14 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
     var recent = await db.ParkingSessions.AsNoTracking()
         .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null)
         .OrderByDescending(x => x.EnteredUtc).Take(5)
-        .Select(x => new { x.EnteredUtc, x.ExitedUtc, x.Cost, x.PaymentMethod })
+        .Select(x => new { x.EnteredUtc, x.ExitedUtc, x.Cost, x.PaymentMethod, isDebt = x.Cost > 0 && x.PaidUtc == null })
         .ToListAsync(ct);
+
+    // Долг: прошлые выезды без оплаты. Кассир видит сумму сразу при поиске номера.
+    var debt = await db.ParkingSessions.AsNoTracking()
+        .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null && x.PaidUtc == null && x.Cost > 0)
+        .SumAsync(x => x.Cost ?? 0m, ct);
+    var timeLimitMinutes = await ParkingAccessService.ResolveTimeLimitAsync(db, norm, ct);
 
     var permitActive = vehicle?.Permits.Any(p => p.IsActive && p.ValidFrom <= today && (p.ValidTo == null || p.ValidTo >= today)) ?? false;
 
@@ -9516,9 +9490,11 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
         listCategory = listEntry?.Category,
         subscription = sub is null ? null : new { sub.Name, endDate = sub.EndDate.ToString("yyyy-MM-dd"), sub.Unlimited, sub.EntriesLimit, sub.EntriesUsed },
         openSession,
+        debt,
+        timeLimitMinutes,
         recentSessions = recent
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 // Журнал событий: чтение + регистрация (камеры/операторы/интеграции).
 app.MapGet("/api/parking/events", async (string? type, DateTime? from, DateTime? to, AppDbContext db, CancellationToken ct) =>
@@ -9529,7 +9505,7 @@ app.MapGet("/api/parking/events", async (string? type, DateTime? from, DateTime?
     if (to.HasValue) q = q.Where(x => x.CreatedUtc < to.Value.ToUniversalTime().Date.AddDays(1));
     var list = await q.OrderByDescending(x => x.CreatedUtc).Take(500).ToListAsync(ct);
     return Results.Ok(list.Select(x => new { x.Id, x.Type, x.Message, x.Plate, x.Source, x.CreatedUtc }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/events", async (ParkingEventRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9546,7 +9522,7 @@ app.MapPost("/api/parking/events", async (ParkingEventRequest req, AppDbContext 
     });
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Operate");
 
 // ── Aktiv Parking (нативно): жильцы / транспорт / пропуска / сводка / отчёты ──
 
@@ -9583,7 +9559,7 @@ app.MapGet("/api/parking/vehicles", async (string? q, AppDbContext db, Cancellat
             : v.Permits.Any(p => PermitStatus(p, today) == "suspended") ? "suspended"
             : "expired"
     }));
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/vehicles", async (ParkingVehicleRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9611,7 +9587,7 @@ app.MapPost("/api/parking/vehicles", async (ParkingVehicleRequest req, AppDbCont
     db.ParkingVehicles.Add(entity);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/parking/vehicles/{entity.Id}", new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/vehicles/{id:guid}", async (Guid id, ParkingVehicleRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9637,7 +9613,7 @@ app.MapPut("/api/parking/vehicles/{id:guid}", async (Guid id, ParkingVehicleRequ
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/vehicles/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9646,7 +9622,7 @@ app.MapDelete("/api/parking/vehicles/{id:guid}", async (Guid id, AppDbContext db
     db.ParkingVehicles.Remove(entity); // permits удаляются каскадом
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Permits
 app.MapGet("/api/parking/permits", async (string? status, Guid? vehicleId, AppDbContext db, CancellationToken ct) =>
@@ -9676,7 +9652,7 @@ app.MapGet("/api/parking/permits", async (string? status, Guid? vehicleId, AppDb
     if (!string.IsNullOrWhiteSpace(status))
         rows = rows.Where(r => r.status == status.Trim().ToLowerInvariant());
     return Results.Ok(rows.ToList());
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 app.MapPost("/api/parking/permits", async (ParkingPermitRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9699,7 +9675,7 @@ app.MapPost("/api/parking/permits", async (ParkingPermitRequest req, AppDbContex
     db.ParkingPermits.Add(entity);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/parking/permits/{entity.Id}", new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapPut("/api/parking/permits/{id:guid}", async (Guid id, ParkingPermitRequest req, AppDbContext db, CancellationToken ct) =>
 {
@@ -9720,7 +9696,7 @@ app.MapPut("/api/parking/permits/{id:guid}", async (Guid id, ParkingPermitReques
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { id = entity.Id });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 app.MapDelete("/api/parking/permits/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
 {
@@ -9729,7 +9705,7 @@ app.MapDelete("/api/parking/permits/{id:guid}", async (Guid id, AppDbContext db,
     db.ParkingPermits.Remove(entity);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.Manage");
 
 // Сводка для главной страницы модуля парковки.
 app.MapGet("/api/parking/summary", async (AppDbContext db, CancellationToken ct) =>
@@ -9764,7 +9740,7 @@ app.MapGet("/api/parking/summary", async (AppDbContext db, CancellationToken ct)
             zoneName = s.ZoneId.HasValue && zoneNames.TryGetValue(s.ZoneId.Value, out var zn) ? zn : null
         })
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 // Отчёт по сессиям: диапазон дат + разбивка по дням.
 app.MapGet("/api/parking/reports/sessions", async (DateTime? from, DateTime? to, Guid? zoneId, AppDbContext db, CancellationToken ct) =>
@@ -9809,7 +9785,7 @@ app.MapGet("/api/parking/reports/sessions", async (DateTime? from, DateTime? to,
             isPaid = s.IsPaid
         })
     });
-}).RequireAuthorization();
+}).RequireAuthorization("Parking.View");
 
 var indexHtmlPath = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "index.html");
 if (File.Exists(indexHtmlPath))

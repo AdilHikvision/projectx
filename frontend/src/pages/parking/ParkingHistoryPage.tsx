@@ -13,6 +13,10 @@ interface HistoryRow {
   enteredUtc: string; exitedUtc: string | null; durationMinutes: number | null
   cameraName: string | null; photoUrl: string | null; recognitionConfidence: number | null; operator: string | null
   cost: number | null; paymentMethod: string | null; paidUtc: string | null; isPaid: boolean
+  /** Выехал, стоимость начислена, но оплаты не было. */
+  isDebt?: boolean
+  /** Простоял дольше разрешённого лимита. */
+  overstay?: boolean
 }
 interface EventRow { id: string; type: string; message: string | null; plate: string | null; source: string | null; createdUtc: string }
 interface Quote { sessionId: string; plate: string; enteredUtc: string; minutes: number; amount: number; tariffName: string | null; requiresPayment: boolean }
@@ -152,12 +156,28 @@ export function ParkingHistoryPage() {
                       <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">
                         {r.exitedUtc ? fmtDT(r.exitedUtc) : <span className="text-green-700 font-bold">{t('parking.ap.inside')}</span>}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs">{r.durationMinutes != null ? fmtDur(r.durationMinutes) : '—'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs whitespace-nowrap">
+                        {r.durationMinutes != null ? fmtDur(r.durationMinutes) : '—'}
+                        {r.overstay && (
+                          <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-wider" title={t('parking.hist.overstayHint')}>
+                            {t('parking.hist.overstay')}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-text-light text-xs">{r.cameraName ?? '—'}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs">{r.recognitionConfidence != null ? `${Math.round(r.recognitionConfidence * 100)}%` : '—'}</td>
                       <td className="px-4 py-3 text-text-light text-xs">{r.operator ?? '—'}</td>
                       <td className="px-4 py-3 text-right font-mono text-xs font-bold text-text-dark">{r.cost != null ? r.cost.toFixed(2) : '—'}</td>
-                      <td className="px-4 py-3 text-text-light text-xs">{r.paymentMethod ? t(`parking.hist.pay.${r.paymentMethod}`, { defaultValue: r.paymentMethod }) : '—'}</td>
+                      <td className="px-4 py-3 text-xs">
+                        {r.isDebt ? (
+                          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-red-100 text-red-700 font-black uppercase tracking-wider text-[10px]">
+                            <span className="material-symbols-outlined text-[13px]">money_off</span>
+                            {t('parking.hist.unpaid')}
+                          </span>
+                        ) : (
+                          <span className="text-text-light">{r.paymentMethod ? t(`parking.hist.pay.${r.paymentMethod}`, { defaultValue: r.paymentMethod }) : '—'}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         {!r.exitedUtc && (
                           <button type="button" className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline"

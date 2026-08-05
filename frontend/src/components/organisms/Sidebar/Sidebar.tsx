@@ -44,16 +44,16 @@ const PRIMARY_NAV: NavConfig[] = [
     { to: '/gym/pos', icon: 'point_of_sale', labelKey: 'gym.nav.pos', modules: ['gym'] },
 
     // ─── Parking Management ───
-    { to: '/parking/management', icon: 'local_parking', labelKey: 'parking.nav.management', modules: ['parking'] },
+    { to: '/parking/management', icon: 'local_parking', labelKey: 'parking.nav.management', anyOf: ['Parking.Manage'], modules: ['parking'] },
 
     // ─── Aktiv Parking (нативные страницы ProjectX) ───
     // "Ana Səhifə" Dashboard tabında göstərilir (parking modulunda), ona görə burada ayrıca yoxdur.
-    { to: '/parking/vehicles', icon: 'directions_car', labelKey: 'parking.nav.vehicles', modules: ['parking'] },
-    { to: '/parking/ap-permits', icon: 'verified_user', labelKey: 'parking.nav.permits', modules: ['parking'] },
-    { to: '/parking/pos', icon: 'point_of_sale', labelKey: 'parking.nav.pos', modules: ['parking'], paidParkingOnly: true },
-    { to: '/parking/tariffs', icon: 'sell', labelKey: 'parking.nav.tariffs', modules: ['parking'], paidParkingOnly: true },
-    { to: '/parking/history', icon: 'history', labelKey: 'parking.nav.history', modules: ['parking'] },
-    { to: '/parking/ap-reports', icon: 'bar_chart', labelKey: 'parking.nav.reports', modules: ['parking'] },
+    { to: '/parking/vehicles', icon: 'directions_car', labelKey: 'parking.nav.vehicles', anyOf: ['Parking.View'], modules: ['parking'] },
+    { to: '/parking/ap-permits', icon: 'verified_user', labelKey: 'parking.nav.permits', anyOf: ['Parking.View'], modules: ['parking'] },
+    { to: '/parking/pos', icon: 'point_of_sale', labelKey: 'parking.nav.pos', anyOf: ['Parking.Operate'], modules: ['parking'], paidParkingOnly: true },
+    { to: '/parking/tariffs', icon: 'sell', labelKey: 'parking.nav.tariffs', anyOf: ['Parking.Manage'], modules: ['parking'], paidParkingOnly: true },
+    { to: '/parking/history', icon: 'history', labelKey: 'parking.nav.history', anyOf: ['Parking.View'], modules: ['parking'] },
+    { to: '/parking/ap-reports', icon: 'bar_chart', labelKey: 'parking.nav.reports', anyOf: ['Parking.View'], modules: ['parking'] },
 ];
 
 // System section — admin / settings pages.

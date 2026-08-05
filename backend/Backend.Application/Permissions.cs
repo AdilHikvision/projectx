@@ -45,6 +45,11 @@ public static class Permissions
     // Reports
     public const string ReportsView = "Reports.View";
 
+    // Parking
+    public const string ParkingView = "Parking.View";
+    public const string ParkingManage = "Parking.Manage";
+    public const string ParkingOperate = "Parking.Operate";
+
     // System administration
     public const string UsersManage = "Users.Manage";
     public const string RolesManage = "Roles.Manage";
@@ -91,6 +96,10 @@ public static class Permissions
 
         new(ReportsView, "Reports", "View reports", "Download attendance/payroll reports (Excel, PDF) and email them."),
 
+        new(ParkingView, "Parking", "View parking", "See zones, vehicles, permits, sessions, history and the event journal."),
+        new(ParkingManage, "Parking", "Manage parking", "Edit zones and spaces, tariffs, subscriptions, permits, allow/block lists and the vehicle database."),
+        new(ParkingOperate, "Parking", "Operate parking", "Barrier decisions, manual entry, exit and taking payments at the POS."),
+
         new(UsersManage, "System", "Manage users", "Create / edit / delete system users, reset passwords."),
         new(RolesManage, "System", "Manage roles", "Create / delete roles and assign permissions."),
         new(AuditView, "System", "View audit logs", "Read the system audit log."),
@@ -118,6 +127,8 @@ public static class Permissions
                 CompaniesView, DepartmentsView,
                 EmployeesView, VisitorsView, VisitorsManage,
                 CredentialsManage,
+                // Охрана работает со шлагбаумом и справочниками парковки, но не с кассой.
+                ParkingView, ParkingManage, ParkingOperate,
             ],
             [SystemRoles.HrOperator] =
             [

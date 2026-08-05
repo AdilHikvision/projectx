@@ -254,7 +254,8 @@ public sealed class DatabaseInitializer(
                 ADD COLUMN IF NOT EXISTS "Cost" numeric(12,2),
                 ADD COLUMN IF NOT EXISTS "PaymentMethod" character varying(32),
                 ADD COLUMN IF NOT EXISTS "PaidUtc" timestamp with time zone,
-                ADD COLUMN IF NOT EXISTS "TariffId" uuid
+                ADD COLUMN IF NOT EXISTS "TariffId" uuid,
+                ADD COLUMN IF NOT EXISTS "OverstayUtc" timestamp with time zone
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""

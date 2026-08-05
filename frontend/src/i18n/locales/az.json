@@ -345,7 +345,10 @@
         "admin_login": "Admin girişi",
         "denied": "Giriş rədd edildi",
         "alarm": "HƏYƏCAN"
-      }
+      },
+      "unpaid": "Ödənilməyib",
+      "overstay": "Vaxt aşımı",
+      "overstayHint": "İcazə verilən limitdən uzun dayanma"
     },
     "veh": {
       "country": "Ölkə",
@@ -392,7 +395,9 @@
         "allowlist-expired": "ağ siyahıdakı müddət bitib",
         "reentry-cooldown": "təkrar giriş çox tezdir",
         "empty-plate": "nömrə göstərilməyib"
-      }
+      },
+      "debt": "Borc",
+      "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)"
     }
   },
   "gym": {
