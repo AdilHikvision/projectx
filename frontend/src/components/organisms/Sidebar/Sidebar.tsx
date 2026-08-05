@@ -66,7 +66,7 @@ const SYSTEM_NAV: NavConfig[] = [
 export function Sidebar() {
     const { hasAnyPermission, token } = useAuth();
     const { t } = useTranslation();
-    const { activeModule, openPicker } = useModule();
+    const { activeModule, openPicker, canSwitchModules } = useModule();
     const module = MODULES[activeModule];
 
     // Режим парковки: пункты POS/Тарифы видны только при платном режиме.
@@ -116,6 +116,8 @@ export function Sidebar() {
                 )}
             </div>
 
+            {/* Карточка-переключатель нужна только когда активирован не один модуль. */}
+            {canSwitchModules && (
             <button
                 type="button"
                 onClick={openPicker}
@@ -131,6 +133,7 @@ export function Sidebar() {
                 </span>
                 <span className="material-symbols-outlined shrink-0 text-lg text-text-light transition-colors group-hover:text-primary">unfold_more</span>
             </button>
+            )}
 
             <nav className="flex-1 overflow-y-auto px-3 space-y-1">
                 {primary.map(item => (

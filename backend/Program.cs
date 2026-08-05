@@ -8,6 +8,7 @@ using Npgsql;
 using Backend.Application.Security;
 using Backend.Application.Devices;
 using Backend.Application.Gym;
+using Backend.Application.Parking;
 using Backend.Domain.Entities;
 using Backend.Infrastructure;
 using Backend.Infrastructure.Devices;
@@ -1095,6 +1096,9 @@ app.MapPost("/api/devices", async (
         DeviceType = request.DeviceType,
         Username = username,
         Password = password,
+        // Направление и зона имеют смысл только для ANPR-камеры парковки.
+        ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? request.ParkingDirection : null,
+        ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null,
         DeviceStatusId = SeedIds.DeviceStatusOffline,
         CreatedUtc = DateTime.UtcNow
     };
@@ -1152,6 +1156,8 @@ app.MapPut("/api/devices/{id:guid}", async (
     device.DeviceType = request.DeviceType;
     if (request.Username is not null) device.Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim();
     if (request.Password is not null) device.Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password;
+    device.ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? request.ParkingDirection : null;
+    device.ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null;
     device.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -9136,149 +9142,54 @@ app.MapGet("/api/parking/occupancy", async (AppDbContext db, Guid? zoneId, Cance
     });
 }).RequireAuthorization();
 
-app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, AppDbContext db, CancellationToken ct) =>
+// Решение принимает общий сервис — тот же, которым пользуются ANPR-камеры и ручной въезд с POS.
+app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IParkingAccessService access, CancellationToken ct) =>
 {
-    var norm = NormalizePlate(req.Plate);
-    if (norm.Length == 0) return Results.BadRequest(new { message = "Plate is required." });
-    var spaceType = (req.SpaceType != null && Enum.TryParse<ParkingSpaceType>(req.SpaceType, true, out var st)) ? st : ParkingSpaceType.Regular;
-    var today = DateOnly.FromDateTime(DateTime.UtcNow);
-
-    void LogEvent(string type, string? message) =>
-        db.ParkingEvents.Add(new ParkingEvent { Type = type, Message = message, Plate = req.Plate.Trim(), Source = req.Camera ?? req.Operator ?? "system" });
-
-    // Чёрный список: не открывать шлагбаум + тревога в журнал событий.
-    var blockedEntry = await db.ParkingPlates.AsNoTracking()
-        .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Block && x.PlateNormalized == norm, ct);
-    if (blockedEntry is not null)
+    if (NormalizePlate(req.Plate).Length == 0) return Results.BadRequest(new { message = "Plate is required." });
+    var d = await access.DecideAsync(new ParkingAccessInput(
+        req.Plate, req.ZoneId, req.SpaceType, req.Camera, req.Operator, req.PhotoUrl, req.Confidence, req.OpenSession == true), ct);
+    return Results.Ok(new
     {
-        LogEvent("alarm", $"Blacklisted plate at entry ({blockedEntry.Category ?? "no-reason"}): {blockedEntry.Note ?? ""}".Trim());
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(new { allowed = false, reason = "blacklist", category = blockedEntry.Category });
-    }
-
-    async Task OpenSessionIfRequested(bool paid, string? paymentMethod = null)
-    {
-        if (req.OpenSession != true) return;
-        var already = await db.ParkingSessions.AnyAsync(x => x.ExitedUtc == null && x.PlateNormalized == norm, ct);
-        if (!already)
-        {
-            db.ParkingSessions.Add(new ParkingSession
-            {
-                Plate = req.Plate.Trim(),
-                PlateNormalized = norm,
-                ZoneId = req.ZoneId,
-                SpaceType = spaceType,
-                IsPaid = paid,
-                CameraName = req.Camera,
-                PhotoUrl = req.PhotoUrl,
-                RecognitionConfidence = req.Confidence,
-                Operator = req.Operator,
-                PaymentMethod = paymentMethod
-            });
-        }
-        LogEvent("barrier_open", null);
-        await db.SaveChangesAsync(ct);
-    }
-
-    // Абонемент: действует по датам; лимит въездов, если задан и не Unlimited.
-    var sub = await db.ParkingSubscriptions
-        .FirstOrDefaultAsync(s => s.IsActive && s.PlateNormalized == norm && s.StartDate <= today && s.EndDate >= today, ct);
-    if (sub is not null && (sub.Unlimited || sub.EntriesLimit == null || sub.EntriesUsed < sub.EntriesLimit))
-    {
-        if (req.OpenSession == true && !sub.Unlimited && sub.EntriesLimit != null) sub.EntriesUsed++;
-        await OpenSessionIfRequested(paid: false, paymentMethod: "subscription");
-        return Results.Ok(new { allowed = true, reason = "subscription", subscription = sub.Name });
-    }
-
-    // Действующий пропуск (permit) на сегодня пропускает всегда (кроме чёрного списка выше).
-    var hasPermit = await db.ParkingPermits.AsNoTracking()
-        .Include(p => p.Vehicle)
-        .AnyAsync(p => p.IsActive
-            && p.Vehicle!.IsActive
-            && p.Vehicle.PlateNormalized == norm
-            && p.ValidFrom <= today
-            && (p.ValidTo == null || p.ValidTo >= today)
-            && (p.ZoneId == null || req.ZoneId == null || p.ZoneId == req.ZoneId), ct);
-    if (hasPermit)
-    {
-        await OpenSessionIfRequested(paid: false, paymentMethod: "permit");
-        return Results.Ok(new { allowed = true, reason = "permit" });
-    }
-
-    var settings = await db.SystemSettings.AsNoTracking()
-        .Where(x => x.Key == "parking.mode" || x.Key == "parking.freeSubMode" || x.Key == "parking.reentryMinutes")
-        .ToListAsync(ct);
-    var mode = settings.FirstOrDefault(x => x.Key == "parking.mode")?.Value ?? "Free";
-    var subMode = settings.FirstOrDefault(x => x.Key == "parking.freeSubMode")?.Value ?? "Capacity";
-    var isPaidMode = string.Equals(mode, "Paid", StringComparison.OrdinalIgnoreCase);
-
-    // Повторный въезд не раньше, чем через N минут после выезда (бесплатный режим).
-    if (!isPaidMode && int.TryParse(settings.FirstOrDefault(x => x.Key == "parking.reentryMinutes")?.Value, out var reentryMin) && reentryMin > 0)
-    {
-        var lastExit = await db.ParkingSessions.AsNoTracking()
-            .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null)
-            .OrderByDescending(x => x.ExitedUtc).Select(x => x.ExitedUtc).FirstOrDefaultAsync(ct);
-        if (lastExit.HasValue && (DateTime.UtcNow - lastExit.Value).TotalMinutes < reentryMin)
-        {
-            LogEvent("denied", $"Re-entry cooldown: {reentryMin}m");
-            await db.SaveChangesAsync(ct);
-            return Results.Ok(new { allowed = false, reason = "reentry-cooldown", waitMinutes = Math.Ceiling(reentryMin - (DateTime.UtcNow - lastExit.Value).TotalMinutes) });
-        }
-    }
-
-    async Task<bool> HasFreeSpace()
-    {
-        var capQ = db.ParkingSpaces.AsNoTracking().Where(sp => sp.IsActive && sp.Type == spaceType);
-        if (req.ZoneId.HasValue) capQ = capQ.Where(sp => sp.Row!.Floor!.ZoneId == req.ZoneId.Value);
-        var cap = await capQ.CountAsync(ct);
-        var usedQ = db.ParkingSessions.AsNoTracking().Where(x => x.ExitedUtc == null && x.SpaceType == spaceType);
-        if (req.ZoneId.HasValue) usedQ = usedQ.Where(x => x.ZoneId == req.ZoneId.Value);
-        var used = await usedQ.CountAsync(ct);
-        return cap - used > 0;
-    }
-
-    bool allow; string reason;
-    if (isPaidMode)
-    {
-        allow = await HasFreeSpace(); reason = allow ? "paid-capacity" : "full";
-    }
-    else
-    {
-        if (string.Equals(subMode, "List", StringComparison.OrdinalIgnoreCase))
-        {
-            // Белый список с учётом срока действия пропуска.
-            var wl = await db.ParkingPlates.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == norm, ct);
-            allow = wl is not null && (wl.ValidTo == null || wl.ValidTo >= today);
-            reason = wl is null ? "not-in-allowlist" : (allow ? "allowlist" : "allowlist-expired");
-        }
-        else
-        {
-            allow = await HasFreeSpace(); reason = allow ? "capacity" : "full";
-        }
-    }
-
-    if (allow)
-    {
-        await OpenSessionIfRequested(paid: isPaidMode);
-    }
-    else
-    {
-        LogEvent("denied", reason);
-        await db.SaveChangesAsync(ct);
-    }
-    return Results.Ok(new { allowed = allow, reason, mode, subMode = isPaidMode ? null : subMode });
+        allowed = d.Allowed,
+        reason = d.Reason,
+        category = d.Category,
+        subscription = d.Subscription,
+        mode = d.Mode,
+        subMode = d.SubMode,
+        waitMinutes = d.WaitMinutes,
+        sessionId = d.SessionId
+    });
 }).RequireAuthorization();
 
-app.MapPost("/api/parking/exit", async (ParkingExitRequest req, AppDbContext db, CancellationToken ct) =>
+// Проверка разбора события камеры: сюда можно вставить сырой XML/JSON из ISAPI и увидеть,
+// какой номер из него извлекается. Нужно при пусконаладке новой модели камеры.
+app.MapPost("/api/parking/anpr-parse-test", async (HttpRequest request, CancellationToken ct) =>
 {
-    var norm = NormalizePlate(req.Plate);
-    var sess = await db.ParkingSessions.Where(x => x.ExitedUtc == null && x.PlateNormalized == norm).ToListAsync(ct);
-    foreach (var sx in sess) sx.ExitedUtc = DateTime.UtcNow;
-    if (sess.Count > 0)
-        db.ParkingEvents.Add(new ParkingEvent { Type = "barrier_open", Message = "exit", Plate = req.Plate.Trim(), Source = "system" });
-    await db.SaveChangesAsync(ct);
-    return Results.Ok(new { ok = true, closed = sess.Count });
+    using var reader = new StreamReader(request.Body);
+    var raw = await reader.ReadToEndAsync(ct);
+    var headers = new Dictionary<string, string> { ["Content-Type"] = request.ContentType ?? "application/xml" };
+    var parsed = IsapiAnprParser.TryParse(headers, Encoding.UTF8.GetBytes(raw));
+    return parsed is null
+        ? Results.Ok(new { recognized = false })
+        : Results.Ok(new { recognized = true, plate = parsed.Plate, confidence = parsed.Confidence, country = parsed.Country, direction = parsed.Direction, occurredUtc = parsed.OccurredUtc });
+}).RequireAuthorization();
+
+// Снимок с камеры, сохранённый при проезде.
+app.MapGet("/api/parking/snapshots/{file}", (string file, IConfiguration configuration) =>
+{
+    // Только имя файла: защищаемся от выхода за пределы каталога снимков.
+    var name = Path.GetFileName(file);
+    if (string.IsNullOrWhiteSpace(name) || !name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase))
+        return Results.NotFound();
+    var dir = configuration["Storage:ParkingPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "parking");
+    var full = Path.Combine(dir, name);
+    return File.Exists(full) ? Results.File(full, "image/jpeg") : Results.NotFound();
+}).RequireAuthorization();
+
+app.MapPost("/api/parking/exit", async (ParkingExitRequest req, IParkingAccessService access, CancellationToken ct) =>
+{
+    var res = await access.RegisterExitAsync(req.Plate, null, null, ct);
+    return Results.Ok(new { ok = true, closed = res.Closed });
 }).RequireAuthorization();
 
 // ── Тарифы, абонементы, оплата выезда, история и журнал событий ──────────────
@@ -10062,7 +9973,9 @@ static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? 
         status,
         lastSeenUtc,
         device.Username,
-        statusMessage);
+        statusMessage,
+        device.ParkingDirection?.ToString(),
+        device.ParkingZoneId);
 }
 
 static string MapConnectivityStatus(DeviceConnectivityStatus status)
@@ -10261,7 +10174,10 @@ public sealed record CreateDeviceRequest(
     string? Location,
     DeviceType DeviceType,
     string? Username,
-    string? Password);
+    string? Password,
+    /// <summary>Только для ANPR-камеры: Entry/Exit. null — определять по открытой сессии.</summary>
+    ParkingCameraDirection? ParkingDirection = null,
+    Guid? ParkingZoneId = null);
 
 public sealed record UpdateDeviceRequest(
     string DeviceIdentifier,
@@ -10271,7 +10187,9 @@ public sealed record UpdateDeviceRequest(
     string? Location,
     DeviceType DeviceType,
     string? Username,
-    string? Password);
+    string? Password,
+    ParkingCameraDirection? ParkingDirection = null,
+    Guid? ParkingZoneId = null);
 
 public sealed record DeviceResponse(
     Guid Id,
@@ -10284,7 +10202,9 @@ public sealed record DeviceResponse(
     string Status,
     DateTime? LastSeenUtc,
     string? Username,
-    string? StatusMessage);
+    string? StatusMessage,
+    string? ParkingDirection = null,
+    Guid? ParkingZoneId = null);
 
 public sealed record DeviceStatusResponse(
     Guid DeviceId,

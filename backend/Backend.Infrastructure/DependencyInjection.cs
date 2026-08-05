@@ -98,6 +98,10 @@ public static class DependencyInjection
         services.AddScoped<IDeviceCardCaptureService, DeviceCardCaptureService>();
         services.AddScoped<IDeviceFingerprintCaptureService, DeviceFingerprintCaptureService>();
         services.AddScoped<IDeviceLocalizationService, DeviceLocalizationService>();
+        // Парковка: решение о доступе — scoped (работает с DbContext), обработчик ANPR —
+        // singleton, потому что живёт рядом с фоновым alertStream и помнит последние проезды.
+        services.AddScoped<Backend.Application.Parking.IParkingAccessService, Parking.ParkingAccessService>();
+        services.AddSingleton<Backend.Application.Parking.IParkingAnprHandler, Parking.ParkingAnprHandler>();
         services.AddHostedService<TimeSyncSchedulerService>();
         services.AddHostedService<Gym.GymAutoRenewService>();
         services.AddHostedService<Gym.GymVisitReconcileService>();

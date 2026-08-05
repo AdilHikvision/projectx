@@ -45,6 +45,18 @@ public sealed class Device : BaseEntity
     public Guid DeviceStatusId { get; set; }
     public DeviceStatus? DeviceStatus { get; set; }
     public ICollection<AccessLevelDoor> AccessLevelDoors { get; set; } = new List<AccessLevelDoor>();
+
+    /// <summary>Для ANPR-камеры: снимает въезд или выезд. null — определять по открытой сессии.</summary>
+    public ParkingCameraDirection? ParkingDirection { get; set; }
+    /// <summary>Для ANPR-камеры: зона парковки, к которой относится проезд.</summary>
+    public Guid? ParkingZoneId { get; set; }
+}
+
+/// <summary>Направление проезда, которое снимает ANPR-камера.</summary>
+public enum ParkingCameraDirection
+{
+    Entry = 1,
+    Exit = 2
 }
 
 /// <summary>Компания или холдинг.</summary>

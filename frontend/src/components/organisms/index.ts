@@ -6,4 +6,5 @@ export * from './Sidebar';
 export * from './LoadingOverlay';
 export * from './BottomBar';
 export * from './ModuleSwitcher';
+export * from './ModuleActivation';
 export * from './AssistantChat';

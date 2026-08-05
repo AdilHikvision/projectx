@@ -382,6 +382,16 @@
         "violator": "Violator",
         "stolen": "Stolen",
         "banned": "Banned"
+      },
+      "manualEntry": "Register entry manually",
+      "entryDenied": "Entry refused",
+      "reason": {
+        "blacklist": "plate is blacklisted",
+        "full": "no free spaces",
+        "not-in-allowlist": "plate is not in the allowlist",
+        "allowlist-expired": "allowlist entry expired",
+        "reentry-cooldown": "re-entry too soon",
+        "empty-plate": "plate is empty"
       }
     }
   },
@@ -1714,6 +1724,15 @@
       "AttendanceTerminal": "Attendance Terminal",
       "ElevatorController": "Elevator Controller",
       "EnrollerStation": "Enroller station"
+    },
+    "anpr": {
+      "direction": "Traffic direction",
+      "directionAuto": "Detect automatically",
+      "entry": "Entry",
+      "exit": "Exit",
+      "zone": "Parking zone",
+      "zoneAny": "Not set",
+      "hint": "The camera reads the plate and either opens the entry or closes the session. With no direction set it is inferred from whether the car is currently parked."
     }
   },
   "devices": {
@@ -2731,5 +2750,15 @@
     "saveTitle": "Could not save",
     "deviceWarningTitle": "Devices reported errors",
     "deviceHint": "Check that the device is online and has free slots left."
+  },
+  "moduleActivation": {
+    "title": "Module activation",
+    "subtitle": "Service menu. Turns modules on and off for the whole installation.",
+    "ready": "Ready to use",
+    "atLeastOne": "You cannot turn off every module — at least one must stay enabled.",
+    "singleModuleNote": "With a single module enabled the app runs on that module and the module switcher is hidden.",
+    "saved": "Saved. The change applies to every user.",
+    "saveFailed": "Could not save the module set.",
+    "authRequired": "Sign in to save the module set."
   }
 }

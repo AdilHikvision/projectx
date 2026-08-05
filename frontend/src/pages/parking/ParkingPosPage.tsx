@@ -41,6 +41,8 @@ export function ParkingPosPage() {
   const [payMethod, setPayMethod] = useState('cash')
   const [error, setError] = useState<string | null>(null)
   const [paidOk, setPaidOk] = useState(false)
+  const [entering, setEntering] = useState(false)
+  const [entryDenied, setEntryDenied] = useState<string | null>(null)
 
   const lookup = async () => {
     const p = plate.trim()
@@ -64,6 +66,22 @@ export function ParkingPosPage() {
       setResult(r)
     } catch (e) { setError(e instanceof Error ? e.message : 'error') }
     finally { setPaying(false) }
+  }
+
+  /** Ручной въезд идёт через то же решение, что и камера: чёрный список, абонемент,
+   *  пропуск и свободные места проверяются одинаково. */
+  const manualEntry = async () => {
+    if (!token || !result) return
+    setEntering(true); setError(null); setEntryDenied(null)
+    try {
+      const d = await apiRequest<{ allowed: boolean; reason: string }>('/api/parking/access-decision', {
+        method: 'POST', token,
+        body: JSON.stringify({ plate: result.plate, openSession: true, operator: 'POS' }),
+      })
+      if (!d.allowed) { setEntryDenied(d.reason); return }
+      setResult(await apiRequest<PosResult>(`/api/parking/pos-lookup?plate=${encodeURIComponent(result.plate)}`, { token }))
+    } catch (e) { setError(e instanceof Error ? e.message : 'error') }
+    finally { setEntering(false) }
   }
 
   const v = result?.vehicle
@@ -177,8 +195,18 @@ export function ParkingPosPage() {
                 </div>
               </div>
             ) : (
-              <div className="bg-surface rounded-2xl shadow-sm p-5 text-center text-sm text-text-light">
-                {t('parking.pos.notInside')}
+              /* Машины внутри нет — оператор может оформить въезд руками,
+                 если камера не сработала или номер не читается. */
+              <div className="bg-surface rounded-2xl shadow-sm p-5 space-y-3 text-center">
+                <p className="text-sm text-text-light">{t('parking.pos.notInside')}</p>
+                <Button icon="login" isLoading={entering} onClick={() => void manualEntry()} className="mx-auto">
+                  {t('parking.pos.manualEntry')}
+                </Button>
+                {entryDenied && (
+                  <p className="text-xs font-bold text-error-text">
+                    {t('parking.pos.entryDenied')}: {t(`parking.pos.reason.${entryDenied}`, { defaultValue: entryDenied })}
+                  </p>
+                )}
               </div>
             )}
 

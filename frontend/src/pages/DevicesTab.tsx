@@ -29,6 +29,13 @@ interface Device {
   username?: string | null
   statusMessage?: string | null
   macAddress?: string | null
+  parkingDirection?: string | null
+  parkingZoneId?: string | null
+}
+
+interface ParkingZoneOption {
+  id: string
+  name: string
 }
 
 interface DeviceStatusResponse {
@@ -60,6 +67,9 @@ interface DeviceFormData {
   deviceType: number
   username: string
   password: string
+  /** Только для ANPR-камеры: '' — определять по открытой сессии, иначе Entry/Exit. */
+  parkingDirection: '' | 'Entry' | 'Exit'
+  parkingZoneId: string
 }
 
 const emptyForm: DeviceFormData = {
@@ -71,7 +81,12 @@ const emptyForm: DeviceFormData = {
   deviceType: 1,
   username: 'admin',
   password: '',
+  parkingDirection: '',
+  parkingZoneId: '',
 }
+
+/** Тип устройства 6 = ANPR-камера: только у неё есть настройки парковки. */
+const ANPR_DEVICE_TYPE = 6
 
 function mergeStatus(device: Device, status?: DeviceStatusResponse): Device {
   if (!status) return device
@@ -127,6 +142,8 @@ function deviceTypeStringToNumber(deviceType: string | null | undefined): number
       return 4
     case 'EnrollerStation':
       return 5
+    case 'AnprCamera':
+      return ANPR_DEVICE_TYPE
     default:
       return 1
   }
@@ -176,6 +193,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
   const [discoverIpSort, setDiscoverIpSort] = useState<'asc' | 'desc'>('asc')
   const [showAddedDevices, setShowAddedDevices] = useState(false)
   const [formData, setFormData] = useState<DeviceFormData>(emptyForm)
+  const [parkingZones, setParkingZones] = useState<ParkingZoneOption[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [addFromDevice, setAddFromDevice] = useState<DiscoveredDevice | null>(null)
   const [addDeviceName, setAddDeviceName] = useState('')
@@ -230,6 +248,14 @@ export const DevicesTab = forwardRef((_props, ref) => {
       setDiscoverSearchQuery('')
     }
   }, [modalMode])
+
+  // Зоны парковки нужны только чтобы привязать к ним ANPR-камеру.
+  useEffect(() => {
+    if (!token) return
+    apiRequest<ParkingZoneOption[]>('/api/parking/zones', { token })
+      .then(setParkingZones)
+      .catch(() => setParkingZones([]))
+  }, [token])
 
   useEffect(() => {
     if (!token) return
@@ -388,6 +414,8 @@ export const DevicesTab = forwardRef((_props, ref) => {
       deviceType: deviceTypeStringToNumber(device.deviceType),
       username: device.username ?? 'admin',
       password: '',
+      parkingDirection: (device.parkingDirection === 'Entry' || device.parkingDirection === 'Exit') ? device.parkingDirection : '',
+      parkingZoneId: device.parkingZoneId ?? '',
     })
     setModalMode('edit')
   }
@@ -453,6 +481,8 @@ export const DevicesTab = forwardRef((_props, ref) => {
           deviceType: formData.deviceType,
           username: formData.username.trim() || null,
           password: formData.password || null,
+          parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
+          parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
         }),
       })
       setDevices((prev) => [...prev, { ...created, status: 'Offline' }])
@@ -482,6 +512,8 @@ export const DevicesTab = forwardRef((_props, ref) => {
           deviceType: formData.deviceType,
           username: formData.username.trim() || null,
           password: formData.password || null,
+          parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
+          parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
         }),
       })
       setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
@@ -802,6 +834,36 @@ export const DevicesTab = forwardRef((_props, ref) => {
               <option value={6}>ANPR Camera</option>
             </select>
           </div>
+
+          {/* Камера парковки: куда относить проезд и в какую зону писать сессию. */}
+          {formData.deviceType === ANPR_DEVICE_TYPE && (
+            <div className="grid grid-cols-2 gap-3 p-3 rounded-xl bg-slate-75 border border-border-base">
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.anpr.direction')}</label>
+                <select
+                  value={formData.parkingDirection}
+                  onChange={(e) => setFormData((p) => ({ ...p, parkingDirection: e.target.value as DeviceFormData['parkingDirection'] }))}
+                  className="w-full h-9 px-3 bg-white border border-border-base rounded-md text-xs outline-none"
+                >
+                  <option value="">{t('devicesTab.anpr.directionAuto')}</option>
+                  <option value="Entry">{t('devicesTab.anpr.entry')}</option>
+                  <option value="Exit">{t('devicesTab.anpr.exit')}</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.anpr.zone')}</label>
+                <select
+                  value={formData.parkingZoneId}
+                  onChange={(e) => setFormData((p) => ({ ...p, parkingZoneId: e.target.value }))}
+                  className="w-full h-9 px-3 bg-white border border-border-base rounded-md text-xs outline-none"
+                >
+                  <option value="">{t('devicesTab.anpr.zoneAny')}</option>
+                  {parkingZones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+                </select>
+              </div>
+              <p className="col-span-2 text-[10px] text-text-light leading-relaxed">{t('devicesTab.anpr.hint')}</p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

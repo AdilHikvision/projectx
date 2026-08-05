@@ -5,7 +5,7 @@ import { useModule } from '../../../context/ModuleContext'
 import { MODULE_LIST, type ModuleKey } from '../../../config/modules'
 
 export function ModuleSwitcher() {
-    const { isPickerOpen, closePicker, selectModule, activeModule } = useModule()
+    const { isPickerOpen, closePicker, selectModule, activeModule, enabledModules, canSwitchModules } = useModule()
     const { t } = useTranslation()
     const navigate = useNavigate()
 
@@ -25,7 +25,8 @@ export function ModuleSwitcher() {
         return () => window.removeEventListener('keydown', onKey)
     }, [isPickerOpen, closePicker])
 
-    if (!isPickerOpen) return null
+    // Активирован ровно один модуль — переключать нечего, окно не показываем вовсе.
+    if (!isPickerOpen || !canSwitchModules) return null
 
     return (
         <div className="fixed inset-0 z-[100] flex h-screen w-screen items-center justify-center overflow-hidden">
@@ -59,7 +60,7 @@ export function ModuleSwitcher() {
                 </header>
 
                 <div className="grid w-full grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                    {MODULE_LIST.map((m) => {
+                    {MODULE_LIST.filter((m) => enabledModules.includes(m.key)).map((m) => {
                         const isActive = m.key === activeModule
                         return (
                             <button

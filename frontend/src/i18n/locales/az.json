@@ -382,6 +382,16 @@
         "violator": "Qayda pozucusu",
         "stolen": "Oğurlanmış",
         "banned": "Qadağan edilib"
+      },
+      "manualEntry": "Girişi əl ilə qeyd et",
+      "entryDenied": "Giriş qadağandır",
+      "reason": {
+        "blacklist": "nömrə qara siyahıdadır",
+        "full": "boş yer yoxdur",
+        "not-in-allowlist": "nömrə ağ siyahıda deyil",
+        "allowlist-expired": "ağ siyahıdakı müddət bitib",
+        "reentry-cooldown": "təkrar giriş çox tezdir",
+        "empty-plate": "nömrə göstərilməyib"
       }
     }
   },
@@ -1714,6 +1724,15 @@
       "AttendanceTerminal": "Davamiyyət terminalı",
       "ElevatorController": "Lift kontrolleri",
       "EnrollerStation": "Qeydiyyat stansiyası"
+    },
+    "anpr": {
+      "direction": "Hərəkət istiqaməti",
+      "directionAuto": "Avtomatik təyin et",
+      "entry": "Giriş",
+      "exit": "Çıxış",
+      "zone": "Parkinq zonası",
+      "zoneAny": "Təyin edilməyib",
+      "hint": "Kamera nömrəni tanıyır və ya girişi açır, ya da sessiyanı bağlayır. İstiqamət göstərilməyibsə, avtomobilin hazırda parkinqdə olub-olmamasına görə müəyyən edilir."
     }
   },
   "devices": {
@@ -2723,5 +2742,15 @@
     "saveTitle": "Yadda saxlamaq alınmadı",
     "deviceWarningTitle": "Cihazlar xəta qaytardı",
     "deviceHint": "Cihazın şəbəkədə olduğunu və boş slotlarının qaldığını yoxlayın."
+  },
+  "moduleActivation": {
+    "title": "Modulların aktivləşdirilməsi",
+    "subtitle": "Xidməti menyu. Modulları bütün quraşdırma üçün açır və bağlayır.",
+    "ready": "İşə hazırdır",
+    "atLeastOne": "Bütün modulları söndürmək olmaz — ən azı biri açıq qalmalıdır.",
+    "singleModuleNote": "Yalnız bir modul açıqdırsa, tətbiq onunla işləyir və modul dəyişdiricisi göstərilmir.",
+    "saved": "Yadda saxlanıldı. Dəyişiklik bütün istifadəçilərə tətbiq olunur.",
+    "saveFailed": "Modul dəstini yadda saxlamaq alınmadı.",
+    "authRequired": "Modul dəstini yadda saxlamaq üçün sistemə daxil olun."
   }
 }

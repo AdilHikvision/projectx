@@ -239,6 +239,12 @@ public sealed class DatabaseInitializer(
                 ADD COLUMN IF NOT EXISTS "ValidTo" date,
                 ADD COLUMN IF NOT EXISTS "TimeLimitMinutes" integer
             """, cancellationToken);
+        // ANPR-камеры: направление проезда и зона задаются на самом устройстве.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE devices
+                ADD COLUMN IF NOT EXISTS "ParkingDirection" integer,
+                ADD COLUMN IF NOT EXISTS "ParkingZoneId" uuid
+            """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE parking_sessions
                 ADD COLUMN IF NOT EXISTS "CameraName" character varying(120),

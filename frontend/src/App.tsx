@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { LoadingOverlay, ModuleSwitcher } from './components/organisms'
+import { LoadingOverlay, ModuleActivation, ModuleSwitcher } from './components/organisms'
 import { useLoading } from './context/LoadingContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import './App.css'
@@ -133,6 +133,9 @@ function App() {
 
       {/* Full-screen module picker overlay (opened from the sidebar module card) */}
       <ModuleSwitcher />
+
+      {/* Служебное меню активации модулей — только по Ctrl+Shift+Backspace+1 */}
+      <ModuleActivation />
     </>
   )
 }

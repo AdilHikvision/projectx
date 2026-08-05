@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using Backend.Application.Devices;
+using Backend.Application.Parking;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -18,6 +19,7 @@ namespace Backend.Infrastructure.Devices.Services;
 public sealed class IsapiAlertStreamService(
     IDeviceConnectionManager connectionManager,
     IEventListenerService eventListener,
+    IParkingAnprHandler anprHandler,
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
     ILogger<IsapiAlertStreamService> logger) : BackgroundService
@@ -264,6 +266,23 @@ public sealed class IsapiAlertStreamService(
                     // as a structured event — proves the device is still talking to us. Refresh
                     // the heartbeat so MarkStaleConnectionsOfflineAsync keeps the device alive.
                     await connectionManager.TouchHeartbeatAsync(deviceIdentifier, DateTime.UtcNow, ct);
+
+                    // ── Парковка: событие распознавания номера и следующий за ним кадр ──
+                    // Идут по тому же alertStream, что и события доступа, но в формат
+                    // AccessControllerEvent не укладываются, поэтому разбираем отдельно.
+                    if (IsapiAnprParser.IsImagePart(part.Headers))
+                    {
+                        await anprHandler.AttachSnapshotAsync(deviceIdentifier, part.Body, ct);
+                        continue;
+                    }
+                    var plate = IsapiAnprParser.TryParse(part.Headers, part.Body);
+                    if (plate is not null)
+                    {
+                        logger.LogInformation("alertStream {Id}: ANPR plate={Plate} confidence={Conf}",
+                            deviceIdentifier, plate.Plate, plate.Confidence?.ToString("0.00") ?? "—");
+                        await anprHandler.HandlePlateAsync(deviceIdentifier, plate, ct);
+                        continue;
+                    }
 
                     var evt = IsapiEventPartParser.TryCreateDeviceEvent(deviceIdentifier, part.Headers, part.Body);
                     if (evt is null)
