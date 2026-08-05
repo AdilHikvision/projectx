@@ -400,7 +400,8 @@
       },
       "debt": "Borc",
       "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)"
-    }
+    },
+    "modeTitle": "İş rejimi"
   },
   "gym": {
     "underDevelopment": "Bu bölmə hazırlanır və tezliklə əlçatan olacaq.",
@@ -2793,6 +2794,11 @@
     "singleModuleNote": "Yalnız bir modul açıqdırsa, tətbiq onunla işləyir və modul dəyişdiricisi göstərilmir.",
     "saved": "Yadda saxlanıldı. Dəyişiklik bütün istifadəçilərə tətbiq olunur.",
     "saveFailed": "Modul dəstini yadda saxlamaq alınmadı.",
-    "authRequired": "Modul dəstini yadda saxlamaq üçün sistemə daxil olun."
+    "authRequired": "Modul dəstini yadda saxlamaq üçün sistemə daxil olun.",
+    "parkingMode": "Parkinq iş rejimi",
+    "parkingFree": "Pulsuz",
+    "parkingPaid": "Ödənişli",
+    "parkingFreeHint": "Ödəniş alınmır, giriş siyahılar və ya boş yerlər üzrədir. Tarif və kassa səhifələri gizlidir.",
+    "parkingPaidHint": "Dayanma tarifə görə ödənilir; tariflər, abunələr və kassa əlçatandır."
   }
 }

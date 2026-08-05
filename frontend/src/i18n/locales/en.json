@@ -400,7 +400,8 @@
       },
       "debt": "Debt",
       "overstay": "Time limit exceeded ({{limit}} min)"
-    }
+    },
+    "modeTitle": "Operating mode"
   },
   "gym": {
     "underDevelopment": "This section is under development and will be available soon.",
@@ -2801,6 +2802,11 @@
     "singleModuleNote": "With a single module enabled the app runs on that module and the module switcher is hidden.",
     "saved": "Saved. The change applies to every user.",
     "saveFailed": "Could not save the module set.",
-    "authRequired": "Sign in to save the module set."
+    "authRequired": "Sign in to save the module set.",
+    "parkingMode": "Parking mode",
+    "parkingFree": "Free",
+    "parkingPaid": "Paid",
+    "parkingFreeHint": "No charge; entry by lists or free spaces. Tariff and POS pages stay hidden.",
+    "parkingPaidHint": "Parking is charged; tariffs, subscriptions and the POS are available."
   }
 }

@@ -94,7 +94,6 @@ export function ParkingManagementPage() {
     const [view, setView] = useState<'manage' | 'scheme'>('manage')
     // Parkinq iş rejimi: ödənişli və ya pulsuz (ümumi parking məntiqi) — system-settings `parking.mode`
     const [parkingMode, setParkingMode] = useState<'Paid' | 'Free'>('Free')
-    const [savingMode, setSavingMode] = useState(false)
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
     const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null }[]>([])
@@ -160,19 +159,6 @@ export function ParkingManagementPage() {
             .then((r) => { if (r?.value === 'Paid' || r?.value === 'Free') setParkingMode(r.value) })
             .catch(() => { /* 404 = hələ təyin olunmayıb → Pulsuz qalır */ })
     }, [token])
-    const changeParkingMode = async (mode: 'Paid' | 'Free') => {
-        if (mode === parkingMode || savingMode) return
-        const prev = parkingMode
-        setParkingMode(mode)
-        setSavingMode(true)
-        try {
-            await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.mode', value: mode }) })
-        } catch {
-            setParkingMode(prev)
-        } finally {
-            setSavingMode(false)
-        }
-    }
     // Alt-rejim + nömrə siyahıları + tutum yüklə
     const reloadPlates = () => apiRequest<typeof plates>('/api/parking/plates', { token }).then(setPlates).catch(() => { })
     const reloadOccupancy = () => apiRequest<NonNullable<typeof occupancy>>('/api/parking/occupancy', { token }).then(setOccupancy).catch(() => { })
@@ -276,31 +262,17 @@ export function ParkingManagementPage() {
                         )}
                     </div>
 
-                    {/* Parkinq rejimi — ödənişli / pulsuz (app hansı moddə işləyir) */}
-                    <div className="ap-panel flex flex-col gap-4 rounded-2xl border border-border-base bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-start gap-3">
-                            <span className="material-symbols-outlined text-2xl text-primary">{parkingMode === 'Paid' ? 'paid' : 'money_off'}</span>
-                            <div>
-                                <div className="text-sm font-bold text-text-dark">Parkinq rejimi</div>
-                                <div className="mt-0.5 text-xs text-text-muted">
-                                    {parkingMode === 'Paid'
-                                        ? 'Ödənişli — tarif və ödəniş üzrə işləyir (sessiya/ödəniş)'
-                                        : 'Pulsuz — ödəniş yoxdur, sərbəst giriş/çıxış'}
-                                </div>
+                    {/* Режим работы (платный/бесплатный) переключается в служебном меню
+                        активации модулей — здесь только показываем текущий. */}
+                    <div className="ap-panel flex items-start gap-3 rounded-2xl border border-border-base bg-surface p-5">
+                        <span className="material-symbols-outlined text-2xl text-primary">{parkingMode === 'Paid' ? 'paid' : 'money_off'}</span>
+                        <div>
+                            <div className="text-sm font-bold text-text-dark">
+                                {t('parking.modeTitle')}: {t(parkingMode === 'Paid' ? 'moduleActivation.parkingPaid' : 'moduleActivation.parkingFree')}
                             </div>
-                        </div>
-                        <div className="inline-flex shrink-0 rounded-xl border border-border-base bg-slate-75 p-1">
-                            {(['Free', 'Paid'] as const).map((m) => (
-                                <button
-                                    key={m}
-                                    type="button"
-                                    disabled={savingMode}
-                                    onClick={() => changeParkingMode(m)}
-                                    className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${parkingMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}
-                                >
-                                    {m === 'Paid' ? 'Ödənişli' : 'Pulsuz'}
-                                </button>
-                            ))}
+                            <div className="mt-0.5 text-xs text-text-muted">
+                                {t(parkingMode === 'Paid' ? 'moduleActivation.parkingPaidHint' : 'moduleActivation.parkingFreeHint')}
+                            </div>
                         </div>
                     </div>
 

@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../../auth/AuthContext'
 import { useModule } from '../../../context/ModuleContext'
 import { MODULE_LIST, type ModuleKey } from '../../../config/modules'
+import { apiRequest } from '../../../lib/api'
+
+type ParkingMode = 'Free' | 'Paid'
 
 /* ═══ Служебное меню активации модулей. Открывается только сочетанием
    Ctrl + Shift + Backspace + 1 — в интерфейсе на него нет ни одной кнопки.
@@ -18,6 +21,9 @@ export function ModuleActivation() {
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [saved, setSaved] = useState(false)
+    /** Режим парковки — такое же решение уровня установки, как и набор модулей. */
+    const [parkingMode, setParkingMode] = useState<ParkingMode>('Free')
+    const [savedParkingMode, setSavedParkingMode] = useState<ParkingMode>('Free')
 
     // При каждом открытии показываем актуальное состояние, а не остатки прошлого сеанса.
     useEffect(() => {
@@ -29,6 +35,18 @@ export function ModuleActivation() {
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
     }, [isActivationOpen, enabledModules, closeActivation])
+
+    // Текущий режим парковки читаем при открытии; ключа может не быть — тогда бесплатный.
+    useEffect(() => {
+        if (!isActivationOpen || !token) return
+        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
+            .then((r) => {
+                const mode: ParkingMode = r?.value === 'Paid' ? 'Paid' : 'Free'
+                setParkingMode(mode)
+                setSavedParkingMode(mode)
+            })
+            .catch(() => { setParkingMode('Free'); setSavedParkingMode('Free') })
+    }, [isActivationOpen, token])
 
     if (!isActivationOpen) return null
 
@@ -50,6 +68,14 @@ export function ModuleActivation() {
         setSaving(true); setError(null)
         try {
             await saveEnabledModules(selected)
+            // Режим парковки пишем только если он реально менялся и модуль включён.
+            if (parkingMode !== savedParkingMode && selected.includes('parking')) {
+                await apiRequest('/api/system-settings', {
+                    method: 'POST', token,
+                    body: JSON.stringify({ key: 'parking.mode', value: parkingMode }),
+                })
+                setSavedParkingMode(parkingMode)
+            }
             setSaved(true)
         } catch (e) {
             setError(e instanceof Error ? e.message : t('moduleActivation.saveFailed'))
@@ -60,7 +86,8 @@ export function ModuleActivation() {
 
     const dirty =
         selected.length !== enabledModules.length ||
-        selected.some((k) => !enabledModules.includes(k))
+        selected.some((k) => !enabledModules.includes(k)) ||
+        (selected.includes('parking') && parkingMode !== savedParkingMode)
 
     return (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
@@ -138,6 +165,36 @@ export function ModuleActivation() {
                             )
                         })}
                     </ul>
+
+                    {/* Режим парковки: определяет, берутся ли деньги, поэтому живёт здесь,
+                        рядом с активацией модулей, а не в обычных настройках. */}
+                    {selected.includes('parking') && (
+                        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                            <div className="flex items-center gap-2.5">
+                                <span className="material-symbols-outlined text-[18px] text-violet-300">
+                                    {parkingMode === 'Paid' ? 'paid' : 'money_off'}
+                                </span>
+                                <span className="text-[13px] font-semibold">{t('moduleActivation.parkingMode')}</span>
+                            </div>
+                            <div className="mt-3 flex gap-1 rounded-xl bg-black/25 p-1">
+                                {(['Free', 'Paid'] as const).map((m) => (
+                                    <button
+                                        key={m}
+                                        type="button"
+                                        onClick={() => { setSaved(false); setParkingMode(m) }}
+                                        className={`flex-1 rounded-lg py-2 text-[12px] font-semibold transition-colors ${
+                                            parkingMode === m ? 'bg-violet-500 text-white' : 'text-white/55 hover:text-white'
+                                        }`}
+                                    >
+                                        {t(`moduleActivation.parking${m}`)}
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="mt-2.5 text-[11px] leading-relaxed text-white/45">
+                                {t(parkingMode === 'Paid' ? 'moduleActivation.parkingPaidHint' : 'moduleActivation.parkingFreeHint')}
+                            </p>
+                        </div>
+                    )}
 
                     <p className="mt-4 flex items-start gap-2 rounded-xl bg-white/[0.04] px-3.5 py-3 text-[11px] leading-relaxed text-white/50">
                         <span className="material-symbols-outlined text-[15px] text-violet-300">info</span>
