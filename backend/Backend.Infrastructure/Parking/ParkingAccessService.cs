@@ -63,10 +63,10 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
     }
 
     /// <summary>
-    /// Сколько минут этому номеру разрешено стоять: персональный лимит из белого списка,
-    /// иначе общий из настройки parking.freeMaxMinutes («Лимит бесплатной стоянки» на странице
-    /// управления). null — без ограничения. Пропуска и абонементы лимиту не подчиняются:
-    /// это служебный и оплаченный транспорт.
+    /// Сколько минут этому номеру разрешено стоять — персональный лимит из белого списка
+    /// (поле «Лимит, мин» у номера). null — без ограничения. Общей настройки нет намеренно:
+    /// одно значение на всю парковку оказалось бесполезным. Пропуска и абонементы лимиту
+    /// не подчиняются: это служебный и оплаченный транспорт.
     /// </summary>
     public static async Task<int?> ResolveTimeLimitAsync(AppDbContext db, string plateNormalized, CancellationToken ct)
     {
@@ -83,11 +83,7 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
 
         var allow = await db.ParkingPlates.AsNoTracking()
             .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == plateNormalized, ct);
-        if (allow?.TimeLimitMinutes is > 0) return allow.TimeLimitMinutes;
-
-        var raw = (await db.SystemSettings.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Key == "parking.freeMaxMinutes", ct))?.Value;
-        return int.TryParse(raw, out var minutes) && minutes > 0 ? minutes : null;
+        return allow?.TimeLimitMinutes is > 0 ? allow.TimeLimitMinutes : null;
     }
 
     public async Task<ParkingAccessDecision> DecideAsync(ParkingAccessInput input, CancellationToken ct)
@@ -176,26 +172,11 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
 
         var settings = await db.SystemSettings.AsNoTracking()
-            .Where(x => x.Key == "parking.mode" || x.Key == "parking.freeSubMode" || x.Key == "parking.reentryMinutes")
+            .Where(x => x.Key == "parking.mode" || x.Key == "parking.freeSubMode")
             .ToListAsync(ct);
         var mode = settings.FirstOrDefault(x => x.Key == "parking.mode")?.Value ?? "Free";
         var subMode = settings.FirstOrDefault(x => x.Key == "parking.freeSubMode")?.Value ?? "Capacity";
         var isPaidMode = string.Equals(mode, "Paid", StringComparison.OrdinalIgnoreCase);
-
-        // Повторный въезд не раньше, чем через N минут после выезда (бесплатный режим).
-        if (!isPaidMode && int.TryParse(settings.FirstOrDefault(x => x.Key == "parking.reentryMinutes")?.Value, out var reentryMin) && reentryMin > 0)
-        {
-            var lastExit = await db.ParkingSessions.AsNoTracking()
-                .Where(x => x.PlateNormalized == norm && x.ExitedUtc != null)
-                .OrderByDescending(x => x.ExitedUtc).Select(x => x.ExitedUtc).FirstOrDefaultAsync(ct);
-            if (lastExit.HasValue && (DateTime.UtcNow - lastExit.Value).TotalMinutes < reentryMin)
-            {
-                LogEvent("denied", $"Re-entry cooldown: {reentryMin}m");
-                await db.SaveChangesAsync(ct);
-                return new ParkingAccessDecision(false, "reentry-cooldown", Mode: mode, SubMode: subMode,
-                    WaitMinutes: Math.Ceiling(reentryMin - (DateTime.UtcNow - lastExit.Value).TotalMinutes));
-            }
-        }
 
         async Task<bool> HasFreeSpace()
         {

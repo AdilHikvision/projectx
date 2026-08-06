@@ -396,7 +396,6 @@
         "full": "no free spaces",
         "not-in-allowlist": "plate is not in the allowlist",
         "allowlist-expired": "allowlist entry expired",
-        "reentry-cooldown": "re-entry too soon",
         "empty-plate": "plate is empty",
         "holder-spaces-busy": "all holder spaces are taken"
       },
@@ -414,8 +413,6 @@
       "subModeCapacity": "By capacity",
       "subModeListHint": "“By list” — only plates on the allowlist get in",
       "subModeCapacityHint": "“By capacity” — everyone gets in while spaces last",
-      "freeLimit": "Free parking limit (min, 0 = unlimited)",
-      "reentry": "Re-entry cooldown (min, 0 = none)",
       "commonSpaces": "Regular spaces (free / total)",
       "vipSpaces": "VIP spaces (free / total)",
       "plateLists": "Plate lists (allow / block)",

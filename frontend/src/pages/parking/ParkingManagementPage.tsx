@@ -126,9 +126,6 @@ export function ParkingManagementPage() {
     const [newPlateCategory, setNewPlateCategory] = useState('')
     const [newPlateValidTo, setNewPlateValidTo] = useState('')
     const [newPlateTimeLimit, setNewPlateTimeLimit] = useState('')
-    // Pulsuz rejim parametrləri: pulsuz dayanmanın maksimum müddəti və təkrar girişə qadağa (dəq).
-    const [freeMaxMinutes, setFreeMaxMinutes] = useState('')
-    const [reentryMinutes, setReentryMinutes] = useState('')
     // Платный режим: сколько минут даётся на выезд после оплаты (parking.exitGraceMinutes).
     const [exitGraceMinutes, setExitGraceMinutes] = useState('15')
     const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
@@ -187,10 +184,6 @@ export function ParkingManagementPage() {
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeSubMode', { token })
             .then((r) => { if (r?.value === 'List' || r?.value === 'Capacity') setFreeSubMode(r.value) })
             .catch(() => { })
-        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeMaxMinutes', { token })
-            .then((r) => { if (r?.value) setFreeMaxMinutes(r.value) }).catch(() => { })
-        apiRequest<{ key: string; value: string }>('/api/system-settings/parking.reentryMinutes', { token })
-            .then((r) => { if (r?.value) setReentryMinutes(r.value) }).catch(() => { })
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.exitGraceMinutes', { token })
             .then((r) => { if (r?.value) setExitGraceMinutes(r.value) }).catch(() => { /* нет ключа — остаётся 15 */ })
         void reloadPlates()
@@ -350,26 +343,8 @@ export function ParkingManagementPage() {
                             </div>
                         )}
 
-                        {parkingMode === 'Free' && (
-                            <div className="grid gap-3 sm:grid-cols-2">
-                                <div className="rounded-xl border border-border-base p-3">
-                                    <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.freeLimit')}</div>
-                                    <input type="number" min={0}
-                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
-                                        value={freeMaxMinutes}
-                                        onChange={(e) => setFreeMaxMinutes(e.target.value)}
-                                        onBlur={() => void saveFreeSetting('parking.freeMaxMinutes', freeMaxMinutes || '0')} />
-                                </div>
-                                <div className="rounded-xl border border-border-base p-3">
-                                    <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.reentry')}</div>
-                                    <input type="number" min={0}
-                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
-                                        value={reentryMinutes}
-                                        onChange={(e) => setReentryMinutes(e.target.value)}
-                                        onBlur={() => void saveFreeSetting('parking.reentryMinutes', reentryMinutes || '0')} />
-                                </div>
-                            </div>
-                        )}
+                        {/* Общих числовых настроек у бесплатного режима нет: лимит стоянки
+                            задаётся точечно у номера в белом списке (поле «Лимит, мин»). */}
 
                         {/* Платный режим: сколько минут даётся на выезд после оплаты. */}
                         {parkingMode === 'Paid' && (

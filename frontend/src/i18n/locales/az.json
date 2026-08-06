@@ -396,7 +396,6 @@
         "full": "boş yer yoxdur",
         "not-in-allowlist": "nömrə ağ siyahıda deyil",
         "allowlist-expired": "ağ siyahıdakı müddət bitib",
-        "reentry-cooldown": "təkrar giriş çox tezdir",
         "empty-plate": "nömrə göstərilməyib",
         "holder-spaces-busy": "sahibin bütün yerləri doludur"
       },
@@ -414,8 +413,6 @@
       "subModeCapacity": "Tutum",
       "subModeListHint": "«Siyahı» — yalnız ağ siyahıdakı nömrələr keçir",
       "subModeCapacityHint": "«Tutum» — boş yer olduqca bütün nömrələr keçir",
-      "freeLimit": "Pulsuz dayanma limiti (dəq, 0 = limitsiz)",
-      "reentry": "Təkrar giriş qadağası (dəq, 0 = yoxdur)",
       "commonSpaces": "Ümumi yerlər (boş / cəmi)",
       "vipSpaces": "VIP yerlər (boş / cəmi)",
       "plateLists": "Nömrə siyahıları (ağ / qara)",
