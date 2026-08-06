@@ -112,10 +112,6 @@
     "embedUnreachableTitle": "Aktiv Parking server is unreachable",
     "embedUnreachableDesc": "This page is served by the Aktiv Parking app, but its server cannot be reached from this network.",
     "embedUnreachableHint": "To change the address, set VITE_AKTIV_PARKING_BASE in frontend/.env.local.",
-    "tabs": {
-      "manage": "Management",
-      "scheme": "Parking scheme"
-    },
     "zones": {
       "title": "Zones",
       "new": "New zone",
@@ -173,9 +169,7 @@
     "types": {
       "Regular": "Regular",
       "Vip": "VIP",
-      "Disabled": "Accessible",
-      "Electric": "Electric vehicle",
-      "Motorcycle": "Motorcycle"
+      "Disabled": "Accessible"
     },
     "scheme": {
       "empty": "Nothing to display yet"
@@ -448,7 +442,8 @@
       "none": "No holder",
       "assignHint": "Assign the plate to a space holder",
       "occupiedHint": "Spaces taken out of allocated"
-    }
+    },
+    "manageTitle": "Parking management"
   },
   "gym": {
     "underDevelopment": "This section is under development and will be available soon.",

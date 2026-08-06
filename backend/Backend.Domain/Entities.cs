@@ -1073,11 +1073,7 @@ public enum ParkingSpaceType
     /// <summary>VIP-место.</summary>
     Vip = 2,
     /// <summary>Место для людей с инвалидностью.</summary>
-    Disabled = 3,
-    /// <summary>Место для электромобилей (с зарядкой).</summary>
-    Electric = 4,
-    /// <summary>Место для мотоциклов.</summary>
-    Motorcycle = 5
+    Disabled = 3
 }
 
 /// <summary>

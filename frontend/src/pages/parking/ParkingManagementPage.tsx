@@ -8,7 +8,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { useModule } from '../../context/ModuleContext'
 
 // ─── Domain types (mirror backend DTOs) ─────────────────────────────────────────
-type SpaceType = 'Regular' | 'Vip' | 'Disabled' | 'Electric' | 'Motorcycle'
+type SpaceType = 'Regular' | 'Vip' | 'Disabled'
 
 interface Zone {
     id: string
@@ -76,7 +76,7 @@ interface Holder {
 
 const emptyHolder = { name: '', phone: '', unit: '', spacesLimit: '1', isActive: true, notes: '' }
 
-const SPACE_TYPES: SpaceType[] = ['Regular', 'Vip', 'Disabled', 'Electric', 'Motorcycle']
+const SPACE_TYPES: SpaceType[] = ['Regular', 'Vip', 'Disabled']
 
 // ─── AktivParking scoped restyle (page-only, prefixed .pk-*) ────────────────────
 const PK_RESTYLE = `
@@ -100,15 +100,14 @@ const TYPE_STYLE: Record<SpaceType, { icon: string; chip: string; dot: string }>
     Regular: { icon: 'local_parking', chip: 'bg-slate-100 text-slate-700 border-slate-200', dot: 'bg-slate-400' },
     Vip: { icon: 'star', chip: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
     Disabled: { icon: 'accessible', chip: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-400' },
-    Electric: { icon: 'ev_station', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-400' },
-    Motorcycle: { icon: 'two_wheeler', chip: 'bg-violet-50 text-violet-700 border-violet-200', dot: 'bg-violet-400' },
 }
 
 export function ParkingManagementPage() {
     const { t } = useTranslation()
     const { token } = useAuth()
 
-    const [view, setView] = useState<'manage' | 'scheme'>('manage')
+    // Схема всегда на виду; настройки и структура открываются шестерёнкой.
+    const [manageOpen, setManageOpen] = useState(false)
     // Режим работы (платный/бесплатный) берём из общего контекста — он же питает сайдбар,
     // поэтому страница и меню всегда показывают одно и то же. Меняется в служебном окне.
     const { parkingPaid } = useModule()
@@ -262,8 +261,8 @@ export function ParkingManagementPage() {
         void loadRows(selectedFloorId)
     }, [selectedFloorId, token])
     useEffect(() => {
-        if (view === 'scheme' && selectedZoneId) void loadScheme(selectedZoneId)
-    }, [view, selectedZoneId, token])
+        if (selectedZoneId) void loadScheme(selectedZoneId)
+    }, [selectedZoneId, token])
 
     // ─── Modal state ───
     const [zoneModal, setZoneModal] = useState<{ mode: 'create' | 'edit'; data: Zone | null } | null>(null)
@@ -277,7 +276,7 @@ export function ParkingManagementPage() {
         await loadZones()
         if (selectedZoneId) await loadFloors(selectedZoneId)
         if (selectedFloorId) await loadRows(selectedFloorId)
-        if (view === 'scheme' && selectedZoneId) await loadScheme(selectedZoneId)
+        if (selectedZoneId) await loadScheme(selectedZoneId)
     }
 
     const del = (label: string, path: string) => setConfirm({
@@ -299,13 +298,36 @@ export function ParkingManagementPage() {
                             title={t('parking.nav.management')}
                             description={t('parking.subtitle')}
                         />
-                        {view === 'manage' && (
-                            <Button icon="add" onClick={() => setZoneModal({ mode: 'create', data: null })}>
-                                {t('parking.zones.new')}
-                            </Button>
-                        )}
+                        {/* Настройки и структура парковки живут под шестерёнкой — на странице только схема. */}
+                        <Button icon="settings" variant="outline" onClick={() => setManageOpen(true)}>
+                            {t('parking.manageTitle')}
+                        </Button>
                     </div>
 
+                    {loadingZones ? (
+                        <Spinner />
+                    ) : zones.length === 0 ? (
+                        <EmptyState icon="local_parking" text={t('parking.zones.empty')}
+                            action={<Button icon="add" variant="outline" onClick={() => setZoneModal({ mode: 'create', data: null })}>{t('parking.zones.new')}</Button>} />
+                    ) : (
+                        <SchemeView
+                            zones={zones}
+                            selectedZoneId={selectedZoneId}
+                            onSelectZone={setSelectedZoneId}
+                            scheme={scheme}
+                            loading={loadingScheme}
+                        />
+                    )}
+
+                    <TypeLegend />
+                </div>
+            </div>
+
+            {/* ─── Управление парковкой: настройки и структура ─── */}
+            {manageOpen && (
+                <Modal isOpen size="xl" title={t('parking.manageTitle')} onClose={() => setManageOpen(false)}
+                    actions={<Button icon="add" size="sm" onClick={() => setZoneModal({ mode: 'create', data: null })}>{t('parking.zones.new')}</Button>}>
+                    <div className="pk-page space-y-6 bg-transparent">
                     {/* Режим работы (платный/бесплатный) переключается в служебном меню
                         активации модулей — здесь только показываем текущий. */}
                     <div className="ap-panel flex items-start gap-3 rounded-2xl border border-border-base bg-surface p-5">
@@ -521,29 +543,12 @@ export function ParkingManagementPage() {
                         </div>
                     )}
 
-                    {/* View tabs */}
-                    <div className="flex gap-1 border-b border-border-base">
-                        {(['manage', 'scheme'] as const).map((tab) => (
-                            <button key={tab} type="button" onClick={() => setView(tab)}
-                                className={`-mb-px border-b-2 px-4 py-2.5 text-xs font-black uppercase tracking-widest transition-colors ${view === tab ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'}`}>
-                                {t(`parking.tabs.${tab}`)}
-                            </button>
-                        ))}
-                    </div>
-
+                    {/* Структура: зоны → этажи → ряды → места */}
                     {loadingZones ? (
                         <Spinner />
                     ) : zones.length === 0 ? (
                         <EmptyState icon="local_parking" text={t('parking.zones.empty')}
                             action={<Button icon="add" variant="outline" onClick={() => setZoneModal({ mode: 'create', data: null })}>{t('parking.zones.new')}</Button>} />
-                    ) : view === 'scheme' ? (
-                        <SchemeView
-                            zones={zones}
-                            selectedZoneId={selectedZoneId}
-                            onSelectZone={setSelectedZoneId}
-                            scheme={scheme}
-                            loading={loadingScheme}
-                        />
                     ) : (
                         <div className="grid gap-5 lg:grid-cols-[260px_260px_1fr]">
                             {/* Column 1 — Zones */}
@@ -627,10 +632,9 @@ export function ParkingManagementPage() {
                             </Panel>
                         </div>
                     )}
-
-                    <TypeLegend />
-                </div>
-            </div>
+                    </div>
+                </Modal>
+            )}
 
             {/* ─── Modals ─── */}
             {zoneModal && (

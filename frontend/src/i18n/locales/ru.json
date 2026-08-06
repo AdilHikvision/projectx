@@ -112,10 +112,6 @@
     "embedUnreachableTitle": "Сервер Aktiv Parking недоступен",
     "embedUnreachableDesc": "Эта страница загружается из приложения Aktiv Parking, но его сервер недоступен из этой сети.",
     "embedUnreachableHint": "Чтобы сменить адрес, задайте VITE_AKTIV_PARKING_BASE в frontend/.env.local.",
-    "tabs": {
-      "manage": "Управление",
-      "scheme": "Схема парковки"
-    },
     "zones": {
       "title": "Зоны",
       "new": "Новая зона",
@@ -175,9 +171,7 @@
     "types": {
       "Regular": "Обычное",
       "Vip": "VIP",
-      "Disabled": "Для инвалидов",
-      "Electric": "Электромобиль",
-      "Motorcycle": "Мотоцикл"
+      "Disabled": "Для инвалидов"
     },
     "scheme": {
       "empty": "Пока нечего показать"
@@ -450,7 +444,8 @@
       "none": "Без владельца",
       "assignHint": "Закрепить номер за владельцем мест",
       "occupiedHint": "Занято мест из выделенных"
-    }
+    },
+    "manageTitle": "Управление парковкой"
   },
   "gym": {
     "underDevelopment": "Этот раздел в разработке и скоро будет доступен.",

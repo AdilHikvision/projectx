@@ -112,10 +112,6 @@
     "embedUnreachableTitle": "Aktiv Parking serverinə çatmaq olmur",
     "embedUnreachableDesc": "Bu səhifə Aktiv Parking tətbiqindən yüklənir, lakin server bu şəbəkədən əlçatan deyil.",
     "embedUnreachableHint": "Ünvanı dəyişmək üçün frontend/.env.local faylında VITE_AKTIV_PARKING_BASE dəyərini təyin edin.",
-    "tabs": {
-      "manage": "İdarəetmə",
-      "scheme": "Parklanma sxemi"
-    },
     "zones": {
       "title": "Zonalar",
       "new": "Yeni zona",
@@ -173,9 +169,7 @@
     "types": {
       "Regular": "Adi",
       "Vip": "VIP",
-      "Disabled": "Əlillər üçün",
-      "Electric": "Elektromobil",
-      "Motorcycle": "Motosiklet"
+      "Disabled": "Əlillər üçün"
     },
     "scheme": {
       "empty": "Hələ göstəriləcək bir şey yoxdur"
@@ -448,7 +442,8 @@
       "none": "Sahibsiz",
       "assignHint": "Nömrəni yer sahibinə təhkim et",
       "occupiedHint": "Ayrılmış yerlərdən tutulub"
-    }
+    },
+    "manageTitle": "Parkinqın idarə edilməsi"
   },
   "gym": {
     "underDevelopment": "Bu bölmə hazırlanır və tezliklə əlçatan olacaq.",
