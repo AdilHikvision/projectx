@@ -255,7 +255,20 @@ public sealed class DatabaseInitializer(
                 ADD COLUMN IF NOT EXISTS "HolderId" uuid REFERENCES parking_holders("Id") ON DELETE SET NULL
             """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
-            CREATE INDEX IF NOT EXISTS "IX_parking_plates_HolderId" ON parking_plates ("HolderId")
+            ALTER TABLE parking_vehicles
+                ADD COLUMN IF NOT EXISTS "HolderId" uuid REFERENCES parking_holders("Id") ON DELETE SET NULL,
+                ADD COLUMN IF NOT EXISTS "TimeLimitMinutes" integer,
+                ADD COLUMN IF NOT EXISTS "Category" character varying(32)
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_vehicles_HolderId" ON parking_vehicles ("HolderId")
+            """, cancellationToken);
+
+        // Перенос белого списка в машины с пропусками делает миграция ParkingVehicleHolder:
+        // он должен пройти до удаления колонок, поэтому здесь его дублировать нельзя.
+        // Подчищаем только остатки на случай базы, накатанной одними патчами.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            DELETE FROM parking_plates WHERE "ListType" = 1
             """, cancellationToken);
         // ANPR-камеры: направление проезда и зона задаются на самом устройстве.
         await dbContext.Database.ExecuteSqlRawAsync("""

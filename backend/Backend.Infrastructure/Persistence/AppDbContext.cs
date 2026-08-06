@@ -724,10 +724,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.PlateNormalized).HasMaxLength(32).IsRequired();
             entity.Property(x => x.Category).HasMaxLength(32);
             entity.HasIndex(x => new { x.PlateNormalized, x.ListType });
-            // Удаляем владельца — номера остаются в списке, просто без привязки.
-            entity.HasOne(x => x.Holder).WithMany(x => x.Plates)
-                .HasForeignKey(x => x.HolderId).OnDelete(DeleteBehavior.SetNull);
-            entity.HasIndex(x => x.HolderId);
         });
 
         builder.Entity<ParkingSession>(entity =>
@@ -839,9 +835,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.PhotoUrl).HasMaxLength(500);
             entity.Property(x => x.OwnerName).HasMaxLength(200);
             entity.Property(x => x.OwnerPhone).HasMaxLength(64);
+            entity.Property(x => x.Category).HasMaxLength(32);
             entity.HasOne(x => x.Resident).WithMany(x => x.Vehicles).HasForeignKey(x => x.ResidentId).OnDelete(DeleteBehavior.SetNull);
+            // Удаление владельца не трогает машины — они просто теряют привязку и квоту.
+            entity.HasOne(x => x.Holder).WithMany(x => x.Vehicles).HasForeignKey(x => x.HolderId).OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => x.PlateNormalized);
             entity.HasIndex(x => x.ResidentId);
+            entity.HasIndex(x => x.HolderId);
         });
 
         builder.Entity<ParkingPermit>(entity =>

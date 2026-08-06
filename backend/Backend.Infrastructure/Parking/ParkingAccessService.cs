@@ -63,10 +63,9 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
     }
 
     /// <summary>
-    /// Сколько минут этому номеру разрешено стоять — персональный лимит из белого списка
-    /// (поле «Лимит, мин» у номера). null — без ограничения. Общей настройки нет намеренно:
-    /// одно значение на всю парковку оказалось бесполезным. Пропуска и абонементы лимиту
-    /// не подчиняются: это служебный и оплаченный транспорт.
+    /// Сколько минут этому номеру разрешено стоять — лимит из карточки автомобиля
+    /// (поле «Лимит стоянки»). null — без ограничения. Абонемент снимает лимит:
+    /// это оплаченный транспорт.
     /// </summary>
     public static async Task<int?> ResolveTimeLimitAsync(AppDbContext db, string plateNormalized, CancellationToken ct)
     {
@@ -76,14 +75,9 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             .AnyAsync(s => s.IsActive && s.PlateNormalized == plateNormalized && s.StartDate <= today && s.EndDate >= today, ct);
         if (hasSubscription) return null;
 
-        var hasPermit = await db.ParkingPermits.AsNoTracking().Include(p => p.Vehicle)
-            .AnyAsync(p => p.IsActive && p.Vehicle!.IsActive && p.Vehicle.PlateNormalized == plateNormalized
-                && p.ValidFrom <= today && (p.ValidTo == null || p.ValidTo >= today), ct);
-        if (hasPermit) return null;
-
-        var allow = await db.ParkingPlates.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == plateNormalized, ct);
-        return allow?.TimeLimitMinutes is > 0 ? allow.TimeLimitMinutes : null;
+        var vehicle = await db.ParkingVehicles.AsNoTracking()
+            .FirstOrDefaultAsync(v => v.IsActive && v.PlateNormalized == plateNormalized, ct);
+        return vehicle?.TimeLimitMinutes is > 0 ? vehicle.TimeLimitMinutes : null;
     }
 
     public async Task<ParkingAccessDecision> DecideAsync(ParkingAccessInput input, CancellationToken ct)
@@ -156,17 +150,45 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             return new ParkingAccessDecision(true, "subscription", Subscription: sub.Name, SessionId: openedSessionId);
         }
 
-        // Действующий пропуск (permit) на сегодня пропускает всегда (кроме чёрного списка выше).
-        var hasPermit = await db.ParkingPermits.AsNoTracking()
-            .Include(p => p.Vehicle)
+        // Машина из базы: от неё зависят пропуск, владелец мест и лимит стоянки.
+        var vehicle = await db.ParkingVehicles.AsNoTracking()
+            .FirstOrDefaultAsync(v => v.IsActive && v.PlateNormalized == norm, ct);
+
+        /// <summary>Заняты ли все места владельца этой машины (кроме неё самой).</summary>
+        async Task<(bool Busy, string Detail)> HolderSpacesBusy()
+        {
+            if (vehicle?.HolderId is not { } holderId) return (false, "");
+            var holder = await db.ParkingHolders.AsNoTracking().FirstOrDefaultAsync(h => h.Id == holderId, ct);
+            if (holder is not { IsActive: true }) return (false, "");
+            var holderPlates = await db.ParkingVehicles.AsNoTracking()
+                .Where(v => v.HolderId == holderId && v.IsActive)
+                .Select(v => v.PlateNormalized)
+                .ToListAsync(ct);
+            // Саму въезжающую машину не считаем: если она уже внутри, это повторное событие камеры.
+            var occupied = await db.ParkingSessions.AsNoTracking()
+                .CountAsync(s => s.ExitedUtc == null
+                    && s.PlateNormalized != norm
+                    && holderPlates.Contains(s.PlateNormalized), ct);
+            var limit = Math.Max(1, holder.SpacesLimit);
+            return (occupied >= limit, $"Holder «{holder.Name}»: {occupied}/{limit} spaces busy");
+        }
+
+        // Действующий пропуск на сегодня пропускает в любом режиме (кроме чёрного списка выше).
+        var hasPermit = vehicle is not null && await db.ParkingPermits.AsNoTracking()
             .AnyAsync(p => p.IsActive
-                && p.Vehicle!.IsActive
-                && p.Vehicle.PlateNormalized == norm
+                && p.VehicleId == vehicle.Id
                 && p.ValidFrom <= today
                 && (p.ValidTo == null || p.ValidTo >= today)
                 && (p.ZoneId == null || input.ZoneId == null || p.ZoneId == input.ZoneId), ct);
         if (hasPermit)
         {
+            var (busy, detail) = await HolderSpacesBusy();
+            if (busy)
+            {
+                LogEvent("denied", detail);
+                await db.SaveChangesAsync(ct);
+                return new ParkingAccessDecision(false, "holder-spaces-busy");
+            }
             await OpenSessionIfRequested(paid: false, paymentMethod: "permit");
             return new ParkingAccessDecision(true, "permit", SessionId: openedSessionId);
         }
@@ -200,36 +222,11 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
         else if (string.Equals(subMode, "List", StringComparison.OrdinalIgnoreCase))
         {
-            // Белый список с учётом срока действия пропуска.
-            var wl = await db.ParkingPlates.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.IsActive && x.ListType == ParkingPlateList.Allow && x.PlateNormalized == norm, ct);
-            allow = wl is not null && (wl.ValidTo == null || wl.ValidTo >= today);
-            reason = wl is null ? "not-in-allowlist" : (allow ? "allowlist" : "allowlist-expired");
-
-            // У владельца может быть несколько мест и много машин: пускаем, пока заняты
-            // не все его места. Иначе вторая машина ждёт, когда выедет первая.
-            if (allow && wl!.HolderId is { } holderId)
-            {
-                var holder = await db.ParkingHolders.AsNoTracking().FirstOrDefaultAsync(h => h.Id == holderId, ct);
-                if (holder is { IsActive: true })
-                {
-                    var holderPlates = await db.ParkingPlates.AsNoTracking()
-                        .Where(p => p.HolderId == holderId && p.IsActive && p.ListType == ParkingPlateList.Allow)
-                        .Select(p => p.PlateNormalized)
-                        .ToListAsync(ct);
-                    // Саму въезжающую машину не считаем: если она уже внутри, это повторное событие.
-                    var occupied = await db.ParkingSessions.AsNoTracking()
-                        .CountAsync(s => s.ExitedUtc == null
-                            && s.PlateNormalized != norm
-                            && holderPlates.Contains(s.PlateNormalized), ct);
-                    if (occupied >= Math.Max(1, holder.SpacesLimit))
-                    {
-                        allow = false;
-                        reason = "holder-spaces-busy";
-                        deniedDetail = $"Holder «{holder.Name}»: {occupied}/{holder.SpacesLimit} spaces busy";
-                    }
-                }
-            }
+            // Режим «по пропускам»: без действующего пропуска не пускаем. Сам пропуск
+            // проверен выше и уже вернул бы разрешение, поэтому сюда попадают только те,
+            // у кого его нет или он просрочен.
+            allow = false;
+            reason = vehicle is null ? "not-in-vehicles" : "no-permit";
         }
         else
         {

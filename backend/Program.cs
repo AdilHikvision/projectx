@@ -9093,9 +9093,10 @@ static string NormalizePlate(string? p) => new string((p ?? "").ToUpperInvariant
 app.MapGet("/api/parking/holders", async (AppDbContext db, CancellationToken ct) =>
 {
     var holders = await db.ParkingHolders.AsNoTracking().OrderBy(x => x.Name).ToListAsync(ct);
-    var plates = await db.ParkingPlates.AsNoTracking()
-        .Where(p => p.HolderId != null && p.IsActive && p.ListType == ParkingPlateList.Allow)
-        .Select(p => new { p.HolderId, p.Plate, p.PlateNormalized })
+    // Машины владельца берём из базы автомобилей — белого списка больше нет.
+    var plates = await db.ParkingVehicles.AsNoTracking()
+        .Where(v => v.HolderId != null && v.IsActive)
+        .Select(v => new { v.HolderId, v.Plate, v.PlateNormalized })
         .ToListAsync(ct);
     var openPlates = await db.ParkingSessions.AsNoTracking()
         .Where(s => s.ExitedUtc == null)
@@ -9163,17 +9164,13 @@ app.MapDelete("/api/parking/holders/{id:guid}", async (Guid id, AppDbContext db,
 
 app.MapGet("/api/parking/plates", async (AppDbContext db, string? listType, CancellationToken ct) =>
 {
-    var q = db.ParkingPlates.AsNoTracking().Where(x => x.IsActive);
-    if (!string.IsNullOrWhiteSpace(listType) && Enum.TryParse<ParkingPlateList>(listType, true, out var lt))
-        q = q.Where(x => x.ListType == lt);
+    // Белого списка больше нет: доступ дают пропуска на машины из базы автомобилей.
+    var q = db.ParkingPlates.AsNoTracking().Where(x => x.IsActive && x.ListType == ParkingPlateList.Block);
     var list = await q.OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
-    var holders = await db.ParkingHolders.AsNoTracking().ToDictionaryAsync(h => h.Id, h => h.Name, ct);
     return Results.Ok(list.Select(x => new
     {
         x.Id, x.Plate, listType = x.ListType.ToString(), x.Note, x.CreatedUtc, x.Category,
-        validTo = x.ValidTo?.ToString("yyyy-MM-dd"), x.TimeLimitMinutes,
-        x.HolderId,
-        holderName = x.HolderId.HasValue && holders.TryGetValue(x.HolderId.Value, out var hn) ? hn : null
+        validTo = x.ValidTo?.ToString("yyyy-MM-dd")
     }));
 }).RequireAuthorization("Parking.View");
 
@@ -9182,16 +9179,17 @@ app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext 
     var norm = NormalizePlate(req.Plate);
     if (norm.Length == 0) return Results.BadRequest(new { message = "Plate is required." });
     if (!Enum.TryParse<ParkingPlateList>(req.ListType, true, out var lt)) return Results.BadRequest(new { message = "Invalid listType." });
+    // Разрешения выдаются пропусками, поэтому список остался только запрещающим.
+    if (lt != ParkingPlateList.Block) return Results.BadRequest(new { message = "Only the block list is supported; use vehicle permits to allow entry." });
     var category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim();
     var existing = await db.ParkingPlates.FirstOrDefaultAsync(x => x.PlateNormalized == norm && x.ListType == lt, ct);
     if (existing != null)
     {
         existing.IsActive = true; existing.Note = req.Note; existing.Plate = req.Plate.Trim();
-        existing.Category = category; existing.ValidTo = req.ValidTo; existing.TimeLimitMinutes = req.TimeLimitMinutes;
-        existing.HolderId = req.HolderId;
+        existing.Category = category; existing.ValidTo = req.ValidTo;
         existing.UpdatedUtc = DateTime.UtcNow;
     }
-    else db.ParkingPlates.Add(new ParkingPlate { Plate = req.Plate.Trim(), PlateNormalized = norm, ListType = lt, Note = req.Note, Category = category, ValidTo = req.ValidTo, TimeLimitMinutes = req.TimeLimitMinutes, HolderId = req.HolderId });
+    else db.ParkingPlates.Add(new ParkingPlate { Plate = req.Plate.Trim(), PlateNormalized = norm, ListType = lt, Note = req.Note, Category = category, ValidTo = req.ValidTo });
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { ok = true });
 }).RequireAuthorization("Parking.Manage");
@@ -9670,12 +9668,17 @@ app.MapGet("/api/parking/vehicles", async (string? q, AppDbContext db, Cancellat
         query = query.Where(v => v.PlateNormalized.Contains(norm) || (v.Brand != null && v.Brand.ToLower().Contains(ql)) || (v.OwnerName != null && v.OwnerName.ToLower().Contains(ql)));
     }
     var list = await query.OrderBy(v => v.Plate).ToListAsync(ct);
+    var holderNames = await db.ParkingHolders.AsNoTracking().ToDictionaryAsync(h => h.Id, h => h.Name, ct);
     return Results.Ok(list.Select(v => new
     {
         id = v.Id, plate = v.Plate, brand = v.Brand, color = v.Color, notes = v.Notes, isActive = v.IsActive,
         country = v.Country, company = v.Company, vehicleType = v.VehicleType, photoUrl = v.PhotoUrl,
         ownerName = v.OwnerName,
         ownerPhone = v.OwnerPhone,
+        holderId = v.HolderId,
+        holderName = v.HolderId.HasValue && holderNames.TryGetValue(v.HolderId.Value, out var hn) ? hn : null,
+        timeLimitMinutes = v.TimeLimitMinutes,
+        category = v.Category,
         permitStatus = v.Permits.Count == 0 ? "none"
             : v.Permits.Any(p => PermitStatus(p, today) == "active") ? "active"
             : v.Permits.Any(p => PermitStatus(p, today) == "scheduled") ? "scheduled"
@@ -9704,6 +9707,9 @@ app.MapPost("/api/parking/vehicles", async (ParkingVehicleRequest req, AppDbCont
         PhotoUrl = string.IsNullOrWhiteSpace(req.PhotoUrl) ? null : req.PhotoUrl.Trim(),
         OwnerName = string.IsNullOrWhiteSpace(req.OwnerName) ? null : req.OwnerName.Trim(),
         OwnerPhone = string.IsNullOrWhiteSpace(req.OwnerPhone) ? null : req.OwnerPhone.Trim(),
+        HolderId = req.HolderId,
+        TimeLimitMinutes = req.TimeLimitMinutes is > 0 ? req.TimeLimitMinutes : null,
+        Category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim().ToLowerInvariant(),
         IsActive = req.IsActive,
         CreatedUtc = DateTime.UtcNow
     };
@@ -9732,6 +9738,9 @@ app.MapPut("/api/parking/vehicles/{id:guid}", async (Guid id, ParkingVehicleRequ
     entity.PhotoUrl = string.IsNullOrWhiteSpace(req.PhotoUrl) ? null : req.PhotoUrl.Trim();
     entity.OwnerName = string.IsNullOrWhiteSpace(req.OwnerName) ? null : req.OwnerName.Trim();
     entity.OwnerPhone = string.IsNullOrWhiteSpace(req.OwnerPhone) ? null : req.OwnerPhone.Trim();
+    entity.HolderId = req.HolderId;
+    entity.TimeLimitMinutes = req.TimeLimitMinutes is > 0 ? req.TimeLimitMinutes : null;
+    entity.Category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim().ToLowerInvariant();
     entity.IsActive = req.IsActive;
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
@@ -10556,9 +10565,9 @@ public sealed record ParkingZoneRequest(string Name, string? Code, string? Descr
 public sealed record ParkingFloorRequest(string? Name, int Level, bool IsActive, int SortOrder);
 public sealed record ParkingRowRequest(string Name, int SortOrder);
 public sealed record ParkingSpaceRequest(string Code, string Type, bool IsActive, int SortOrder, string? Notes);
-public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null, int? TimeLimitMinutes = null, Guid? HolderId = null);
+public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null);
 public sealed record ParkingHolderRequest(string Name, string? Phone, string? Unit, int SpacesLimit, bool IsActive = true, string? Notes = null);
-public sealed record ParkingVehicleRequest(string Plate, string? Brand, string? Color, string? Notes, bool IsActive = true, string? Country = null, string? Company = null, string? VehicleType = null, string? PhotoUrl = null, string? OwnerName = null, string? OwnerPhone = null);
+public sealed record ParkingVehicleRequest(string Plate, string? Brand, string? Color, string? Notes, bool IsActive = true, string? Country = null, string? Company = null, string? VehicleType = null, string? PhotoUrl = null, string? OwnerName = null, string? OwnerPhone = null, Guid? HolderId = null, int? TimeLimitMinutes = null, string? Category = null);
 public sealed record ParkingPermitRequest(Guid VehicleId, Guid? ZoneId, DateOnly ValidFrom, DateOnly? ValidTo, bool IsActive = true, string? Notes = null);
 public sealed record ParkingTariffRequest(string Name, string Kind, int FreeMinutes, decimal PricePerHour, decimal PricePerDay, decimal FixedPrice, decimal? MaxPerDay, decimal? NightPricePerHour, TimeSpan? NightFrom, TimeSpan? NightTo, decimal? WeekendPricePerHour, bool IsActive = true, bool IsDefault = false, int SortOrder = 0);
 public sealed record ParkingSubscriptionRequest(string Plate, string Name, DateOnly StartDate, DateOnly EndDate, int? EntriesLimit, bool Unlimited = false, bool IsActive = true, string? Notes = null);

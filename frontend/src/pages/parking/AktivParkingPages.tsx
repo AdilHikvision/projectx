@@ -10,10 +10,12 @@ import { useAuth } from '../../auth/AuthContext'
 /* ═══ Aktiv Parking — нативные страницы (жильцы, транспорт, пропуска, отчёты, главная).
    Работают только с бэкендом ProjectX (/api/parking/...), внешний сервер не нужен. ═══ */
 
-interface Vehicle { id: string; plate: string; brand: string | null; color: string | null; notes: string | null; isActive: boolean; ownerName: string | null; ownerPhone: string | null; permitStatus: string; country?: string | null; company?: string | null; vehicleType?: string | null; photoUrl?: string | null }
+interface Vehicle { id: string; plate: string; brand: string | null; color: string | null; notes: string | null; isActive: boolean; ownerName: string | null; ownerPhone: string | null; permitStatus: string; country?: string | null; company?: string | null; vehicleType?: string | null; photoUrl?: string | null; holderId?: string | null; holderName?: string | null; timeLimitMinutes?: number | null; category?: string | null }
 interface VehicleHistoryRow { enteredUtc: string; exitedUtc: string | null; durationMinutes: number | null; cost: number | null; paymentMethod: string | null; cameraName: string | null }
 interface Permit { id: string; vehicleId: string; plate: string; vehicleBrand: string | null; ownerName: string | null; zoneId: string | null; zoneName: string | null; validFrom: string; validTo: string | null; isActive: boolean; notes: string | null; status: string }
 interface ZoneRef { id: string; name: string }
+/** Владелец мест: квота ограничивает, сколько его машин стоит одновременно. */
+interface HolderRef { id: string; name: string; spacesLimit: number; isActive: boolean }
 
 function fmtDT(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -121,7 +123,7 @@ export function ParkingHomePage() {
 }
 
 /* ─── Транспорт (база автомобилей; владелец — текстовые поля) ─── */
-const emptyVehicleForm = { plate: '', brand: '', color: '', notes: '', isActive: true, country: '', company: '', vehicleType: '', photoUrl: '', ownerName: '', ownerPhone: '' }
+const emptyVehicleForm = { plate: '', brand: '', color: '', notes: '', isActive: true, country: '', company: '', vehicleType: '', photoUrl: '', ownerName: '', ownerPhone: '', holderId: '', timeLimitMinutes: '', category: '' }
 
 export function ParkingVehiclesPage() {
   const { t } = useTranslation()
@@ -136,12 +138,17 @@ export function ParkingVehiclesPage() {
   const [confirmDel, setConfirmDel] = useState<Vehicle | null>(null)
   const [histFor, setHistFor] = useState<Vehicle | null>(null)
   const [histRows, setHistRows] = useState<VehicleHistoryRow[]>([])
+  const [holders, setHolders] = useState<HolderRef[]>([])
 
   const load = useCallback(async () => {
     if (!token) return
     try {
-      const v = await apiRequest<Vehicle[]>('/api/parking/vehicles', { token })
-      setVehicles(v); setError(null)
+      // Владельцы нужны для выпадающего списка в карточке машины.
+      const [v, h] = await Promise.all([
+        apiRequest<Vehicle[]>('/api/parking/vehicles', { token }),
+        apiRequest<HolderRef[]>('/api/parking/holders', { token }).catch(() => [] as HolderRef[]),
+      ])
+      setVehicles(v); setHolders(h); setError(null)
     } catch (e) { setError(e instanceof Error ? e.message : 'error') }
   }, [token])
   useEffect(() => { void load() }, [load])
@@ -160,6 +167,9 @@ export function ParkingVehiclesPage() {
         country: vehForm.country.trim() || null, company: vehForm.company.trim() || null,
         vehicleType: vehForm.vehicleType || null, photoUrl: vehForm.photoUrl.trim() || null,
         ownerName: vehForm.ownerName.trim() || null, ownerPhone: vehForm.ownerPhone.trim() || null,
+        holderId: vehForm.holderId || null,
+        timeLimitMinutes: vehForm.timeLimitMinutes ? Math.max(1, parseInt(vehForm.timeLimitMinutes, 10) || 0) : null,
+        category: vehForm.category || null,
       })
       await apiRequest(editingId ? `/api/parking/vehicles/${editingId}` : '/api/parking/vehicles', { method: editingId ? 'PUT' : 'POST', token, body })
       setModalOpen(false); await load()
@@ -231,7 +241,7 @@ export function ParkingVehiclesPage() {
                         {t('parking.veh.history')}
                       </button>
                       <button type="button" className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline"
-                        onClick={() => { setVehForm({ plate: v.plate, brand: v.brand ?? '', color: v.color ?? '', notes: v.notes ?? '', isActive: v.isActive, country: v.country ?? '', company: v.company ?? '', vehicleType: v.vehicleType ?? '', photoUrl: v.photoUrl ?? '', ownerName: v.ownerName ?? '', ownerPhone: v.ownerPhone ?? '' }); setEditingId(v.id); setModalOpen(true) }}>
+                        onClick={() => { setVehForm({ plate: v.plate, brand: v.brand ?? '', color: v.color ?? '', notes: v.notes ?? '', isActive: v.isActive, country: v.country ?? '', company: v.company ?? '', vehicleType: v.vehicleType ?? '', photoUrl: v.photoUrl ?? '', ownerName: v.ownerName ?? '', ownerPhone: v.ownerPhone ?? '', holderId: v.holderId ?? '', timeLimitMinutes: v.timeLimitMinutes != null ? String(v.timeLimitMinutes) : '', category: v.category ?? '' }); setEditingId(v.id); setModalOpen(true) }}>
                         {t('common.edit')}
                       </button>
                       <button type="button" className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline"
@@ -271,6 +281,18 @@ export function ParkingVehiclesPage() {
             </div>
             <Input placeholder={t('parking.veh.company')} value={vehForm.company} onChange={(e) => setVehForm({ ...vehForm, company: e.target.value })} />
             <Input placeholder={t('parking.veh.photoUrl')} value={vehForm.photoUrl} onChange={(e) => setVehForm({ ...vehForm, photoUrl: e.target.value })} />
+            {/* Владелец мест ограничивает, сколько его машин стоит одновременно. */}
+            <div className="grid grid-cols-2 gap-3">
+              <select className={fieldCls} value={vehForm.holderId} onChange={(e) => setVehForm({ ...vehForm, holderId: e.target.value })} title={t('parking.holder.assignHint')}>
+                <option value="">{t('parking.holder.none')}</option>
+                {holders.filter((h) => h.isActive).map((h) => <option key={h.id} value={h.id}>{h.name} ({h.spacesLimit})</option>)}
+              </select>
+              <select className={fieldCls} value={vehForm.category} onChange={(e) => setVehForm({ ...vehForm, category: e.target.value })}>
+                <option value="">{t('parking.cfg.categoryAny')}</option>
+                {['employee', 'management', 'vip', 'service'].map((k) => <option key={k} value={k}>{t(`parking.cfg.category.${k}`)}</option>)}
+              </select>
+            </div>
+            <Input type="number" min={0} placeholder={t('parking.cfg.limitHint')} value={vehForm.timeLimitMinutes} onChange={(e) => setVehForm({ ...vehForm, timeLimitMinutes: e.target.value })} />
             <label className="flex items-center gap-2 text-sm font-bold text-text-dark cursor-pointer">
               <input type="checkbox" checked={vehForm.isActive} onChange={(e) => setVehForm({ ...vehForm, isActive: e.target.checked })} className="w-4 h-4 accent-primary" />
               {t('parking.ap.active')}

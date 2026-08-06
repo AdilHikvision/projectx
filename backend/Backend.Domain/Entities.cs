@@ -1148,19 +1148,14 @@ public sealed class ParkingPlate : BaseEntity
     public ParkingPlateList ListType { get; set; }
     public string? Note { get; set; }
     public bool IsActive { get; set; } = true;
-    /// <summary>Белый список: категория (employee|management|vip|service). Чёрный: причина (unpaid|violator|stolen|banned).</summary>
+    /// <summary>Причина блокировки: unpaid|violator|stolen|banned.</summary>
     public string? Category { get; set; }
-    /// <summary>Срок действия пропуска (белый список); null — бессрочно.</summary>
+    /// <summary>Дата, после которой блокировка снимается; null — бессрочно.</summary>
     public DateOnly? ValidTo { get; set; }
-    /// <summary>Ограничение времени стоянки в минутах (белый список); null — без ограничения.</summary>
-    public int? TimeLimitMinutes { get; set; }
-    /// <summary>Владелец мест, за которым закреплён номер (белый список); null — номер сам по себе.</summary>
-    public Guid? HolderId { get; set; }
-    public ParkingHolder? Holder { get; set; }
 }
 
 /// <summary>
-/// Владелец парковочных мест: за ним закреплено N мест и любое число автомобилей.
+/// Владелец парковочных мест: за ним закреплено N мест и любое число автомобилей из базы.
 /// Машины пускают, пока заняты не все его места, — так семья или компания с двумя
 /// местами и пятью машинами не поставит внутрь больше двух.
 /// </summary>
@@ -1175,7 +1170,7 @@ public sealed class ParkingHolder : BaseEntity
     public bool IsActive { get; set; } = true;
     public string? Notes { get; set; }
 
-    public ICollection<ParkingPlate> Plates { get; set; } = new List<ParkingPlate>();
+    public ICollection<ParkingVehicle> Vehicles { get; set; } = new List<ParkingVehicle>();
 }
 
 /// <summary>Сессия парковки (машина внутри) — занятость, история въездов/выездов, оплата.</summary>
@@ -1307,6 +1302,13 @@ public sealed class ParkingVehicle : BaseEntity
     public string? VehicleType { get; set; }
     /// <summary>Фото автомобиля (URL/путь).</summary>
     public string? PhotoUrl { get; set; }
+    /// <summary>Владелец мест: его квота ограничивает, сколько его машин стоит одновременно.</summary>
+    public Guid? HolderId { get; set; }
+    public ParkingHolder? Holder { get; set; }
+    /// <summary>Ограничение времени стоянки в минутах; null — без ограничения.</summary>
+    public int? TimeLimitMinutes { get; set; }
+    /// <summary>Категория: employee|management|vip|service — для отчётов и отображения.</summary>
+    public string? Category { get; set; }
     public ICollection<ParkingPermit> Permits { get; set; } = new List<ParkingPermit>();
 }
 

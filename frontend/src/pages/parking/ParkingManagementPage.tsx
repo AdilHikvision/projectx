@@ -114,17 +114,13 @@ export function ParkingManagementPage() {
     const parkingMode: 'Paid' | 'Free' = parkingPaid ? 'Paid' : 'Free'
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
-    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null; timeLimitMinutes?: number | null; holderId?: string | null; holderName?: string | null }[]>([])
+    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null }[]>([])
     // Владельцы мест: у одного N мест и любое число машин.
     const [holders, setHolders] = useState<Holder[]>([])
-    const [newPlateHolder, setNewPlateHolder] = useState('')
     const [holderForm, setHolderForm] = useState(emptyHolder)
     const [editingHolderId, setEditingHolderId] = useState<string | null>(null)
     const [newPlate, setNewPlate] = useState('')
-    const [newPlateList, setNewPlateList] = useState<'Allow' | 'Block'>('Allow')
     const [newPlateCategory, setNewPlateCategory] = useState('')
-    const [newPlateValidTo, setNewPlateValidTo] = useState('')
-    const [newPlateTimeLimit, setNewPlateTimeLimit] = useState('')
     // Платный режим: сколько минут даётся на выезд после оплаты (parking.exitGraceMinutes).
     const [exitGraceMinutes, setExitGraceMinutes] = useState('15')
     const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
@@ -209,14 +205,11 @@ export function ParkingManagementPage() {
                 method: 'POST', token,
                 body: JSON.stringify({
                     plate: p,
-                    listType: newPlateList,
+                    listType: 'Block',
                     category: newPlateCategory || null,
-                    validTo: newPlateList === 'Allow' && newPlateValidTo ? newPlateValidTo : null,
-                    timeLimitMinutes: newPlateList === 'Allow' && newPlateTimeLimit ? Math.max(1, parseInt(newPlateTimeLimit, 10) || 0) : null,
-                    holderId: newPlateList === 'Allow' && newPlateHolder ? newPlateHolder : null,
                 }),
             })
-            setNewPlate(''); setNewPlateCategory(''); setNewPlateValidTo(''); setNewPlateTimeLimit(''); setNewPlateHolder('')
+            setNewPlate(''); setNewPlateCategory('')
             await reloadHolders()
             await reloadPlates()
         }
@@ -395,76 +388,29 @@ export function ParkingManagementPage() {
                         )}
 
                         <div>
-                            <div className="mb-2 text-sm font-bold text-text-dark">{t('parking.cfg.plateLists')}</div>
+                            {/* Разрешения выдаются пропусками на машины из базы, поэтому список остался только запрещающим. */}
+                            <div className="mb-2 text-sm font-bold text-text-dark">{t('parking.cfg.blockListTitle')}</div>
                             <div className="mb-3 flex flex-wrap items-center gap-2">
                                 <Input value={newPlate} onChange={(e) => setNewPlate(e.target.value)} placeholder="10-AA-100" />
-                                <select value={newPlateList} onChange={(e) => { setNewPlateList(e.target.value as 'Allow' | 'Block'); setNewPlateCategory('') }}
-                                    className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
-                                    <option value="Allow">{t('parking.cfg.allowList')}</option>
-                                    <option value="Block">{t('parking.cfg.blockList')}</option>
-                                </select>
                                 <select value={newPlateCategory} onChange={(e) => setNewPlateCategory(e.target.value)}
                                     className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
-                                    {newPlateList === 'Allow' ? (
-                                        <>
-                                            <option value="">{t('parking.cfg.categoryAny')}</option>
-                                            <option value="employee">{t('parking.cfg.category.employee')}</option>
-                                            <option value="management">{t('parking.cfg.category.management')}</option>
-                                            <option value="vip">{t('parking.cfg.category.vip')}</option>
-                                            <option value="service">{t('parking.cfg.category.service')}</option>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <option value="">{t('parking.cfg.reasonAny')}</option>
-                                            <option value="unpaid">{t('parking.cfg.reason.unpaid')}</option>
-                                            <option value="violator">{t('parking.cfg.reason.violator')}</option>
-                                            <option value="stolen">{t('parking.cfg.reason.stolen')}</option>
-                                            <option value="banned">{t('parking.cfg.reason.banned')}</option>
-                                        </>
-                                    )}
+                                    <option value="">{t('parking.cfg.reasonAny')}</option>
+                                    <option value="unpaid">{t('parking.cfg.reason.unpaid')}</option>
+                                    <option value="violator">{t('parking.cfg.reason.violator')}</option>
+                                    <option value="stolen">{t('parking.cfg.reason.stolen')}</option>
+                                    <option value="banned">{t('parking.cfg.reason.banned')}</option>
                                 </select>
-                                {newPlateList === 'Allow' && (
-                                    <>
-                                        <input type="date" title={t('parking.cfg.validToHint')}
-                                            className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
-                                            value={newPlateValidTo} onChange={(e) => setNewPlateValidTo(e.target.value)} />
-                                        <input type="number" min={0} placeholder={t('parking.cfg.limitShort')} title={t('parking.cfg.limitHint')}
-                                            className="w-24 rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
-                                            value={newPlateTimeLimit} onChange={(e) => setNewPlateTimeLimit(e.target.value)} />
-                                        {/* Привязка номера к владельцу: его квота мест ограничит въезд остальных машин. */}
-                                        <select value={newPlateHolder} onChange={(e) => setNewPlateHolder(e.target.value)}
-                                            title={t('parking.holder.assignHint')}
-                                            className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
-                                            <option value="">{t('parking.holder.none')}</option>
-                                            {holders.filter((h) => h.isActive).map((h) => (
-                                                <option key={h.id} value={h.id}>{h.name} ({h.spacesLimit})</option>
-                                            ))}
-                                        </select>
-                                    </>
-                                )}
                                 <Button icon="add" onClick={addPlate}>{t('common.add')}</Button>
                             </div>
-                            <div className="grid gap-4 sm:grid-cols-2">
-                                {(['Allow', 'Block'] as const).map((lt) => (
-                                    <div key={lt} className="rounded-xl border border-border-base p-3">
-                                        <div className={`mb-2 text-xs font-bold uppercase tracking-wider ${lt === 'Allow' ? 'text-success-text' : 'text-error-text'}`}>
-                                            {t(lt === 'Allow' ? 'parking.cfg.allowListTitle' : 'parking.cfg.blockListTitle')}
-                                        </div>
-                                        <div className="space-y-1">
-                                            {plates.filter((p) => p.listType === lt).length === 0 && <div className="text-xs text-text-light">{t('common.noData')}</div>}
-                                            {plates.filter((p) => p.listType === lt).map((p) => (
-                                                <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-75 px-3 py-1.5">
-                                                    <span className="font-mono text-sm font-bold text-text-dark shrink-0">{p.plate}</span>
-                                                    <span className="flex-1 truncate text-right text-[10px] text-text-muted">
-                                                        {p.category ? t(`parking.cfg.${lt === 'Allow' ? 'category' : 'reason'}.${p.category}`, { defaultValue: p.category }) : ''}
-                                                        {p.validTo ? ` · ${p.validTo}` : ''}
-                                                        {p.timeLimitMinutes ? ` · ${p.timeLimitMinutes} ${t('parking.cfg.min')}` : ''}
-                                                        {p.holderName ? ` · ${p.holderName}` : ''}
-                                                    </span>
-                                                    <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text shrink-0">close</button>
-                                                </div>
-                                            ))}
-                                        </div>
+                            <div className="space-y-1">
+                                {plates.length === 0 && <div className="text-xs text-text-light">{t('common.noData')}</div>}
+                                {plates.map((p) => (
+                                    <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-75 px-3 py-1.5">
+                                        <span className="font-mono text-sm font-bold text-text-dark shrink-0">{p.plate}</span>
+                                        <span className="flex-1 truncate text-right text-[10px] text-text-muted">
+                                            {p.category ? t(`parking.cfg.reason.${p.category}`, { defaultValue: p.category }) : ''}
+                                        </span>
+                                        <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text shrink-0">close</button>
                                     </div>
                                 ))}
                             </div>

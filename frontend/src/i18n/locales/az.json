@@ -384,10 +384,10 @@
       "reason": {
         "blacklist": "nömrə qara siyahıdadır",
         "full": "boş yer yoxdur",
-        "not-in-allowlist": "nömrə ağ siyahıda deyil",
-        "allowlist-expired": "ağ siyahıdakı müddət bitib",
         "empty-plate": "nömrə göstərilməyib",
-        "holder-spaces-busy": "sahibin bütün yerləri doludur"
+        "holder-spaces-busy": "sahibin bütün yerləri doludur",
+        "no-permit": "qüvvədə olan buraxılış yoxdur",
+        "not-in-vehicles": "maşın bazada yoxdur"
       },
       "debt": "Borc",
       "overstay": "Dayanma limiti aşılıb ({{limit}} dəq)",
@@ -399,21 +399,15 @@
     "modeTitle": "İş rejimi",
     "cfg": {
       "freeSubMode": "Pulsuz alt-rejim",
-      "subModeList": "Siyahı",
+      "subModeList": "Buraxılışlar üzrə",
       "subModeCapacity": "Tutum",
-      "subModeListHint": "«Siyahı» — yalnız ağ siyahıdakı nömrələr keçir",
+      "subModeListHint": "«Buraxılışlar üzrə» — yalnız qüvvədə olan buraxılışı olan maşınlar keçir",
       "subModeCapacityHint": "«Tutum» — boş yer olduqca bütün nömrələr keçir",
       "commonSpaces": "Ümumi yerlər (boş / cəmi)",
       "vipSpaces": "VIP yerlər (boş / cəmi)",
-      "plateLists": "Nömrə siyahıları (ağ / qara)",
-      "allowList": "Ağ siyahı",
       "blockList": "Qara siyahı",
-      "allowListTitle": "Ağ siyahı — keçir",
       "blockListTitle": "Qara siyahı — bloklanır",
-      "categoryAny": "Kateqoriya —",
       "reasonAny": "Səbəb —",
-      "validToHint": "Buraxılışın bitmə tarixi",
-      "limitShort": "Limit dəq",
       "limitHint": "Dayanma limiti (dəq)",
       "min": "dəq",
       "category": {
@@ -429,7 +423,8 @@
         "banned": "Qadağan edilib"
       },
       "exitGrace": "Ödənişdən sonra çıxış üçün dəqiqə (0 = limitsiz)",
-      "exitGraceHint": "Ödənişdən sonra sürücüyə şlaqbauma çatmaq üçün bu qədər vaxt verilir. Sonra artıq vaxta görə əlavə ödəniş tələb olunur."
+      "exitGraceHint": "Ödənişdən sonra sürücüyə şlaqbauma çatmaq üçün bu qədər vaxt verilir. Sonra artıq vaxta görə əlavə ödəniş tələb olunur.",
+      "categoryAny": "Kateqoriya —"
     },
     "holder": {
       "title": "Yer sahibləri",

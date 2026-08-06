@@ -384,10 +384,10 @@
       "reason": {
         "blacklist": "plate is blacklisted",
         "full": "no free spaces",
-        "not-in-allowlist": "plate is not in the allowlist",
-        "allowlist-expired": "allowlist entry expired",
         "empty-plate": "plate is empty",
-        "holder-spaces-busy": "all holder spaces are taken"
+        "holder-spaces-busy": "all holder spaces are taken",
+        "no-permit": "no valid permit",
+        "not-in-vehicles": "vehicle is not in the database"
       },
       "debt": "Debt",
       "overstay": "Time limit exceeded ({{limit}} min)",
@@ -399,21 +399,15 @@
     "modeTitle": "Operating mode",
     "cfg": {
       "freeSubMode": "Free parking sub-mode",
-      "subModeList": "By list",
+      "subModeList": "By permits",
       "subModeCapacity": "By capacity",
-      "subModeListHint": "“By list” — only plates on the allowlist get in",
+      "subModeListHint": "“By permits” — only vehicles with a valid permit get in",
       "subModeCapacityHint": "“By capacity” — everyone gets in while spaces last",
       "commonSpaces": "Regular spaces (free / total)",
       "vipSpaces": "VIP spaces (free / total)",
-      "plateLists": "Plate lists (allow / block)",
-      "allowList": "Allowlist",
       "blockList": "Blocklist",
-      "allowListTitle": "Allowlist — let in",
       "blockListTitle": "Blocklist — refuse",
-      "categoryAny": "Category —",
       "reasonAny": "Reason —",
-      "validToHint": "Permit expiry date",
-      "limitShort": "Limit, min",
       "limitHint": "Parking limit (min)",
       "min": "min",
       "category": {
@@ -429,7 +423,8 @@
         "banned": "Banned"
       },
       "exitGrace": "Minutes to exit after payment (0 = unlimited)",
-      "exitGraceHint": "After paying, the driver gets this much time to reach the barrier. Later on a surcharge for the extra time is due."
+      "exitGraceHint": "After paying, the driver gets this much time to reach the barrier. Later on a surcharge for the extra time is due.",
+      "categoryAny": "Category —"
     },
     "holder": {
       "title": "Space holders",
