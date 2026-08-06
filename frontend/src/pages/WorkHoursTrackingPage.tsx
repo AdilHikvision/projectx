@@ -48,7 +48,7 @@ function mhMonthLabel(ym: string, lang: string): string {
   } catch { return ym }
 }
 
-function MonthlyHoursTable({ month, employeeNo }: { month: string; employeeNo?: string | null }) {
+function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string; employeeId?: string; departmentId?: string }) {
   const { t, i18n } = useTranslation()
   const { token } = useAuth()
   const mhMonth = month
@@ -79,7 +79,11 @@ function MonthlyHoursTable({ month, employeeNo }: { month: string; employeeNo?: 
     let cancelled = false
     setMhLoading(true)
     setMhError('')
-    apiRequest<MhApiResponse>(`/api/reports/work-hours/monthly?month=${mhMonth}`, { token })
+    // Фильтр уходит на сервер: отдел разворачивается в поддерево, как в других отчётах.
+    const params = new URLSearchParams({ month: mhMonth })
+    if (employeeId) params.set('employeeId', employeeId)
+    else if (departmentId) params.set('departmentId', departmentId)
+    apiRequest<MhApiResponse>(`/api/reports/work-hours/monthly?${params}`, { token })
       .then((res) => {
         if (cancelled) return
         setMhData(Array.isArray(res?.employees) ? res.employees : [])
@@ -91,10 +95,10 @@ function MonthlyHoursTable({ month, employeeNo }: { month: string; employeeNo?: 
       })
       .finally(() => { if (!cancelled) setMhLoading(false) })
     return () => { cancelled = true }
-  }, [mhMonth, token, t])
+  }, [mhMonth, token, t, employeeId, departmentId])
 
   const nDays = mhDaysInMonth(mhMonth)
-  const rows = mhData.filter((e) => !employeeNo || e.no === employeeNo)
+  const rows = mhData
   const sumHours = rows.reduce((s, e) => s + (parseInt(e.totalHours, 10) || 0), 0)
   const dayNums = Array.from({ length: nDays }, (_, k) => k + 1)
   // Defaults + server siyahısı: serverdə çatışmayan açar (məs. absent) default-dan gəlir, boş xana qalmır.
@@ -553,6 +557,14 @@ export function WorkHoursTrackingPage() {
   // Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела.
   const [deptTree, setDeptTree] = useState<WhDept[]>([])
   const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
+  /** Параметры выгрузок табеля: месяц плюс тот же фильтр, что и на экране. */
+  const tabelParams = () => {
+    const params = new URLSearchParams({ month: mhMonth })
+    if (filterEmployee) params.set('employeeId', filterEmployee)
+    else if (filterDepartment) params.set('departmentId', filterDepartment)
+    return params.toString()
+  }
+
   const [empPickerOpen, setEmpPickerOpen] = useState(false)
   const [pickerDeptId, setPickerDeptId] = useState<string | null>(null)
   const [pickerDeptSearch, setPickerDeptSearch] = useState('')
@@ -636,7 +648,11 @@ export function WorkHoursTrackingPage() {
         // Табель — отдельный эндпоинт: месяц + получатель.
         await apiRequest('/api/reports/work-hours/monthly/send-email', {
           method: 'POST', token,
-          body: JSON.stringify({ to: emailReportTo.trim(), month: mhMonth }),
+          body: JSON.stringify({
+            to: emailReportTo.trim(), month: mhMonth,
+            employeeId: filterEmployee || null,
+            departmentId: filterEmployee ? null : (filterDepartment || null),
+          }),
         })
         alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
         setEmailReportModal(false)
@@ -1325,11 +1341,11 @@ useEffect(() => {
                   {t('workHours.sendReport')}
                 </Button>
                 <Button type="button" icon="table_view" variant="outline" disabled={!!exporting}
-                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/excel?month=${mhMonth}`, 'excel')}>
+                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/excel?${tabelParams()}`, 'excel')}>
                   {exporting === 'excel' ? t('workHours.exporting') : t('workHours.excel')}
                 </Button>
                 <Button type="button" icon="picture_as_pdf" variant="outline" disabled={!!exporting}
-                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/pdf?month=${mhMonth}`, 'pdf')}>
+                  onClick={() => downloadReport(`/api/reports/work-hours/monthly/pdf?${tabelParams()}`, 'pdf')}>
                   {exporting === 'pdf' ? t('workHours.exporting') : t('workHours.pdf')}
                 </Button>
               </div>
@@ -1600,7 +1616,7 @@ useEffect(() => {
           )}
 
           {/* Daily Report — one day, only employees with assigned schedule */}
-          {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} employeeNo={employees.find((e) => e.id === filterEmployee)?.employeeNo ?? null} />}
+          {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} employeeId={filterEmployee || undefined} departmentId={filterDepartment || undefined} />}
 
           {tab === 'daily' && (() => {
             const filteredDaily = daily.filter(d => {

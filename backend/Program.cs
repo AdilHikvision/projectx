@@ -4167,7 +4167,9 @@ static async Task<Dictionary<string, TabelCritStyle>> LoadTabelCritAsync(AppDbCo
     return map;
 }
 
-static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int mo, AppDbContext dbContext, CancellationToken cancellationToken)
+// Фильтры те же, что в дневном и периодическом отчётах: конкретный сотрудник либо
+// отдел вместе с подотделами (deptScope). null в обоих случаях — все сотрудники.
+static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int mo, AppDbContext dbContext, CancellationToken cancellationToken, Guid? employeeId = null, HashSet<Guid>? deptScope = null)
 {
     var fromDate = new DateOnly(y, mo, 1);
     var toDate = fromDate.AddMonths(1).AddDays(-1);
@@ -4180,6 +4182,8 @@ static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int m
         .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
+        .Where(e => employeeId == null || e.Id == employeeId)
+        .Where(e => deptScope == null || (e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value)))
         .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
         .ToListAsync(cancellationToken);
 
@@ -4274,15 +4278,14 @@ static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int m
     return rows;
 }
 
-app.MapGet("/api/reports/work-hours/monthly", async (string? month, string? department, string? q, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapGet("/api/reports/work-hours/monthly", async (string? month, Guid? employeeId, Guid? departmentId, string? q, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var (y, mo) = ParseTabelMonth(month);
-    var tabelRows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, cancellationToken);
+    // Отдел разворачиваем в поддерево — как в остальных отчётах.
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    var tabelRows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, cancellationToken, employeeId, deptScope);
 
-    // Optional server-side filters (frontend filters client-side; kept for API completeness).
     IEnumerable<MonthlyTabelRow> filtered = tabelRows;
-    if (!string.IsNullOrWhiteSpace(department))
-        filtered = filtered.Where(r => string.Equals(r.Department, department, StringComparison.OrdinalIgnoreCase));
     if (!string.IsNullOrWhiteSpace(q))
     {
         var ql = q.Trim().ToLowerInvariant();
@@ -4321,19 +4324,21 @@ app.MapGet("/api/reports/work-hours/monthly", async (string? month, string? depa
 }).RequireAuthorization("Attendance.View");
 
 // ── Tabel export: Excel / PDF / e-mail ───────────────────────────────────────
-app.MapGet("/api/reports/work-hours/monthly/excel", async (string? month, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/monthly/excel", async (string? month, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
 {
     var (y, mo) = ParseTabelMonth(month);
-    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, ct);
+    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, employeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var bytes = ExcelReportBuilder.BuildMonthlyTabel(rows, y, mo, crit);
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"tabel-{y:D4}-{mo:D2}.xlsx");
 }).RequireAuthorization("Reports.View");
 
-app.MapGet("/api/reports/work-hours/monthly/pdf", async (string? month, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/monthly/pdf", async (string? month, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
 {
     var (y, mo) = ParseTabelMonth(month);
-    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, ct);
+    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, employeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var bytes = PdfReportBuilder.BuildMonthlyTabel(rows, y, mo, crit);
     return Results.File(bytes, "application/pdf", $"tabel-{y:D4}-{mo:D2}.pdf");
@@ -4349,7 +4354,8 @@ app.MapPost("/api/reports/work-hours/monthly/send-email", async (
         return Results.BadRequest(new { message = "Recipient email is required." });
 
     var (y, mo) = ParseTabelMonth(request.Month);
-    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct);
+    var deptScope = await BuildDepartmentScopeAsync(request.DepartmentId, dbContext, ct);
+    var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, request.EmployeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var companyName = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", ct))?.Value ?? "ProjectX";
     int daysInMonth = DateTime.DaysInMonth(y, mo);
@@ -10447,7 +10453,7 @@ public sealed record DepartmentTreeItem(Guid Id, string Name, string? Descriptio
 public sealed record CreatePositionRequest(string Name, string? Description);
 public sealed record UpdatePositionRequest(string Name, string? Description, int? SortOrder);
 public sealed record PositionResponse(Guid Id, string Name, string? Description, int SortOrder, int EmployeesCount);
-public sealed record SendMonthlyTabelRequest(string? Month, string To);
+public sealed record SendMonthlyTabelRequest(string? Month, string To, Guid? EmployeeId = null, Guid? DepartmentId = null);
 public sealed record AddAccessLevelDoorRequest(Guid DeviceId, int DoorIndex);
 public sealed record DoorControlRequest(string? Action, int? CallNumber = null, string? CallElevatorType = null);
 public sealed record DeviceTimeSyncRequest(string TimeZone);
