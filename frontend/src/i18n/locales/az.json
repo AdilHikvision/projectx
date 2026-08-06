@@ -125,8 +125,6 @@
       "spaceCount_other": "{{count}} yer",
       "fields": {
         "name": "Ad",
-        "code": "Kod",
-        "description": "Təsvir",
         "active": "Aktiv"
       }
     },
@@ -138,7 +136,6 @@
       "selectZone": "Mərtəbələri görmək üçün zona seçin",
       "level": "Səviyyə",
       "fields": {
-        "name": "Ad",
         "level": "Səviyyə",
         "active": "Aktiv"
       }
@@ -154,7 +151,6 @@
       }
     },
     "spaces": {
-      "new": "Yer əlavə et",
       "edit": "Yeri redaktə et",
       "empty": "Yer yoxdur",
       "bulk": "Kütləvi",

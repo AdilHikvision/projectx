@@ -8888,11 +8888,11 @@ app.MapGet("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, AppDbC
 app.MapPost("/api/parking/zones/{zoneId:guid}/floors", async (Guid zoneId, ParkingFloorRequest req, AppDbContext db, CancellationToken ct) =>
 {
     if (!await db.ParkingZones.AnyAsync(z => z.Id == zoneId, ct)) return Results.NotFound();
-    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
     var f = new ParkingFloor
     {
         ZoneId = zoneId,
-        Name = req.Name.Trim(),
+        // Этаж задаётся уровнем; названия в интерфейсе нет, поэтому подставляем номер.
+        Name = string.IsNullOrWhiteSpace(req.Name) ? req.Level.ToString() : req.Name.Trim(),
         Level = req.Level,
         IsActive = req.IsActive,
         SortOrder = req.SortOrder,
@@ -8906,8 +8906,7 @@ app.MapPut("/api/parking/floors/{id:guid}", async (Guid id, ParkingFloorRequest 
 {
     var f = await db.ParkingFloors.FirstOrDefaultAsync(x => x.Id == id, ct);
     if (f is null) return Results.NotFound();
-    if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest(new { message = "Name is required." });
-    f.Name = req.Name.Trim();
+    f.Name = string.IsNullOrWhiteSpace(req.Name) ? req.Level.ToString() : req.Name.Trim();
     f.Level = req.Level;
     f.IsActive = req.IsActive;
     f.SortOrder = req.SortOrder;
@@ -10554,7 +10553,7 @@ public sealed record GymPaymentRequest(Guid? MembershipId, decimal Amount, strin
 
 // ─── Parking Management ───
 public sealed record ParkingZoneRequest(string Name, string? Code, string? Description, bool IsActive, int SortOrder);
-public sealed record ParkingFloorRequest(string Name, int Level, bool IsActive, int SortOrder);
+public sealed record ParkingFloorRequest(string? Name, int Level, bool IsActive, int SortOrder);
 public sealed record ParkingRowRequest(string Name, int SortOrder);
 public sealed record ParkingSpaceRequest(string Code, string Type, bool IsActive, int SortOrder, string? Notes);
 public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null, int? TimeLimitMinutes = null, Guid? HolderId = null);

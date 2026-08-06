@@ -269,7 +269,7 @@ export function ParkingManagementPage() {
     const [zoneModal, setZoneModal] = useState<{ mode: 'create' | 'edit'; data: Zone | null } | null>(null)
     const [floorModal, setFloorModal] = useState<{ mode: 'create' | 'edit'; data: Floor | null } | null>(null)
     const [rowModal, setRowModal] = useState<{ mode: 'create' | 'edit'; data: Row | null } | null>(null)
-    const [spaceModal, setSpaceModal] = useState<{ mode: 'create' | 'edit'; rowId: string; data: Space | null } | null>(null)
+    const [spaceModal, setSpaceModal] = useState<{ rowId: string; data: Space | null } | null>(null)
     const [bulkRowId, setBulkRowId] = useState<string | null>(null)
     const [confirm, setConfirm] = useState<{ label: string; onConfirm: () => Promise<void> } | null>(null)
 
@@ -571,7 +571,7 @@ export function ParkingManagementPage() {
                                     <Hint text={t('parking.floors.empty')} />
                                 ) : floors.map((f) => (
                                     <ListRow key={f.id} active={f.id === selectedFloorId} onClick={() => setSelectedFloorId(f.id)}
-                                        title={f.name} subtitle={`${t('parking.floors.level')} ${f.level} · ${t('parking.zones.spaceCount', { count: f.spaceCount })}`}
+                                        title={`${t('parking.floors.level')} ${f.level}`} subtitle={t('parking.zones.spaceCount', { count: f.spaceCount })}
                                         inactive={!f.isActive}
                                         onEdit={() => setFloorModal({ mode: 'edit', data: f })}
                                         onDelete={() => del(f.name, `/api/parking/floors/${f.id}`)} />
@@ -601,7 +601,7 @@ export function ParkingManagementPage() {
                                                         <span className="text-[10px] font-bold text-text-light">· {t('parking.zones.spaceCount', { count: spacesByRow[row.id]?.length ?? 0 })}</span>
                                                     </div>
                                                     <div className="flex shrink-0 items-center gap-1">
-                                                        <IconButton icon="add" title={t('parking.spaces.new')} onClick={() => setSpaceModal({ mode: 'create', rowId: row.id, data: null })} />
+                                                        {/* Места заводятся только пачкой: по одному добавлять неудобно и незачем. */}
                                                         <IconButton icon="grid_on" title={t('parking.spaces.bulk')} onClick={() => setBulkRowId(row.id)} />
                                                         <IconButton icon="edit" title={t('common.edit')} onClick={() => setRowModal({ mode: 'edit', data: row })} />
                                                         <IconButton icon="delete" title={t('common.delete')} danger onClick={() => del(row.name, `/api/parking/rows/${row.id}`)} />
@@ -610,7 +610,7 @@ export function ParkingManagementPage() {
                                                 <div className="mt-3 flex flex-wrap gap-2">
                                                     {(spacesByRow[row.id] ?? []).map((s) => (
                                                         <button key={s.id} type="button" title={t(`parking.types.${s.type}`)}
-                                                            onClick={() => setSpaceModal({ mode: 'edit', rowId: row.id, data: s })}
+                                                            onClick={() => setSpaceModal({ rowId: row.id, data: s })}
                                                             className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-transform hover:scale-105 ${TYPE_STYLE[s.type].chip} ${s.isActive ? '' : 'opacity-50'}`}>
                                                             <span className="material-symbols-outlined text-[15px]">{TYPE_STYLE[s.type].icon}</span>
                                                             {s.code}
@@ -692,8 +692,7 @@ function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
                         <div key={f.id} className="ap-panel rounded-3xl border border-border-base bg-surface p-6 shadow-sm transition-shadow">
                             <div className="mb-4 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-text-light">layers</span>
-                                <h3 className="text-base font-black text-text-dark">{f.name}</h3>
-                                <span className="text-[10px] font-bold uppercase tracking-widest text-text-light">{t('parking.floors.level')} {f.level}</span>
+                                <h3 className="text-base font-black text-text-dark">{t('parking.floors.level')} {f.level}</h3>
                             </div>
                             {f.rows.length === 0 ? (
                                 <p className="text-xs text-text-light">{t('parking.rows.empty')}</p>
@@ -730,7 +729,8 @@ function ZoneModal({ modal, token, onClose, onSaved }: {
 }) {
     const { t } = useTranslation()
     const d = modal.data
-    const [form, setForm] = useState({ name: d?.name ?? '', code: d?.code ?? '', description: d?.description ?? '', isActive: d?.isActive ?? true, sortOrder: d?.sortOrder ?? 0 })
+    // Код и описание зоны не спрашиваем: на практике хватает названия.
+    const [form, setForm] = useState({ name: d?.name ?? '', isActive: d?.isActive ?? true, sortOrder: d?.sortOrder ?? 0 })
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
@@ -738,7 +738,7 @@ function ZoneModal({ modal, token, onClose, onSaved }: {
         if (!token || !form.name.trim()) return
         setSaving(true); setError(null)
         try {
-            const body = JSON.stringify({ name: form.name.trim(), code: form.code.trim() || null, description: form.description.trim() || null, isActive: form.isActive, sortOrder: form.sortOrder })
+            const body = JSON.stringify({ name: form.name.trim(), code: d?.code ?? null, description: d?.description ?? null, isActive: form.isActive, sortOrder: form.sortOrder })
             if (modal.mode === 'create') await apiRequest('/api/parking/zones', { method: 'POST', token, body })
             else if (d) await apiRequest(`/api/parking/zones/${d.id}`, { method: 'PUT', token, body })
             onSaved()
@@ -749,11 +749,8 @@ function ZoneModal({ modal, token, onClose, onSaved }: {
     return (
         <Modal isOpen onClose={onClose} title={modal.mode === 'create' ? t('parking.zones.new') : t('parking.zones.edit')}>
             <div className="space-y-4 pt-2">
-                <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-2"><Field label={t('parking.zones.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field></div>
-                    <Field label={t('parking.zones.fields.code')}><Input value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} maxLength={32} /></Field>
-                </div>
-                <Field label={t('parking.zones.fields.description')}><Input value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} /></Field>                <Check label={t('parking.zones.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
+                <Field label={t('parking.zones.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
+                <Check label={t('parking.zones.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
                 {error && <p className="text-xs font-medium text-error-text">{error}</p>}
                 <ModalActions saving={saving} disabled={!form.name.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
             </div>
@@ -766,15 +763,16 @@ function FloorModal({ modal, zoneId, token, onClose, onSaved }: {
 }) {
     const { t } = useTranslation()
     const d = modal.data
-    const [form, setForm] = useState({ name: d?.name ?? '', level: d?.level ?? 0, isActive: d?.isActive ?? true, sortOrder: d?.sortOrder ?? 0 })
+    // Этаж определяется уровнем; название сервер проставит сам (номер уровня).
+    const [form, setForm] = useState({ level: d?.level ?? 0, isActive: d?.isActive ?? true, sortOrder: d?.sortOrder ?? 0 })
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
     const save = async () => {
-        if (!token || !form.name.trim()) return
+        if (!token) return
         setSaving(true); setError(null)
         try {
-            const body = JSON.stringify({ name: form.name.trim(), level: form.level, isActive: form.isActive, sortOrder: form.sortOrder })
+            const body = JSON.stringify({ name: null, level: form.level, isActive: form.isActive, sortOrder: form.sortOrder })
             if (modal.mode === 'create') await apiRequest(`/api/parking/zones/${zoneId}/floors`, { method: 'POST', token, body })
             else if (d) await apiRequest(`/api/parking/floors/${d.id}`, { method: 'PUT', token, body })
             onSaved()
@@ -785,11 +783,10 @@ function FloorModal({ modal, zoneId, token, onClose, onSaved }: {
     return (
         <Modal isOpen onClose={onClose} title={modal.mode === 'create' ? t('parking.floors.new') : t('parking.floors.edit')}>
             <div className="space-y-4 pt-2">
-                <Field label={t('parking.floors.fields.name')}><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></Field>
                 <Field label={t('parking.floors.fields.level')}><Input type="number" value={String(form.level)} onChange={(e) => setForm((p) => ({ ...p, level: parseInt(e.target.value, 10) || 0 }))} /></Field>
                 <Check label={t('parking.floors.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
                 {error && <p className="text-xs font-medium text-error-text">{error}</p>}
-                <ModalActions saving={saving} disabled={!form.name.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
+                <ModalActions saving={saving} disabled={false} mode={modal.mode} onCancel={onClose} onSave={save} />
             </div>
         </Modal>
     )
@@ -826,8 +823,9 @@ function RowModal({ modal, floorId, token, onClose, onSaved }: {
     )
 }
 
+// Места создаются только массово, поэтому окно осталось лишь для правки существующего.
 function SpaceModal({ modal, token, onClose, onSaved }: {
-    modal: { mode: 'create' | 'edit'; rowId: string; data: Space | null }; token: string | null; onClose: () => void; onSaved: () => void
+    modal: { rowId: string; data: Space | null }; token: string | null; onClose: () => void; onSaved: () => void
 }) {
     const { t } = useTranslation()
     const d = modal.data
@@ -840,15 +838,14 @@ function SpaceModal({ modal, token, onClose, onSaved }: {
         setSaving(true); setError(null)
         try {
             const body = JSON.stringify({ code: form.code.trim(), type: form.type, isActive: form.isActive, sortOrder: form.sortOrder, notes: form.notes.trim() || null })
-            if (modal.mode === 'create') await apiRequest(`/api/parking/rows/${modal.rowId}/spaces`, { method: 'POST', token, body })
-            else if (d) await apiRequest(`/api/parking/spaces/${d.id}`, { method: 'PUT', token, body })
+            if (d) await apiRequest(`/api/parking/spaces/${d.id}`, { method: 'PUT', token, body })
             onSaved()
         } catch (e) { setError(e instanceof Error ? e.message : 'Save failed') }
         finally { setSaving(false) }
     }
 
     return (
-        <Modal isOpen onClose={onClose} title={modal.mode === 'create' ? t('parking.spaces.new') : t('parking.spaces.edit')}>
+        <Modal isOpen onClose={onClose} title={t('parking.spaces.edit')}>
             <div className="space-y-4 pt-2">
                 <Field label={t('parking.spaces.fields.code')}><Input value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))} maxLength={60} /></Field>
                 <Field label={t('parking.spaces.fields.type')}>
@@ -867,7 +864,7 @@ function SpaceModal({ modal, token, onClose, onSaved }: {
                 <Field label={t('parking.spaces.fields.notes')}><Input value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} /></Field>
                 <Check label={t('parking.spaces.fields.active')} checked={form.isActive} onChange={(v) => setForm((p) => ({ ...p, isActive: v }))} />
                 {error && <p className="text-xs font-medium text-error-text">{error}</p>}
-                <ModalActions saving={saving} disabled={!form.code.trim()} mode={modal.mode} onCancel={onClose} onSave={save} />
+                <ModalActions saving={saving} disabled={!form.code.trim()} mode="edit" onCancel={onClose} onSave={save} />
             </div>
         </Modal>
     )
