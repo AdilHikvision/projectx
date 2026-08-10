@@ -159,9 +159,19 @@ const DISCOVER_TYPE_TABS = [
   { value: 'other', labelKey: 'devicesTab.discoverTypes.other' as const },
 ] as const
 
+/** Семейства ANPR-камер Hikvision (распознавание номеров): DS-TCG / iDS-TCM / iDS-TCV. */
+const ANPR_MODEL_PREFIXES = ['DS-TCG', 'IDS-TCG', 'DS-TCM', 'IDS-TCM', 'DS-TCV', 'IDS-TCV']
+
+function isAnprModel(model: string | null | undefined, serial?: string | null): boolean {
+  const src = (model || serial || '').toUpperCase()
+  return ANPR_MODEL_PREFIXES.some((prefix) => src.startsWith(prefix))
+}
+
 function inferDeviceTypeFromModel(model: string | null | undefined, serial?: string | null): string {
   const src = (model || serial || '').toUpperCase()
   if (!src) return 'other'
+  // Раньше проверки не было, и DS-TCG406-E попадала в «Другое», а iDS-TCM — в NVR по правилу 'IDS-'.
+  if (isAnprModel(model, serial)) return 'camera'
   if (src.startsWith('DS-2CD') || src.startsWith('DS-2DE') || src.startsWith('DS-2PT')) return 'camera'
   if (src.startsWith('DS-K') || src.startsWith('DS-KD') || src.startsWith('DS-KH')) return 'access'
   if (src.startsWith('CS-H') || src.startsWith('DS-2TD')) return 'intercom'
@@ -301,8 +311,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
 
         hub.on('DeviceFound', (device: DiscoveredDevice) => {
           setDiscovered((prev) => {
-            const key = `${device.ipAddress}:${device.port}`
-            const idx = prev.findIndex((x) => `${x.ipAddress}:${x.port}` === key)
+            // По ip:port схлопывать нельзя: на заводском 192.168.1.64:8000 сидит сразу
+            // несколько неактивированных устройств, и в списке оставалось только одно.
+            const idx = prev.findIndex((x) => x.deviceIdentifier === device.deviceIdentifier)
             const next = { ...device }
             if (idx >= 0) return prev.map((x, i) => (i === idx ? next : x))
             return [...prev, next]
@@ -626,7 +637,8 @@ export const DevicesTab = forwardRef((_props, ref) => {
           ipAddress: addFromDevice.ipAddress,
           port: addFromDevice.port,
           location: null,
-          deviceType: 1,
+          // ANPR-камеру нельзя заводить как контроллер: иначе парковочная логика её не подхватит.
+          deviceType: isAnprModel(addFromDevice.model, addFromDevice.deviceIdentifier) ? ANPR_DEVICE_TYPE : 1,
           username: addDeviceUsername.trim() || null,
           password: addDevicePassword || null,
         }),

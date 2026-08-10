@@ -93,11 +93,10 @@ public static class SadpRawDiscovery
 
                             var xml = Encoding.UTF8.GetString(payload);
                             var remoteIp = packet.Extract<IPv4Packet>()?.SourceAddress?.ToString();
-                            var dev = ParseProbeMatch(xml, remoteIp);
+                            var dev = ParseProbeMatch(xml, remoteIp, logger);
                             if (dev is not null)
                             {
-                                var key = $"{dev.IpAddress}:{dev.Port}";
-                                discovered.TryAdd(key, dev);
+                                discovered.TryAdd(SadpPayload.DeviceKey(dev), dev);
                             }
                         }
                         catch { /* ignore */ }
@@ -254,11 +253,14 @@ public static class SadpRawDiscovery
         }
     }
 
-    private static SdkDiscoveredDevice? ParseProbeMatch(string xml, string? fallbackIp)
+    private static SdkDiscoveredDevice? ParseProbeMatch(string xml, string? fallbackIp, ILogger? logger = null)
     {
+        var payload = SadpPayload.Sanitize(xml);
+        if (payload.Length == 0) return null;
+
         try
         {
-            var doc = XDocument.Parse(xml);
+            var doc = XDocument.Parse(payload);
             var root = doc.Root;
             if (root?.Name.LocalName != "ProbeMatch") return null;
 
@@ -285,8 +287,12 @@ public static class SadpRawDiscovery
 
             return new SdkDiscoveredDevice(identifier, name, ip, port, model, deviceType, macFormatted, firmware, isActivated);
         }
-        catch
+        catch (Exception ex)
         {
+            // Только Debug: это promiscuous-перехват, сюда штатно попадают обрезанные
+            // и фрагментированные кадры. Настоящий сигнал даёт UDP-канал в
+            // SadpDiscoveryService — там ядро уже собрало датаграмму целиком.
+            logger?.LogDebug(ex, "SADP Raw: пакет от {Ip} не разобран", fallbackIp ?? "?");
             return null;
         }
     }
@@ -703,8 +709,11 @@ public static class SadpRawDiscovery
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(xml) || !xml.Contains("<ProbeMatch")) return null;
-            var doc = XDocument.Parse(xml);
+            // Тот же хвостовой '\0', что ломал поиск: без чистки ответ устройства
+            // на getencryptstring/activate не разбирался и активация «молчала».
+            var payload = SadpPayload.Sanitize(xml);
+            if (payload.Length == 0 || !payload.Contains("<ProbeMatch")) return null;
+            var doc = XDocument.Parse(payload);
             var root = doc.Root;
             if (root is null) return null;
 

@@ -161,8 +161,7 @@ public sealed class SadpDiscoveryService
                             var device = ParseProbeMatch(xml, result.RemoteEndPoint.Address.ToString());
                             if (device is not null)
                             {
-                                var key = $"{device.IpAddress}:{device.Port}";
-                                if (discovered.TryAdd(key, device))
+                                if (discovered.TryAdd(SadpPayload.DeviceKey(device), device))
                                     progress?.Report(device);
                             }
                         }
@@ -237,8 +236,7 @@ public sealed class SadpDiscoveryService
                             var device = ParseProbeMatch(xml, result.RemoteEndPoint.Address.ToString());
                             if (device is not null)
                             {
-                                var key = $"{device.IpAddress}:{device.Port}";
-                                if (discovered.TryAdd(key, device))
+                                if (discovered.TryAdd(SadpPayload.DeviceKey(device), device))
                                     progress?.Report(device);
                             }
                         }
@@ -271,8 +269,7 @@ public sealed class SadpDiscoveryService
         var pcapDevices = await SadpRawDiscovery.TryDiscoverAsync(_logger, cancellationToken);
         foreach (var d in pcapDevices)
         {
-            var key = $"{d.IpAddress}:{d.Port}";
-            if (discovered.TryAdd(key, d))
+            if (discovered.TryAdd(SadpPayload.DeviceKey(d), d))
                 progress?.Report(d);
         }
     }
@@ -312,11 +309,14 @@ public sealed class SadpDiscoveryService
         ]);
     }
 
-    private static SdkDiscoveredDevice? ParseProbeMatch(string xml, string? fallbackIp)
+    private SdkDiscoveredDevice? ParseProbeMatch(string xml, string? fallbackIp)
     {
+        var payload = SadpPayload.Sanitize(xml);
+        if (payload.Length == 0) return null;
+
         try
         {
-            var doc = XDocument.Parse(xml);
+            var doc = XDocument.Parse(payload);
             var root = doc.Root;
             if (root?.Name.LocalName != "ProbeMatch") return null;
 
@@ -343,8 +343,16 @@ public sealed class SadpDiscoveryService
 
             return new SdkDiscoveredDevice(identifier, name, ip, port, model, deviceType, macFormatted, firmware, isActivated);
         }
-        catch
+        catch (Exception ex)
         {
+            // Раньше тут был молчаливый catch: битый ответ выкидывался без следа, и устройство
+            // просто не появлялось в поиске. Логируем — иначе такое не диагностируется.
+            // Warning только для настоящего ответа устройства: на порт 37020 прилетает
+            // и посторонний трафик, из-за него лог бы захлебнулся.
+            if (payload.Contains("<ProbeMatch", StringComparison.OrdinalIgnoreCase))
+                _logger.LogWarning(ex, "SADP: не удалось разобрать ProbeMatch от {Ip}", fallbackIp ?? "?");
+            else
+                _logger.LogDebug(ex, "SADP: непонятный пакет от {Ip}", fallbackIp ?? "?");
             return null;
         }
     }
