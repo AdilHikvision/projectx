@@ -126,6 +126,15 @@ export function AnaHomePage() {
   const donutPresent = stats.pct(stats.present.length)
   const donutLate = stats.pct(stats.late.length)
   const donutAbsent = Math.max(0, 100 - donutPresent - donutLate)
+
+  // Интерактивный донат: сегменты + ховер (тултип, подсветка, синхронизация с легендой).
+  const donutSegs = [
+    { key: 'present' as const, label: t('anaHome.kpiPresent'), count: stats.present.length, pct: donutPresent, color: '#22B573' },
+    { key: 'late' as const, label: t('anaHome.kpiLate'), count: stats.late.length, pct: donutLate, color: '#E8A33D' },
+    { key: 'absent' as const, label: t('anaHome.kpiAbsent'), count: stats.absent.length, pct: donutAbsent, color: '#E9736A' },
+  ]
+  const [donutHover, setDonutHover] = useState<{ key: 'present' | 'late' | 'absent'; x: number; y: number } | null>(null)
+  const donutHoverSeg = donutHover ? donutSegs.find((s) => s.key === donutHover.key) ?? null : null
   const lastIn = stats.recent[0] ?? null
 
   const leaveChip = (s: string) => (s === 'Approved' ? 'green' : s === 'Rejected' ? 'red' : 'orange')
@@ -201,16 +210,114 @@ export function AnaHomePage() {
           <div className="ana-card">
             <div className="ana-card-h"><span className="t">{t('anaHome.todayAttendance')}</span></div>
             <div className="ana-donut-wrap">
-              <div className="ana-donut" style={{ background: `conic-gradient(#22B573 0 ${donutPresent}%, #E8A33D ${donutPresent}% ${donutPresent + donutLate}%, #E9736A ${donutPresent + donutLate}% 100%)` }}>
-                <div className="hole">
-                  <div className="n">{donutPresent}%</div>
-                  <div className="c">{t('anaHome.kpiPresent')}</div>
+              <div
+                className="ana-donut"
+                onPointerMove={(e) => {
+                  if (!donutHover) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const y = e.clientY - rect.top
+                  setDonutHover((h) => (h ? { ...h, x, y } : h))
+                }}
+                onPointerLeave={() => setDonutHover(null)}
+              >
+                <svg viewBox="0 0 168 168" width="168" height="168" style={{ transform: 'rotate(-90deg)', display: 'block' }}>
+                  {/* фоновое кольцо — видно, когда данных нет */}
+                  <circle cx="84" cy="84" r="71" fill="none" stroke="#F0F0F5" strokeWidth="26" />
+                  {(() => {
+                    const r = 71
+                    const C = 2 * Math.PI * r
+                    let acc = 0
+                    return donutSegs.filter((s) => s.pct > 0).map((s) => {
+                      const offset = acc
+                      acc += s.pct
+                      const active = donutHover?.key === s.key
+                      return (
+                        <circle
+                          key={s.key}
+                          cx="84" cy="84" r={r} fill="none"
+                          stroke={s.color}
+                          strokeWidth={active ? 30 : 26}
+                          strokeDasharray={`${(C * s.pct) / 100} ${C}`}
+                          strokeDashoffset={-(C * offset) / 100}
+                          tabIndex={0}
+                          aria-label={`${s.label}: ${s.count} (${s.pct}%)`}
+                          style={{
+                            transition: 'stroke-width .15s ease, opacity .15s ease',
+                            opacity: donutHover && !active ? 0.4 : 1,
+                            cursor: 'pointer',
+                            outline: 'none',
+                          }}
+                          onPointerEnter={(e) => {
+                            const rect = e.currentTarget.ownerSVGElement!.getBoundingClientRect()
+                            setDonutHover({ key: s.key, x: e.clientX - rect.left, y: e.clientY - rect.top })
+                          }}
+                          onFocus={() => setDonutHover({ key: s.key, x: 84, y: 28 })}
+                          onBlur={() => setDonutHover(null)}
+                        />
+                      )
+                    })
+                  })()}
+                </svg>
+                <div className="hole" style={{ pointerEvents: 'none' }}>
+                  {donutHoverSeg ? (
+                    <>
+                      <div className="n" style={{ color: donutHoverSeg.color }}>{donutHoverSeg.pct}%</div>
+                      <div className="c">{donutHoverSeg.label} · {donutHoverSeg.count}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="n">{donutPresent}%</div>
+                      <div className="c">{t('anaHome.kpiPresent')}</div>
+                    </>
+                  )}
                 </div>
+                {donutHover && donutHoverSeg && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: Math.min(donutHover.x + 14, 150),
+                      top: donutHover.y - 10,
+                      transform: 'translateY(-100%)',
+                      pointerEvents: 'none',
+                      zIndex: 5,
+                      background: '#fff',
+                      border: '1px solid #ECECF3',
+                      borderRadius: 10,
+                      boxShadow: '0 8px 24px rgba(37,38,65,.14)',
+                      padding: '6px 10px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#252641', lineHeight: 1.2 }}>
+                      {donutHoverSeg.count}{' '}
+                      <span style={{ fontWeight: 600, color: '#8B8CA7', fontSize: 12 }}>({donutHoverSeg.pct}%)</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#8B8CA7', marginTop: 2 }}>
+                      <span style={{ width: 10, height: 2.5, borderRadius: 2, background: donutHoverSeg.color, display: 'inline-block' }} />
+                      {donutHoverSeg.label}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="ana-legend">
-                <div className="ana-lg"><span className="dot" style={{ background: '#22B573' }}></span><span className="nm">{t('anaHome.kpiPresent')}</span><span className="vl">{stats.present.length} ({donutPresent}%)</span></div>
-                <div className="ana-lg"><span className="dot" style={{ background: '#E8A33D' }}></span><span className="nm">{t('anaHome.kpiLate')}</span><span className="vl">{stats.late.length} ({donutLate}%)</span></div>
-                <div className="ana-lg"><span className="dot" style={{ background: '#E9736A' }}></span><span className="nm">{t('anaHome.kpiAbsent')}</span><span className="vl">{stats.absent.length} ({donutAbsent}%)</span></div>
+                {donutSegs.map((s) => (
+                  <div
+                    className="ana-lg"
+                    key={s.key}
+                    onMouseEnter={() => setDonutHover({ key: s.key, x: 84, y: 28 })}
+                    onMouseLeave={() => setDonutHover(null)}
+                    style={{
+                      background: donutHover?.key === s.key ? '#F6F6FB' : undefined,
+                      borderRadius: 8,
+                      transition: 'background .15s ease',
+                    }}
+                  >
+                    <span className="dot" style={{ background: s.color }}></span>
+                    <span className="nm">{s.label}</span>
+                    <span className="vl">{s.count} ({s.pct}%)</span>
+                  </div>
+                ))}
               </div>
               <button className="ana-btn ghost" onClick={() => navigate('/work-hours')}>{t('anaHome.detailedReport')} →</button>
             </div>
