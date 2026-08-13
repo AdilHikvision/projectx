@@ -263,6 +263,16 @@ public sealed class DatabaseInitializer(
         await dbContext.Database.ExecuteSqlRawAsync("""
             CREATE INDEX IF NOT EXISTS "IX_parking_vehicles_HolderId" ON parking_vehicles ("HolderId")
             """, cancellationToken);
+        // Разрешение на въезд живёт в самой карточке машины: срок действия и зона.
+        // Перенос данных из пропусков делает миграция AddParkingVehicleAccess.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE parking_vehicles
+                ADD COLUMN IF NOT EXISTS "AccessValidTo" date,
+                ADD COLUMN IF NOT EXISTS "ZoneId" uuid REFERENCES parking_zones("Id") ON DELETE SET NULL
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_vehicles_ZoneId" ON parking_vehicles ("ZoneId")
+            """, cancellationToken);
 
         // Перенос белого списка в машины с пропусками делает миграция ParkingVehicleHolder:
         // он должен пройти до удаления колонок, поэтому здесь его дублировать нельзя.
@@ -270,11 +280,12 @@ public sealed class DatabaseInitializer(
         await dbContext.Database.ExecuteSqlRawAsync("""
             DELETE FROM parking_plates WHERE "ListType" = 1
             """, cancellationToken);
-        // ANPR-камеры: направление проезда и зона задаются на самом устройстве.
+        // ANPR-камеры: направление проезда, зона и реле шлагбаума задаются на самом устройстве.
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE devices
                 ADD COLUMN IF NOT EXISTS "ParkingDirection" integer,
-                ADD COLUMN IF NOT EXISTS "ParkingZoneId" uuid
+                ADD COLUMN IF NOT EXISTS "ParkingZoneId" uuid,
+                ADD COLUMN IF NOT EXISTS "BarrierOutput" integer
             """, cancellationToken);
         await dbContext.Database.ExecuteSqlRawAsync("""
             ALTER TABLE parking_sessions
@@ -295,6 +306,14 @@ public sealed class DatabaseInitializer(
         await dbContext.Database.ExecuteSqlRawAsync("""
             UPDATE parking_sessions SET "PaidAmount" = "Cost"
             WHERE "PaidAmount" IS NULL AND "PaidUtc" IS NOT NULL AND "Cost" IS NOT NULL
+            """, cancellationToken);
+        // Занятое место: схема парковки показывает, какая машина где стоит.
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE parking_sessions
+                ADD COLUMN IF NOT EXISTS "SpaceId" uuid REFERENCES parking_spaces("Id") ON DELETE SET NULL
+            """, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS "IX_parking_sessions_SpaceId" ON parking_sessions ("SpaceId")
             """, cancellationToken);
 
         await dbContext.Database.ExecuteSqlRawAsync("""

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
 import { Button } from '../../components/atoms'
+import { ConfirmDialog } from '../../components/molecules'
 import { apiRequest } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
 
@@ -33,6 +34,13 @@ interface PosResult {
   timeLimitMinutes?: number | null
 }
 
+/** Ответ сервера про шлагбаум — общий для ручного въезда и ручного выпуска. */
+interface Barrier {
+  barrierTriggered: boolean
+  barrierSkipped: boolean
+  barrierError?: string | null
+}
+
 const fmtDT = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
 const fmtDur = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`)
@@ -50,6 +58,10 @@ export function ParkingPosPage() {
   const [paidUntil, setPaidUntil] = useState<string | null>(null)
   const [entering, setEntering] = useState(false)
   const [entryDenied, setEntryDenied] = useState<string | null>(null)
+  // Ручной выпуск и то, что ответил шлагбаум: кассир должен видеть, открылся он или нет.
+  const [releasing, setReleasing] = useState(false)
+  const [confirmRelease, setConfirmRelease] = useState(false)
+  const [barrierMsg, setBarrierMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const lookup = async () => {
     const p = plate.trim()
@@ -80,20 +92,43 @@ export function ParkingPosPage() {
     finally { setPaying(false) }
   }
 
+  /** Что ответил шлагбаум: открыт, им управляет камера, или импульс не прошёл. */
+  const barrierState = (r: Barrier) =>
+    r.barrierTriggered ? { ok: true, text: t('parking.pos.barrierOpened') }
+      : r.barrierSkipped ? { ok: true, text: t('parking.pos.barrierByCamera') }
+        : { ok: false, text: t('parking.pos.barrierFailed', { error: r.barrierError ?? '' }) }
+
   /** Ручной въезд идёт через то же решение, что и камера: чёрный список, абонемент,
    *  пропуск и свободные места проверяются одинаково. */
   const manualEntry = async () => {
     if (!token || !result) return
-    setEntering(true); setError(null); setEntryDenied(null)
+    setEntering(true); setError(null); setEntryDenied(null); setBarrierMsg(null)
     try {
-      const d = await apiRequest<{ allowed: boolean; reason: string }>('/api/parking/access-decision', {
+      const d = await apiRequest<{ allowed: boolean; reason: string } & Barrier>('/api/parking/access-decision', {
         method: 'POST', token,
         body: JSON.stringify({ plate: result.plate, openSession: true, operator: 'POS' }),
       })
       if (!d.allowed) { setEntryDenied(d.reason); return }
+      setBarrierMsg(barrierState(d))
       setResult(await apiRequest<PosResult>(`/api/parking/pos-lookup?plate=${encodeURIComponent(result.plate)}`, { token }))
     } catch (e) { setError(e instanceof Error ? e.message : 'error') }
     finally { setEntering(false) }
+  }
+
+  /** Ручной выпуск: сессия закрывается даже без оплаты, недобор уходит в долг,
+   *  и выездной шлагбаум открывается отдельной командой — проезда-то не было. */
+  const release = async () => {
+    if (!token || !result?.openSession) return
+    setReleasing(true); setError(null); setBarrierMsg(null)
+    try {
+      const r = await apiRequest<{ closed: number; debt: number } & Barrier>('/api/parking/exit', {
+        method: 'POST', token, body: JSON.stringify({ plate: result.plate }),
+      })
+      setConfirmRelease(false)
+      setBarrierMsg(barrierState(r))
+      setResult(await apiRequest<PosResult>(`/api/parking/pos-lookup?plate=${encodeURIComponent(result.plate)}`, { token }))
+    } catch (e) { setError(e instanceof Error ? e.message : 'error') }
+    finally { setReleasing(false) }
   }
 
   const v = result?.vehicle
@@ -234,7 +269,15 @@ export function ParkingPosPage() {
                   <Button fullWidth isLoading={paying} onClick={() => void pay()}>
                     {os.requiresPayment ? t('parking.hist.payAndOpen') : t('parking.hist.openBarrier')}
                   </Button>
+                  {/* Выпуск руками: когда камера не сработала или водитель встал перед шлагбаумом. */}
+                  <Button variant="outline" icon="logout" isLoading={releasing} onClick={() => setConfirmRelease(true)}>
+                    {t('parking.pos.release')}
+                  </Button>
                 </div>
+                <p className="text-[11px] text-text-light">{t('parking.pos.payHint')}</p>
+                {barrierMsg && (
+                  <p className={`text-xs font-bold ${barrierMsg.ok ? 'text-green-700' : 'text-error-text'}`}>{barrierMsg.text}</p>
+                )}
               </div>
             ) : (
               /* Машины внутри нет — оператор может оформить въезд руками,
@@ -248,6 +291,9 @@ export function ParkingPosPage() {
                   <p className="text-xs font-bold text-error-text">
                     {t('parking.pos.entryDenied')}: {t(`parking.pos.reason.${entryDenied}`, { defaultValue: entryDenied })}
                   </p>
+                )}
+                {barrierMsg && (
+                  <p className={`text-xs font-bold ${barrierMsg.ok ? 'text-green-700' : 'text-error-text'}`}>{barrierMsg.text}</p>
                 )}
               </div>
             )}
@@ -275,6 +321,21 @@ export function ParkingPosPage() {
           </div>
         )}
       </div>
+
+      {/* Выпуск без оплаты фиксируется долгом, поэтому спрашиваем подтверждение. */}
+      {confirmRelease && (
+        <ConfirmDialog
+          isOpen
+          title={t('parking.pos.releaseConfirmTitle', { plate: result?.plate ?? '' })}
+          message={os && os.amount > 0
+            ? t('parking.pos.releaseConfirmDebt', { amount: os.amount.toFixed(2) })
+            : t('parking.pos.releaseConfirm')}
+          onConfirm={() => void release()}
+          onClose={() => setConfirmRelease(false)}
+          isLoading={releasing}
+          variant="danger"
+        />
+      )}
     </AppLayout>
   )
 }

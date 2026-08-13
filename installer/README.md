@@ -58,7 +58,8 @@ powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1
 
 Output installer:
 
-- `artifacts\installer\ProjectX-Backend-Setup.exe`
+- `artifacts\installer\ProjectX-Backend-Setup-<version>.exe`
+  (the version comes from `VERSION.txt` — see section 0)
 
 ## 3) Install flow
 

@@ -3,6 +3,7 @@ using System;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Backend.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260811092419_AddParkingSessionSpace")]
+    partial class AddParkingSessionSpace
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -475,9 +478,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
-
-                    b.Property<int?>("BarrierOutput")
-                        .HasColumnType("integer");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -2674,9 +2674,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<DateOnly?>("AccessValidTo")
-                        .HasColumnType("date");
-
                     b.Property<string>("Brand")
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
@@ -2745,9 +2742,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
-                    b.Property<Guid?>("ZoneId")
-                        .HasColumnType("uuid");
-
                     b.HasKey("Id");
 
                     b.HasIndex("HolderId");
@@ -2755,8 +2749,6 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasIndex("PlateNormalized");
 
                     b.HasIndex("ResidentId");
-
-                    b.HasIndex("ZoneId");
 
                     b.ToTable("parking_vehicles", (string)null);
                 });
@@ -4009,16 +4001,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ResidentId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Backend.Domain.Entities.ParkingZone", "Zone")
-                        .WithMany()
-                        .HasForeignKey("ZoneId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Holder");
 
                     b.Navigation("Resident");
-
-                    b.Navigation("Zone");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.PayrollEntry", b =>

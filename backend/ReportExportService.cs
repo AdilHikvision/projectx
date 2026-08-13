@@ -128,8 +128,10 @@ public static class ExcelReportBuilder
         var ws = wb.Worksheets.Add("Work Hours");
         ws.ShowGridLines = false;
 
+        // Опоздание и ранний уход считаются в минутах, но в отчётах их смотрят в часах —
+        // так же, как часы и сверхурочные рядом и как в расчёте зарплаты.
         string[] headers = ["Employee", "Department", "Date", "Schedule", "Shift Start", "Shift End",
-            "Check In", "Check Out", "Hours", "Overtime", "Late (min)", "Early (min)", "Status", "Corrected"];
+            "Check In", "Check Out", "Hours", "Overtime", "Late (h)", "Early (h)", "Status", "Corrected"];
 
         // Title block
         ws.Range(1, 1, 1, headers.Length).Merge();
@@ -192,13 +194,15 @@ public static class ExcelReportBuilder
             ws.Cell(row, 10).Value = r.OvertimeHours > 0 ? (double?)r.OvertimeHours : null;
             ws.Cell(row, 10).Style.NumberFormat.Format = "0.00";
             ws.Cell(row, 10).Style.Font.FontColor = XLColor.FromHtml(Brand);
-            ws.Cell(row, 11).Value = r.LateMinutes.HasValue ? (int?)r.LateMinutes : null;
+            ws.Cell(row, 11).Value = r.LateMinutes.HasValue ? (double?)(r.LateMinutes.Value / 60.0) : null;
+            ws.Cell(row, 11).Style.NumberFormat.Format = "0.00";
             if (r.LateMinutes > 0)
             {
                 ws.Cell(row, 11).Style.Font.FontColor = XLColor.FromHtml("#dc2637");
                 ws.Cell(row, 11).Style.Font.Bold = true;
             }
-            ws.Cell(row, 12).Value = r.EarlyLeaveMinutes.HasValue ? (int?)r.EarlyLeaveMinutes : null;
+            ws.Cell(row, 12).Value = r.EarlyLeaveMinutes.HasValue ? (double?)(r.EarlyLeaveMinutes.Value / 60.0) : null;
+            ws.Cell(row, 12).Style.NumberFormat.Format = "0.00";
             if (r.EarlyLeaveMinutes > 0)
                 ws.Cell(row, 12).Style.Font.FontColor = XLColor.FromHtml("#ea580c");
 
@@ -230,12 +234,12 @@ public static class ExcelReportBuilder
             ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml(Brand);
             ws.Cell(row, 9).Value = rows.Sum(r => r.TotalHours);
             ws.Cell(row, 10).Value = rows.Sum(r => r.OvertimeHours);
-            ws.Cell(row, 11).Value = rows.Sum(r => (double)(r.LateMinutes ?? 0));
-            ws.Cell(row, 12).Value = rows.Sum(r => (double)(r.EarlyLeaveMinutes ?? 0));
+            ws.Cell(row, 11).Value = rows.Sum(r => (r.LateMinutes ?? 0) / 60.0);
+            ws.Cell(row, 12).Value = rows.Sum(r => (r.EarlyLeaveMinutes ?? 0) / 60.0);
             foreach (var col in new[] { 9, 10, 11, 12 })
             {
                 ws.Cell(row, col).Style.Font.Bold = true;
-                ws.Cell(row, col).Style.NumberFormat.Format = col <= 10 ? "0.00" : "0";
+                ws.Cell(row, col).Style.NumberFormat.Format = "0.00";
             }
             ws.Row(row).Height = 20;
         }
@@ -720,7 +724,7 @@ public static class PdfReportBuilder
                     table.Header(h =>
                     {
                         foreach (var hdr in new[] { "Employee", "Department", "Date", "Schedule",
-                            "Shift S", "Shift E", "In", "Out", "Hours", "OT", "Late", "Early", "Status" })
+                            "Shift S", "Shift E", "In", "Out", "Hours", "OT", "Late h", "Early h", "Status" })
                         {
                             h.Cell().Background(PrimaryHex).PaddingVertical(4).PaddingHorizontal(3)
                                 .Text(hdr).FontColor("#ffffff").Bold().FontSize(7.5f);
@@ -758,9 +762,10 @@ public static class PdfReportBuilder
                             .FontSize(7.5f).Bold().FontColor(Ink);
                         Body(bg).AlignRight().Text(r.OvertimeHours > 0 ? r.OvertimeHours.ToString("0.00") : "")
                             .FontSize(7.5f).FontColor(PrimaryHex);
-                        Body(bg).AlignRight().Text(r.LateMinutes > 0 ? r.LateMinutes.ToString()! : "")
+                        // Опоздание и ранний уход — в часах, как соседние колонки часов.
+                        Body(bg).AlignRight().Text(r.LateMinutes > 0 ? (r.LateMinutes!.Value / 60.0).ToString("0.00") : "")
                             .FontSize(7.5f).Bold().FontColor(isLate ? "#dc2637" : Ink);
-                        Body(bg).AlignRight().Text(r.EarlyLeaveMinutes > 0 ? r.EarlyLeaveMinutes.ToString()! : "")
+                        Body(bg).AlignRight().Text(r.EarlyLeaveMinutes > 0 ? (r.EarlyLeaveMinutes!.Value / 60.0).ToString("0.00") : "")
                             .FontSize(7.5f).FontColor("#ea580c");
 
                         var (stBg, stFg) = r.IsDayOff || (r.OnLeave && r.LeaveType == "DayOff") ? ("#eceaf2", Muted)
@@ -783,8 +788,8 @@ public static class PdfReportBuilder
                         table.Cell().ColumnSpan(7).Background("#f0edfa").BorderTop(1).BorderColor(PrimaryHex);
                         Total().AlignRight().Text(rows.Sum(r => r.TotalHours).ToString("0.00")).Bold().FontSize(7.5f);
                         Total().AlignRight().Text(rows.Sum(r => r.OvertimeHours).ToString("0.00")).Bold().FontSize(7.5f).FontColor(PrimaryHex);
-                        Total().AlignRight().Text(rows.Sum(r => r.LateMinutes ?? 0).ToString()).Bold().FontSize(7.5f).FontColor("#dc2637");
-                        Total().AlignRight().Text(rows.Sum(r => r.EarlyLeaveMinutes ?? 0).ToString()).Bold().FontSize(7.5f).FontColor("#ea580c");
+                        Total().AlignRight().Text(rows.Sum(r => (r.LateMinutes ?? 0) / 60.0).ToString("0.00")).Bold().FontSize(7.5f).FontColor("#dc2637");
+                        Total().AlignRight().Text(rows.Sum(r => (r.EarlyLeaveMinutes ?? 0) / 60.0).ToString("0.00")).Bold().FontSize(7.5f).FontColor("#ea580c");
                         table.Cell().Background("#f0edfa").BorderTop(1).BorderColor(PrimaryHex);
                     }
                 });

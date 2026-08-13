@@ -1076,6 +1076,11 @@ app.MapPost("/api/devices", async (
         return Results.BadRequest(new { message = "Пароль обязателен." });
     }
 
+    if (!TryParseParkingDirection(request.ParkingDirection, out var parkingDirection))
+    {
+        return Results.BadRequest(new { message = "Направление камеры должно быть Entry или Exit." });
+    }
+
     var (valid, verifyMessage) = await DeviceCredentialVerifier.VerifyAsync(
         request.IpAddress,
         request.Port,
@@ -1098,9 +1103,10 @@ app.MapPost("/api/devices", async (
         DeviceType = request.DeviceType,
         Username = username,
         Password = password,
-        // Направление и зона имеют смысл только для ANPR-камеры парковки.
-        ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? request.ParkingDirection : null,
+        // Направление, зона и реле шлагбаума имеют смысл только для ANPR-камеры парковки.
+        ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? parkingDirection : null,
         ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null,
+        BarrierOutput = request.DeviceType == DeviceType.AnprCamera ? NormalizeBarrierOutput(request.BarrierOutput) : null,
         DeviceStatusId = SeedIds.DeviceStatusOffline,
         CreatedUtc = DateTime.UtcNow
     };
@@ -1147,6 +1153,11 @@ app.MapPut("/api/devices/{id:guid}", async (
         return Results.Conflict(new { message = "Device with this identifier already exists." });
     }
 
+    if (!TryParseParkingDirection(request.ParkingDirection, out var parkingDirection))
+    {
+        return Results.BadRequest(new { message = "Направление камеры должно быть Entry или Exit." });
+    }
+
     var oldIdentifier = device.DeviceIdentifier;
     var sdkConnected = (await connectionManager.GetStatusAsync(oldIdentifier, cancellationToken)).Status == DeviceConnectivityStatus.Connected;
 
@@ -1158,8 +1169,9 @@ app.MapPut("/api/devices/{id:guid}", async (
     device.DeviceType = request.DeviceType;
     if (request.Username is not null) device.Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim();
     if (request.Password is not null) device.Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password;
-    device.ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? request.ParkingDirection : null;
+    device.ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? parkingDirection : null;
     device.ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null;
+    device.BarrierOutput = request.DeviceType == DeviceType.AnprCamera ? NormalizeBarrierOutput(request.BarrierOutput) : null;
     device.UpdatedUtc = DateTime.UtcNow;
     await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -1245,6 +1257,43 @@ app.MapPost("/api/devices/{id:guid}/disconnect", async (
     var updated = await dbContext.Devices.FirstAsync(x => x.Id == id, cancellationToken);
     var st = await arpStatusService.GetStatusAsync(updated.DeviceIdentifier, cancellationToken);
     return Results.Ok(MapDeviceResponse(updated, st is not null ? MapConnectivityStatus(st.Status) : "Offline", st?.LastSeenUtc, st?.StatusMessage));
+}).RequireAuthorization("Devices.Manage");
+
+// Пусконаладка шлагбаума: дать импульс на реле и увидеть, тот ли выход настроен.
+// Проезд не открывается «в учёте» — это только проверка железа, поэтому в журнал
+// пишем manual_open с именем оператора.
+app.MapPost("/api/devices/{id:guid}/barrier-test", async (
+    Guid id,
+    AppDbContext dbContext,
+    IParkingBarrierService barrier,
+    ClaimsPrincipal user,
+    CancellationToken cancellationToken) =>
+{
+    var device = await dbContext.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (device is null) return Results.NotFound();
+    if (device.DeviceType != DeviceType.AnprCamera)
+        return Results.BadRequest(new { message = "Barrier control is available for ANPR cameras only." });
+
+    var op = user.Identity?.Name ?? "operator";
+    var res = await barrier.TriggerAsync(id, $"test by {op}", null, cancellationToken);
+    if (res.Triggered)
+    {
+        dbContext.ParkingEvents.Add(new ParkingEvent
+        {
+            Type = "manual_open",
+            Message = $"Barrier test, output {res.Output}",
+            Source = op
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+    return Results.Ok(new
+    {
+        triggered = res.Triggered,
+        skipped = res.Skipped,
+        output = res.Output,
+        method = res.Method,
+        error = res.Error
+    });
 }).RequireAuthorization("Devices.Manage");
 
 app.MapGet("/api/devices/{id:guid}/status", async (
@@ -9170,7 +9219,7 @@ app.MapDelete("/api/parking/holders/{id:guid}", async (Guid id, AppDbContext db,
 
 app.MapGet("/api/parking/plates", async (AppDbContext db, string? listType, CancellationToken ct) =>
 {
-    // Белого списка больше нет: доступ дают пропуска на машины из базы автомобилей.
+    // Здесь только запреты: разрешения выдаёт белый список машин (parking_vehicles).
     var q = db.ParkingPlates.AsNoTracking().Where(x => x.IsActive && x.ListType == ParkingPlateList.Block);
     var list = await q.OrderByDescending(x => x.CreatedUtc).ToListAsync(ct);
     return Results.Ok(list.Select(x => new
@@ -9185,8 +9234,8 @@ app.MapPost("/api/parking/plates", async (ParkingPlateRequest req, AppDbContext 
     var norm = NormalizePlate(req.Plate);
     if (norm.Length == 0) return Results.BadRequest(new { message = "Plate is required." });
     if (!Enum.TryParse<ParkingPlateList>(req.ListType, true, out var lt)) return Results.BadRequest(new { message = "Invalid listType." });
-    // Разрешения выдаются пропусками, поэтому список остался только запрещающим.
-    if (lt != ParkingPlateList.Block) return Results.BadRequest(new { message = "Only the block list is supported; use vehicle permits to allow entry." });
+    // Разрешения выдаёт белый список машин, поэтому этот список остался только запрещающим.
+    if (lt != ParkingPlateList.Block) return Results.BadRequest(new { message = "Only the block list is supported; add the vehicle to the whitelist to allow entry." });
     var category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim();
     var existing = await db.ParkingPlates.FirstOrDefaultAsync(x => x.PlateNormalized == norm && x.ListType == lt, ct);
     if (existing != null)
@@ -9227,12 +9276,282 @@ app.MapGet("/api/parking/occupancy", async (AppDbContext db, Guid? zoneId, Cance
     });
 }).RequireAuthorization("Parking.View");
 
+// ─── Живой мониторинг: кто сейчас внутри, кто въехал/выехал и какие места заняты.
+// Один запрос вместо трёх: страница управления опрашивает его раз в несколько секунд.
+app.MapGet("/api/parking/live", async (int? limit, AppDbContext db, CancellationToken ct) =>
+{
+    var now = DateTime.UtcNow;
+    var feedLimit = Math.Clamp(limit ?? 40, 1, 200);
+    // Лента — про «прямо сейчас»: сутки назад хватает и в самый загруженный день.
+    var since = now.AddHours(-24);
+    var todayStartUtc = now.Date;
+
+    var zoneNames = await db.ParkingZones.AsNoTracking().ToDictionaryAsync(z => z.Id, z => z.Name, ct);
+    var spaces = await db.ParkingSpaces.AsNoTracking()
+        .Select(sp => new { sp.Id, sp.Code, ZoneId = sp.Row!.Floor!.ZoneId })
+        .ToDictionaryAsync(x => x.Id, ct);
+
+    string? ZoneName(Guid? id) => id.HasValue && zoneNames.TryGetValue(id.Value, out var n) ? n : null;
+    string? SpaceCode(Guid? id) => id.HasValue && spaces.TryGetValue(id.Value, out var sp) ? sp.Code : null;
+
+    var open = await db.ParkingSessions.AsNoTracking()
+        .Where(s => s.ExitedUtc == null)
+        .OrderByDescending(s => s.EnteredUtc)
+        .ToListAsync(ct);
+
+    // Карточка машины: марка и владелец делают список внутри читаемым, а не «просто номера».
+    var openPlates = open.Select(s => s.PlateNormalized).Distinct().ToList();
+    var vehicles = await db.ParkingVehicles.AsNoTracking()
+        .Where(v => openPlates.Contains(v.PlateNormalized))
+        .Select(v => new { v.PlateNormalized, v.Brand, v.Color, v.OwnerName, v.Category, HolderName = v.Holder != null ? v.Holder.Name : null })
+        .ToListAsync(ct);
+    var vehicleByPlate = vehicles
+        .GroupBy(v => v.PlateNormalized)
+        .ToDictionary(g => g.Key, g => g.First());
+
+    var inside = open.Select(s =>
+    {
+        vehicleByPlate.TryGetValue(s.PlateNormalized, out var v);
+        return new
+        {
+            id = s.Id,
+            plate = s.Plate,
+            enteredUtc = s.EnteredUtc,
+            minutes = (int)Math.Round((now - s.EnteredUtc).TotalMinutes),
+            zoneId = s.ZoneId,
+            zoneName = ZoneName(s.ZoneId),
+            spaceId = s.SpaceId,
+            spaceCode = SpaceCode(s.SpaceId),
+            spaceType = s.SpaceType.ToString(),
+            cameraName = s.CameraName,
+            photoUrl = s.PhotoUrl,
+            isPaid = s.IsPaid,
+            paidUtc = s.PaidUtc,
+            brand = v?.Brand,
+            color = v?.Color,
+            ownerName = v?.OwnerName,
+            holderName = v?.HolderName,
+            category = v?.Category
+        };
+    }).ToList();
+
+    // Лента движения: въезды и выезды сессий плюс отказы/тревоги из журнала.
+    var feed = new List<(DateTime AtUtc, object Item)>();
+
+    var recentEntries = await db.ParkingSessions.AsNoTracking()
+        .Where(s => s.EnteredUtc >= since)
+        .OrderByDescending(s => s.EnteredUtc).Take(feedLimit)
+        .Select(s => new { s.Id, s.Plate, s.EnteredUtc, s.ZoneId, s.SpaceId, s.CameraName, s.Operator })
+        .ToListAsync(ct);
+    foreach (var e in recentEntries)
+        feed.Add((e.EnteredUtc, new
+        {
+            id = $"in-{e.Id}", kind = "entry", plate = e.Plate, atUtc = e.EnteredUtc,
+            zoneName = ZoneName(e.ZoneId), spaceCode = SpaceCode(e.SpaceId),
+            source = e.CameraName ?? e.Operator, message = (string?)null
+        }));
+
+    var recentExits = await db.ParkingSessions.AsNoTracking()
+        .Where(s => s.ExitedUtc != null && s.ExitedUtc >= since)
+        .OrderByDescending(s => s.ExitedUtc).Take(feedLimit)
+        .Select(s => new { s.Id, s.Plate, s.ExitedUtc, s.EnteredUtc, s.ZoneId, s.SpaceId, s.CameraName, s.Operator })
+        .ToListAsync(ct);
+    foreach (var e in recentExits)
+        feed.Add((e.ExitedUtc!.Value, new
+        {
+            id = $"out-{e.Id}", kind = "exit", plate = e.Plate, atUtc = e.ExitedUtc!.Value,
+            zoneName = ZoneName(e.ZoneId), spaceCode = SpaceCode(e.SpaceId),
+            source = e.CameraName ?? e.Operator,
+            message = (string?)$"{(int)Math.Round((e.ExitedUtc!.Value - e.EnteredUtc).TotalMinutes)}"
+        }));
+
+    var alerts = await db.ParkingEvents.AsNoTracking()
+        .Where(e => e.CreatedUtc >= since
+            && (e.Type == "denied" || e.Type == "alarm" || e.Type == "recognition_error" || e.Type == "camera_error"))
+        .OrderByDescending(e => e.CreatedUtc).Take(feedLimit)
+        .ToListAsync(ct);
+    foreach (var e in alerts)
+        feed.Add((e.CreatedUtc, new
+        {
+            id = $"ev-{e.Id}", kind = e.Type, plate = e.Plate ?? "—", atUtc = e.CreatedUtc,
+            zoneName = (string?)null, spaceCode = (string?)null,
+            source = e.Source, message = e.Message
+        }));
+
+    var commonCap = await db.ParkingSpaces.AsNoTracking().CountAsync(sp => sp.IsActive && sp.Type == ParkingSpaceType.Regular, ct);
+    var vipCap = await db.ParkingSpaces.AsNoTracking().CountAsync(sp => sp.IsActive && sp.Type == ParkingSpaceType.Vip, ct);
+    var commonUsed = open.Count(s => s.SpaceType == ParkingSpaceType.Regular);
+    var vipUsed = open.Count(s => s.SpaceType == ParkingSpaceType.Vip);
+
+    return Results.Ok(new
+    {
+        serverUtc = now,
+        inside,
+        feed = feed.OrderByDescending(x => x.AtUtc).Take(feedLimit).Select(x => x.Item),
+        // Схеме нужен только список занятых мест: цвет и подпись она проставит сама.
+        occupiedSpaces = open.Where(s => s.SpaceId != null).Select(s => new
+        {
+            spaceId = s.SpaceId!.Value, sessionId = s.Id, plate = s.Plate, enteredUtc = s.EnteredUtc
+        }),
+        occupancy = new
+        {
+            commonCapacity = commonCap,
+            vipCapacity = vipCap,
+            commonUsed,
+            vipUsed,
+            commonFree = Math.Max(0, commonCap - commonUsed),
+            vipFree = Math.Max(0, vipCap - vipUsed),
+            insideTotal = open.Count
+        },
+        entriesToday = await db.ParkingSessions.CountAsync(s => s.EnteredUtc >= todayStartUtc, ct),
+        exitsToday = await db.ParkingSessions.CountAsync(s => s.ExitedUtc != null && s.ExitedUtc >= todayStartUtc, ct)
+    });
+}).RequireAuthorization("Parking.View");
+
+// ─── Камеры парковки: список по зонам и живая картинка ───
+// Браузер не умеет проигрывать RTSP, поэтому «видео» собирается из кадров: страница
+// раз в секунду просит снимок, сервер берёт его у камеры по ISAPI и отдаёт JPEG.
+// Пароль камеры при этом не покидает сервер. RTSP-адрес отдаём отдельно — для VLC.
+app.MapGet("/api/parking/cameras", async (AppDbContext db, IDeviceArpStatusService arpStatusService, CancellationToken ct) =>
+{
+    var cameras = await db.Devices.AsNoTracking()
+        .Where(d => d.DeviceType == DeviceType.AnprCamera)
+        .OrderBy(d => d.Name)
+        .ToListAsync(ct);
+    var zoneNames = await db.ParkingZones.AsNoTracking().ToDictionaryAsync(z => z.Id, z => z.Name, ct);
+    var statuses = (await arpStatusService.GetStatusesAsync(ct))
+        .ToDictionary(s => s.DeviceIdentifier, s => s, StringComparer.OrdinalIgnoreCase);
+
+    return Results.Ok(cameras.Select(d => new
+    {
+        id = d.Id,
+        name = d.Name,
+        ipAddress = d.IpAddress,
+        zoneId = d.ParkingZoneId,
+        zoneName = d.ParkingZoneId.HasValue && zoneNames.TryGetValue(d.ParkingZoneId.Value, out var zn) ? zn : null,
+        direction = d.ParkingDirection?.ToString(),
+        barrierOutput = d.BarrierOutput,
+        status = statuses.TryGetValue(d.DeviceIdentifier, out var st) ? MapConnectivityStatus(st.Status) : "Offline",
+        // Без логина и пароля: адрес для VLC оператор дополняет своими учётными данными.
+        rtspUrl = $"rtsp://{d.IpAddress}:554/Streaming/Channels/101"
+    }));
+}).RequireAuthorization("Parking.View");
+
+app.MapGet("/api/parking/cameras/{id:guid}/snapshot", async (Guid id, int? channel, AppDbContext db,
+    IConfiguration configuration, CancellationToken ct) =>
+{
+    var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (device is null) return Results.NotFound();
+    if (device.DeviceType != DeviceType.AnprCamera)
+        return Results.BadRequest(new { message = "Snapshots are available for ANPR cameras only." });
+
+    var user = device.Username ?? configuration["Hikvision:Username"] ?? "admin";
+    var pwd = device.Password ?? configuration["Hikvision:Password"] ?? "";
+    var client = new IsapiClient(device.IpAddress, device.Port, user, pwd, TimeSpan.FromSeconds(4));
+
+    // Субпоток (102) легче основного и его хватает для наблюдения; дальше — запасные пути
+    // для прошивок, которые именуют каналы по-своему. Рабочий путь запоминаем: перебирать
+    // его на каждом кадре — секунды ожидания у неотвечающей камеры.
+    var paths = channel is > 0
+        ? [$"ISAPI/Streaming/channels/{channel}/picture"]
+        : ParkingSnapshotPaths.Known.TryGetValue(id, out var known)
+            ? new[] { known }
+            : ["ISAPI/Streaming/channels/102/picture", "ISAPI/Streaming/channels/101/picture", "ISAPI/Streaming/channels/1/picture"];
+
+    foreach (var path in paths)
+    {
+        var (ok, data, _) = await client.GetBytesAsync(path, ct);
+        if (ok && data is { Length: > 0 })
+        {
+            if (channel is null) ParkingSnapshotPaths.Known[id] = path;
+            return Results.File(data, "image/jpeg");
+        }
+    }
+    // Запомненный путь перестал работать — на следующем кадре переберём заново.
+    ParkingSnapshotPaths.Known.TryRemove(id, out _);
+    // 503, а не 404: камера есть, просто сейчас кадр не отдаёт — страница покажет «нет сигнала».
+    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+}).RequireAuthorization("Parking.View");
+
+// ─── Ручные операции оператора ───
+// Нужны в обоих режимах проезда, а в режиме «только вход» это вообще единственный способ
+// закрыть сессию: выездной камеры там нет.
+app.MapPost("/api/parking/sessions/{id:guid}/close", async (Guid id, ParkingSessionCloseRequest? req, AppDbContext db,
+    IParkingAccessService access, IParkingBarrierService barrier, ClaimsPrincipal user, CancellationToken ct) =>
+{
+    var session = await db.ParkingSessions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.ExitedUtc == null, ct);
+    if (session is null) return Results.NotFound(new { message = "Open session not found." });
+
+    var op = user.Identity?.Name ?? "operator";
+    // force: true — оператор снимает машину с парковки; неоплаченное уходит в долг.
+    var res = await access.RegisterExitAsync(session.Plate, null, null, force: true, ct);
+
+    // Открывать шлагбаум нужно не всегда: иногда номер убирают из списка задним числом,
+    // когда машина давно уехала мимо камеры.
+    var open = req?.OpenBarrier == true
+        ? await barrier.OpenAsync(ParkingCameraDirection.Exit, session.ZoneId, session.Plate, op, ct)
+        : ParkingBarrierResult.NoDevice;
+
+    db.ParkingEvents.Add(new ParkingEvent
+    {
+        Type = "manual_open",
+        Message = req?.OpenBarrier == true ? "Session closed by operator, barrier opened" : "Session closed by operator",
+        Plate = session.Plate,
+        Source = op
+    });
+    await db.SaveChangesAsync(ct);
+
+    return Results.Ok(new
+    {
+        ok = true,
+        closed = res.Closed,
+        debt = res.Amount,
+        barrierTriggered = open.Triggered,
+        barrierSkipped = open.Skipped,
+        barrierError = open.Error
+    });
+}).RequireAuthorization("Parking.Operate");
+
+// Открыть шлагбаум конкретной камеры руками: машина без номера, сбой распознавания,
+// эвакуатор — случаев хватает, и оператору нужна кнопка, а не поездка к шлагбауму.
+app.MapPost("/api/parking/cameras/{id:guid}/open", async (Guid id, AppDbContext db,
+    IParkingBarrierService barrier, ClaimsPrincipal user, CancellationToken ct) =>
+{
+    var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+    if (device is null) return Results.NotFound();
+    if (device.DeviceType != DeviceType.AnprCamera)
+        return Results.BadRequest(new { message = "Barrier control is available for ANPR cameras only." });
+
+    var op = user.Identity?.Name ?? "operator";
+    var res = await barrier.TriggerAsync(id, $"manual open by {op}", null, ct);
+    if (res.Triggered)
+    {
+        db.ParkingEvents.Add(new ParkingEvent
+        {
+            Type = "manual_open",
+            Message = $"Barrier opened by operator, output {res.Output}",
+            Source = op
+        });
+        await db.SaveChangesAsync(ct);
+    }
+    return Results.Ok(new { triggered = res.Triggered, skipped = res.Skipped, output = res.Output, error = res.Error });
+}).RequireAuthorization("Parking.Operate");
+
 // Решение принимает общий сервис — тот же, которым пользуются ANPR-камеры и ручной въезд с POS.
-app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IParkingAccessService access, CancellationToken ct) =>
+app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IParkingAccessService access,
+    IParkingBarrierService barrier, CancellationToken ct) =>
 {
     if (NormalizePlate(req.Plate).Length == 0) return Results.BadRequest(new { message = "Plate is required." });
     var d = await access.DecideAsync(new ParkingAccessInput(
         req.Plate, req.ZoneId, req.SpaceType, req.Camera, req.Operator, req.PhotoUrl, req.Confidence, req.OpenSession == true), ct);
+
+    // Ручной въезд с кассы: сессию открыли — значит машину надо и впустить физически.
+    // Запросы от камеры (req.Camera) сюда не попадают: там шлагбаум открывает сам обработчик ANPR
+    // на той камере, которая распознала номер.
+    var open = d.Allowed && req.OpenSession == true && string.IsNullOrWhiteSpace(req.Camera)
+        ? await barrier.OpenAsync(ParkingCameraDirection.Entry, req.ZoneId, req.Plate, req.Operator, ct)
+        : ParkingBarrierResult.NoDevice;
+
     return Results.Ok(new
     {
         allowed = d.Allowed,
@@ -9242,7 +9561,10 @@ app.MapPost("/api/parking/access-decision", async (ParkingAccessRequest req, IPa
         mode = d.Mode,
         subMode = d.SubMode,
         waitMinutes = d.WaitMinutes,
-        sessionId = d.SessionId
+        sessionId = d.SessionId,
+        barrierTriggered = open.Triggered,
+        barrierSkipped = open.Skipped,
+        barrierError = open.Error
     });
 }).RequireAuthorization("Parking.Operate");
 
@@ -9271,11 +9593,35 @@ app.MapGet("/api/parking/snapshots/{file}", (string file, IConfiguration configu
     return File.Exists(full) ? Results.File(full, "image/jpeg") : Results.NotFound();
 }).RequireAuthorization("Parking.View");
 
-app.MapPost("/api/parking/exit", async (ParkingExitRequest req, IParkingAccessService access, CancellationToken ct) =>
+app.MapPost("/api/parking/exit", async (ParkingExitRequest req, AppDbContext db, IParkingAccessService access,
+    IParkingBarrierService barrier, ClaimsPrincipal user, CancellationToken ct) =>
 {
+    // Зону берём из ещё открытой сессии: после закрытия её уже не отличить от прошлых проездов.
+    var norm = NormalizePlate(req.Plate);
+    var zoneId = await db.ParkingSessions.AsNoTracking()
+        .Where(x => x.ExitedUtc == null && x.PlateNormalized == norm)
+        .OrderByDescending(x => x.EnteredUtc)
+        .Select(x => x.ZoneId)
+        .FirstOrDefaultAsync(ct);
+
     // Ручной выезд оператором: выпускаем даже при неоплате, недобор фиксируется как долг.
     var res = await access.RegisterExitAsync(req.Plate, null, null, force: true, ct);
-    return Results.Ok(new { ok = true, closed = res.Closed, debt = res.Amount });
+
+    // Сессию закрыл оператор, а не проезд, поэтому шлагбаум нужно открыть отдельно —
+    // иначе водитель оплатил, а выехать не может.
+    var open = res.Closed > 0
+        ? await barrier.OpenAsync(ParkingCameraDirection.Exit, zoneId, req.Plate, user.Identity?.Name, ct)
+        : ParkingBarrierResult.NoDevice;
+
+    return Results.Ok(new
+    {
+        ok = true,
+        closed = res.Closed,
+        debt = res.Amount,
+        barrierTriggered = open.Triggered,
+        barrierSkipped = open.Skipped,
+        barrierError = open.Error
+    });
 }).RequireAuthorization("Parking.Operate");
 
 // ── Тарифы, абонементы, оплата выезда, история и журнал событий ──────────────
@@ -9547,7 +9893,7 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
     if (norm.Length == 0) return Results.BadRequest(new { message = "Plate is required." });
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-    var vehicle = await db.ParkingVehicles.AsNoTracking().Include(v => v.Permits)
+    var vehicle = await db.ParkingVehicles.AsNoTracking()
         .FirstOrDefaultAsync(v => v.PlateNormalized == norm, ct);
 
     var listEntry = await db.ParkingPlates.AsNoTracking()
@@ -9600,7 +9946,8 @@ app.MapGet("/api/parking/pos-lookup", async (string plate, AppDbContext db, Canc
         .SumAsync(x => (x.Cost ?? 0m) - (x.PaidAmount ?? 0m), ct);
     var timeLimitMinutes = await ParkingAccessService.ResolveTimeLimitAsync(db, norm, ct);
 
-    var permitActive = vehicle?.Permits.Any(p => p.IsActive && p.ValidFrom <= today && (p.ValidTo == null || p.ValidTo >= today)) ?? false;
+    // Машина в белом списке с непросроченной лицензией — кассир видит это сразу.
+    var permitActive = vehicle is { IsActive: true } && (vehicle.AccessValidTo == null || vehicle.AccessValidTo >= today);
 
     return Results.Ok(new
     {
@@ -9651,22 +9998,22 @@ app.MapPost("/api/parking/events", async (ParkingEventRequest req, AppDbContext 
     return Results.Ok(new { ok = true });
 }).RequireAuthorization("Parking.Operate");
 
-// ── Aktiv Parking (нативно): жильцы / транспорт / пропуска / сводка / отчёты ──
+// ── Aktiv Parking (нативно): жильцы / белый список / сводка / отчёты ──
 
-// Статус пропуска на дату: active | suspended | expired | scheduled.
-static string PermitStatus(ParkingPermit p, DateOnly today)
+// Статус доступа машины на дату: active | suspended | expired.
+// Разрешение — сама карточка в белом списке, отдельных пропусков больше нет.
+static string VehicleAccessStatus(ParkingVehicle v, DateOnly today)
 {
-    if (!p.IsActive) return "suspended";
-    if (p.ValidFrom > today) return "scheduled";
-    if (p.ValidTo.HasValue && p.ValidTo.Value < today) return "expired";
+    if (!v.IsActive) return "suspended";
+    if (v.AccessValidTo is { } to && to < today) return "expired";
     return "active";
 }
 
-// Vehicles (владелец — текстовые поля, без справочника жильцов)
+// Белый список машин: карточка и есть разрешение на въезд.
 app.MapGet("/api/parking/vehicles", async (string? q, AppDbContext db, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    var query = db.ParkingVehicles.AsNoTracking().Include(v => v.Permits).AsQueryable();
+    var query = db.ParkingVehicles.AsNoTracking().AsQueryable();
     if (!string.IsNullOrWhiteSpace(q))
     {
         var norm = NormalizePlate(q);
@@ -9675,6 +10022,7 @@ app.MapGet("/api/parking/vehicles", async (string? q, AppDbContext db, Cancellat
     }
     var list = await query.OrderBy(v => v.Plate).ToListAsync(ct);
     var holderNames = await db.ParkingHolders.AsNoTracking().ToDictionaryAsync(h => h.Id, h => h.Name, ct);
+    var zoneNames = await db.ParkingZones.AsNoTracking().ToDictionaryAsync(z => z.Id, z => z.Name, ct);
     return Results.Ok(list.Select(v => new
     {
         id = v.Id, plate = v.Plate, brand = v.Brand, color = v.Color, notes = v.Notes, isActive = v.IsActive,
@@ -9685,11 +10033,10 @@ app.MapGet("/api/parking/vehicles", async (string? q, AppDbContext db, Cancellat
         holderName = v.HolderId.HasValue && holderNames.TryGetValue(v.HolderId.Value, out var hn) ? hn : null,
         timeLimitMinutes = v.TimeLimitMinutes,
         category = v.Category,
-        permitStatus = v.Permits.Count == 0 ? "none"
-            : v.Permits.Any(p => PermitStatus(p, today) == "active") ? "active"
-            : v.Permits.Any(p => PermitStatus(p, today) == "scheduled") ? "scheduled"
-            : v.Permits.Any(p => PermitStatus(p, today) == "suspended") ? "suspended"
-            : "expired"
+        accessValidTo = v.AccessValidTo?.ToString("yyyy-MM-dd"),
+        zoneId = v.ZoneId,
+        zoneName = v.ZoneId.HasValue && zoneNames.TryGetValue(v.ZoneId.Value, out var zn) ? zn : null,
+        accessStatus = VehicleAccessStatus(v, today)
     }));
 }).RequireAuthorization("Parking.View");
 
@@ -9700,6 +10047,8 @@ app.MapPost("/api/parking/vehicles", async (ParkingVehicleRequest req, AppDbCont
     var norm = NormalizePlate(plate);
     if (await db.ParkingVehicles.AnyAsync(v => v.PlateNormalized == norm, ct))
         return Results.Conflict(new { message = "Vehicle with this plate already exists." });
+    if (req.ZoneId.HasValue && !await db.ParkingZones.AnyAsync(z => z.Id == req.ZoneId.Value, ct))
+        return Results.BadRequest(new { message = "Zone not found." });
     var entity = new ParkingVehicle
     {
         Plate = plate,
@@ -9716,6 +10065,8 @@ app.MapPost("/api/parking/vehicles", async (ParkingVehicleRequest req, AppDbCont
         HolderId = req.HolderId,
         TimeLimitMinutes = req.TimeLimitMinutes is > 0 ? req.TimeLimitMinutes : null,
         Category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim().ToLowerInvariant(),
+        AccessValidTo = req.AccessValidTo,
+        ZoneId = req.ZoneId,
         IsActive = req.IsActive,
         CreatedUtc = DateTime.UtcNow
     };
@@ -9733,6 +10084,8 @@ app.MapPut("/api/parking/vehicles/{id:guid}", async (Guid id, ParkingVehicleRequ
     var norm = NormalizePlate(plate);
     if (await db.ParkingVehicles.AnyAsync(v => v.Id != id && v.PlateNormalized == norm, ct))
         return Results.Conflict(new { message = "Vehicle with this plate already exists." });
+    if (req.ZoneId.HasValue && !await db.ParkingZones.AnyAsync(z => z.Id == req.ZoneId.Value, ct))
+        return Results.BadRequest(new { message = "Zone not found." });
     entity.Plate = plate;
     entity.PlateNormalized = norm;
     entity.Brand = string.IsNullOrWhiteSpace(req.Brand) ? null : req.Brand.Trim();
@@ -9747,6 +10100,8 @@ app.MapPut("/api/parking/vehicles/{id:guid}", async (Guid id, ParkingVehicleRequ
     entity.HolderId = req.HolderId;
     entity.TimeLimitMinutes = req.TimeLimitMinutes is > 0 ? req.TimeLimitMinutes : null;
     entity.Category = string.IsNullOrWhiteSpace(req.Category) ? null : req.Category.Trim().ToLowerInvariant();
+    entity.AccessValidTo = req.AccessValidTo;
+    entity.ZoneId = req.ZoneId;
     entity.IsActive = req.IsActive;
     entity.UpdatedUtc = DateTime.UtcNow;
     await db.SaveChangesAsync(ct);
@@ -9757,90 +10112,7 @@ app.MapDelete("/api/parking/vehicles/{id:guid}", async (Guid id, AppDbContext db
 {
     var entity = await db.ParkingVehicles.FirstOrDefaultAsync(x => x.Id == id, ct);
     if (entity is null) return Results.NotFound();
-    db.ParkingVehicles.Remove(entity); // permits удаляются каскадом
-    await db.SaveChangesAsync(ct);
-    return Results.NoContent();
-}).RequireAuthorization("Parking.Manage");
-
-// Permits
-app.MapGet("/api/parking/permits", async (string? status, Guid? vehicleId, AppDbContext db, CancellationToken ct) =>
-{
-    var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    var query = db.ParkingPermits.AsNoTracking()
-        .Include(p => p.Vehicle)
-        .Include(p => p.Zone)
-        .AsQueryable();
-    if (vehicleId.HasValue) query = query.Where(p => p.VehicleId == vehicleId);
-    var list = await query.OrderByDescending(p => p.CreatedUtc).ToListAsync(ct);
-    var rows = list.Select(p => new
-    {
-        id = p.Id,
-        vehicleId = p.VehicleId,
-        plate = p.Vehicle?.Plate ?? "",
-        vehicleBrand = p.Vehicle?.Brand,
-        ownerName = p.Vehicle?.OwnerName,
-        zoneId = p.ZoneId,
-        zoneName = p.Zone?.Name,
-        validFrom = p.ValidFrom.ToString("yyyy-MM-dd"),
-        validTo = p.ValidTo?.ToString("yyyy-MM-dd"),
-        isActive = p.IsActive,
-        notes = p.Notes,
-        status = PermitStatus(p, today)
-    });
-    if (!string.IsNullOrWhiteSpace(status))
-        rows = rows.Where(r => r.status == status.Trim().ToLowerInvariant());
-    return Results.Ok(rows.ToList());
-}).RequireAuthorization("Parking.View");
-
-app.MapPost("/api/parking/permits", async (ParkingPermitRequest req, AppDbContext db, CancellationToken ct) =>
-{
-    if (!await db.ParkingVehicles.AnyAsync(v => v.Id == req.VehicleId, ct))
-        return Results.BadRequest(new { message = "Vehicle not found." });
-    if (req.ZoneId.HasValue && !await db.ParkingZones.AnyAsync(z => z.Id == req.ZoneId.Value, ct))
-        return Results.BadRequest(new { message = "Zone not found." });
-    if (req.ValidTo.HasValue && req.ValidTo.Value < req.ValidFrom)
-        return Results.BadRequest(new { message = "ValidTo must be after ValidFrom." });
-    var entity = new ParkingPermit
-    {
-        VehicleId = req.VehicleId,
-        ZoneId = req.ZoneId,
-        ValidFrom = req.ValidFrom,
-        ValidTo = req.ValidTo,
-        IsActive = req.IsActive,
-        Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim(),
-        CreatedUtc = DateTime.UtcNow
-    };
-    db.ParkingPermits.Add(entity);
-    await db.SaveChangesAsync(ct);
-    return Results.Created($"/api/parking/permits/{entity.Id}", new { id = entity.Id });
-}).RequireAuthorization("Parking.Manage");
-
-app.MapPut("/api/parking/permits/{id:guid}", async (Guid id, ParkingPermitRequest req, AppDbContext db, CancellationToken ct) =>
-{
-    var entity = await db.ParkingPermits.FirstOrDefaultAsync(x => x.Id == id, ct);
-    if (entity is null) return Results.NotFound();
-    if (!await db.ParkingVehicles.AnyAsync(v => v.Id == req.VehicleId, ct))
-        return Results.BadRequest(new { message = "Vehicle not found." });
-    if (req.ZoneId.HasValue && !await db.ParkingZones.AnyAsync(z => z.Id == req.ZoneId.Value, ct))
-        return Results.BadRequest(new { message = "Zone not found." });
-    if (req.ValidTo.HasValue && req.ValidTo.Value < req.ValidFrom)
-        return Results.BadRequest(new { message = "ValidTo must be after ValidFrom." });
-    entity.VehicleId = req.VehicleId;
-    entity.ZoneId = req.ZoneId;
-    entity.ValidFrom = req.ValidFrom;
-    entity.ValidTo = req.ValidTo;
-    entity.IsActive = req.IsActive;
-    entity.Notes = string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim();
-    entity.UpdatedUtc = DateTime.UtcNow;
-    await db.SaveChangesAsync(ct);
-    return Results.Ok(new { id = entity.Id });
-}).RequireAuthorization("Parking.Manage");
-
-app.MapDelete("/api/parking/permits/{id:guid}", async (Guid id, AppDbContext db, CancellationToken ct) =>
-{
-    var entity = await db.ParkingPermits.FirstOrDefaultAsync(x => x.Id == id, ct);
-    if (entity is null) return Results.NotFound();
-    db.ParkingPermits.Remove(entity);
+    db.ParkingVehicles.Remove(entity); // старые пропуска удаляются каскадом
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
 }).RequireAuthorization("Parking.Manage");
@@ -9850,9 +10122,11 @@ app.MapGet("/api/parking/summary", async (AppDbContext db, CancellationToken ct)
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var in7 = today.AddDays(7);
-    var permits = await db.ParkingPermits.AsNoTracking().ToListAsync(ct);
-    var activePermits = permits.Count(p => PermitStatus(p, today) == "active");
-    var expiringSoon = permits.Count(p => PermitStatus(p, today) == "active" && p.ValidTo.HasValue && p.ValidTo.Value <= in7);
+    // Действующие записи белого списка и те, у кого лицензия кончается на неделе.
+    var activePermits = await db.ParkingVehicles.CountAsync(
+        v => v.IsActive && (v.AccessValidTo == null || v.AccessValidTo >= today), ct);
+    var expiringSoon = await db.ParkingVehicles.CountAsync(
+        v => v.IsActive && v.AccessValidTo != null && v.AccessValidTo >= today && v.AccessValidTo <= in7, ct);
 
     var todayStartUtc = DateTime.UtcNow.Date;
     var recentSessions = await db.ParkingSessions.AsNoTracking()
@@ -10195,12 +10469,31 @@ static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? 
         device.Username,
         statusMessage,
         device.ParkingDirection?.ToString(),
-        device.ParkingZoneId);
+        device.ParkingZoneId,
+        device.BarrierOutput);
 }
 
 static string MapConnectivityStatus(DeviceConnectivityStatus status)
 {
     return status == DeviceConnectivityStatus.Connected ? "Online" : "Offline";
+}
+
+/// <summary>
+/// Направление ANPR-камеры приходит строкой ("Entry"/"Exit") — так же, как MapDeviceResponse
+/// его отдаёт. Принимать здесь enum нельзя: JsonStringEnumConverter глобально не включён,
+/// System.Text.Json ждал бы число и на строке ронял запрос в 400.
+/// Пусто/null — «определять по открытой сессии», непонятное значение — ошибка.
+/// </summary>
+/// <summary>Ноль и отрицательные значения означают «не управлять шлагбаумом» — храним как null.</summary>
+static int? NormalizeBarrierOutput(int? raw) => raw is > 0 ? raw : null;
+
+static bool TryParseParkingDirection(string? raw, out ParkingCameraDirection? value)
+{
+    value = null;
+    if (string.IsNullOrWhiteSpace(raw)) return true;
+    if (!Enum.TryParse<ParkingCameraDirection>(raw.Trim(), ignoreCase: true, out var parsed)) return false;
+    value = parsed;
+    return true;
 }
 
 // Helpers to create structured i18n-ready notification payloads.
@@ -10386,6 +10679,15 @@ public sealed record ResetPasswordRequest(string Email, string Token, string Pas
 
 public sealed record ActivateDeviceRequest(string IpAddress, int Port, string MacAddress, string Password);
 
+/// <summary>
+/// Какой ISAPI-путь снимка сработал у камеры. Кадры идут раз в секунду, и перебирать
+/// пути и порты заново на каждом — держать соединение и поток впустую.
+/// </summary>
+internal static class ParkingSnapshotPaths
+{
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> Known = new();
+}
+
 public sealed record CreateDeviceRequest(
     string DeviceIdentifier,
     string Name,
@@ -10395,9 +10697,11 @@ public sealed record CreateDeviceRequest(
     DeviceType DeviceType,
     string? Username,
     string? Password,
-    /// <summary>Только для ANPR-камеры: Entry/Exit. null — определять по открытой сессии.</summary>
-    ParkingCameraDirection? ParkingDirection = null,
-    Guid? ParkingZoneId = null);
+    /// <summary>Только для ANPR-камеры: "Entry"/"Exit". null или пусто — определять по открытой сессии.</summary>
+    string? ParkingDirection = null,
+    Guid? ParkingZoneId = null,
+    /// <summary>Реле шлагбаума на камере; null или 0 — сервер шлагбаумом не управляет.</summary>
+    int? BarrierOutput = null);
 
 public sealed record UpdateDeviceRequest(
     string DeviceIdentifier,
@@ -10408,8 +10712,11 @@ public sealed record UpdateDeviceRequest(
     DeviceType DeviceType,
     string? Username,
     string? Password,
-    ParkingCameraDirection? ParkingDirection = null,
-    Guid? ParkingZoneId = null);
+    /// <summary>Только для ANPR-камеры: "Entry"/"Exit". null или пусто — определять по открытой сессии.</summary>
+    string? ParkingDirection = null,
+    Guid? ParkingZoneId = null,
+    /// <summary>Реле шлагбаума на камере; null или 0 — сервер шлагбаумом не управляет.</summary>
+    int? BarrierOutput = null);
 
 public sealed record DeviceResponse(
     Guid Id,
@@ -10424,7 +10731,8 @@ public sealed record DeviceResponse(
     string? Username,
     string? StatusMessage,
     string? ParkingDirection = null,
-    Guid? ParkingZoneId = null);
+    Guid? ParkingZoneId = null,
+    int? BarrierOutput = null);
 
 public sealed record DeviceStatusResponse(
     Guid DeviceId,
@@ -10573,14 +10881,16 @@ public sealed record ParkingRowRequest(string Name, int SortOrder);
 public sealed record ParkingSpaceRequest(string Code, string Type, bool IsActive, int SortOrder, string? Notes);
 public sealed record ParkingPlateRequest(string Plate, string ListType, string? Note, string? Category = null, DateOnly? ValidTo = null);
 public sealed record ParkingHolderRequest(string Name, string? Phone, string? Unit, int SpacesLimit, bool IsActive = true, string? Notes = null);
-public sealed record ParkingVehicleRequest(string Plate, string? Brand, string? Color, string? Notes, bool IsActive = true, string? Country = null, string? Company = null, string? VehicleType = null, string? PhotoUrl = null, string? OwnerName = null, string? OwnerPhone = null, Guid? HolderId = null, int? TimeLimitMinutes = null, string? Category = null);
-public sealed record ParkingPermitRequest(Guid VehicleId, Guid? ZoneId, DateOnly ValidFrom, DateOnly? ValidTo, bool IsActive = true, string? Notes = null);
+/// <summary>Карточка белого списка: AccessValidTo — дата окончания лицензии, ZoneId — зона доступа (null — все).</summary>
+public sealed record ParkingVehicleRequest(string Plate, string? Brand, string? Color, string? Notes, bool IsActive = true, string? Country = null, string? Company = null, string? VehicleType = null, string? PhotoUrl = null, string? OwnerName = null, string? OwnerPhone = null, Guid? HolderId = null, int? TimeLimitMinutes = null, string? Category = null, DateOnly? AccessValidTo = null, Guid? ZoneId = null);
 public sealed record ParkingTariffRequest(string Name, string Kind, int FreeMinutes, decimal PricePerHour, decimal PricePerDay, decimal FixedPrice, decimal? MaxPerDay, decimal? NightPricePerHour, TimeSpan? NightFrom, TimeSpan? NightTo, decimal? WeekendPricePerHour, bool IsActive = true, bool IsDefault = false, int SortOrder = 0);
 public sealed record ParkingSubscriptionRequest(string Plate, string Name, DateOnly StartDate, DateOnly EndDate, int? EntriesLimit, bool Unlimited = false, bool IsActive = true, string? Notes = null);
 public sealed record ParkingPayRequest(Guid SessionId, string? Method, string? Operator = null);
 public sealed record ParkingEventRequest(string Type, string? Message, string? Plate, string? Source);
 public sealed record ParkingAccessRequest(string Plate, Guid? ZoneId, string? SpaceType, bool? OpenSession, string? Camera = null, string? PhotoUrl = null, double? Confidence = null, string? Operator = null);
 public sealed record ParkingExitRequest(string Plate);
+/// <summary>Ручное закрытие сессии оператором; OpenBarrier — открыть ли при этом шлагбаум.</summary>
+public sealed record ParkingSessionCloseRequest(bool OpenBarrier = false);
 /// <summary>To_ — конец периода: имя To уже занято адресом получателя.</summary>
 public sealed record SendParkingReportRequest(string To, DateTime? From = null, DateTime? To_ = null, Guid? ZoneId = null);
 public sealed record ParkingSpaceBulkRequest(string? Prefix, int StartNumber, int Count, int Pad, string Type);

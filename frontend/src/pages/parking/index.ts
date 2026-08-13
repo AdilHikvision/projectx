@@ -1,5 +1,7 @@
 export * from './ParkingManagementPage'
 export * from './AktivParkingPages'
+export * from './ParkingBlacklistPage'
+export * from './ParkingHoldersPage'
 export * from './ParkingTariffsPage'
 export * from './ParkingHistoryPage'
 export * from './ParkingPosPage'

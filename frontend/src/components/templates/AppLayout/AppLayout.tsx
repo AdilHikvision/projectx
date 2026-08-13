@@ -49,7 +49,9 @@ const ROUTE_META: Record<string, RouteMeta> = {
     '/parking/ap-home': { title: 'Aktiv Parking — Ana Səhifə', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/ap-residents': { title: 'Aktiv Parking — Sakinlər', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/ap-vehicles': { title: 'Aktiv Parking — Avtomobillər', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
-    '/parking/ap-permits': { title: 'Aktiv Parking — Giriş icazələri', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/parking/vehicles': { titleKey: 'parking.nav.vehicles', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/parking/holders': { titleKey: 'parking.nav.holders', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/parking/blacklist': { titleKey: 'parking.nav.blacklist', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/ap-reports': { title: 'Aktiv Parking — Hesabatlar', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
 };
 

@@ -50,6 +50,11 @@ public sealed class Device : BaseEntity
     public ParkingCameraDirection? ParkingDirection { get; set; }
     /// <summary>Для ANPR-камеры: зона парковки, к которой относится проезд.</summary>
     public Guid? ParkingZoneId { get; set; }
+    /// <summary>
+    /// Для ANPR-камеры: номер релейного выхода, которым открывается шлагбаум.
+    /// null или 0 — сервер шлагбаумом не управляет (камера открывает его сама).
+    /// </summary>
+    public int? BarrierOutput { get; set; }
 }
 
 /// <summary>Направление проезда, которое снимает ANPR-камера.</summary>
@@ -1180,6 +1185,10 @@ public sealed class ParkingSession : BaseEntity
     public string PlateNormalized { get; set; } = string.Empty;
     public Guid? ZoneId { get; set; }
     public ParkingSpaceType SpaceType { get; set; } = ParkingSpaceType.Regular;
+    /// <summary>Конкретное место, занятое машиной. Назначается при въезде, освобождается выездом;
+    /// null — мест нужного типа не нашлось (или сессия старше этой возможности).</summary>
+    public Guid? SpaceId { get; set; }
+    public ParkingSpace? Space { get; set; }
     public DateTime EnteredUtc { get; set; } = DateTime.UtcNow;
     public DateTime? ExitedUtc { get; set; }
     public bool IsPaid { get; set; }
@@ -1278,7 +1287,10 @@ public sealed class ParkingResident : BaseEntity
     public ICollection<ParkingVehicle> Vehicles { get; set; } = new List<ParkingVehicle>();
 }
 
-/// <summary>Транспортное средство. Владелец — текстовые поля (имя/телефон), без справочника жильцов.</summary>
+/// <summary>
+/// Машина из белого списка: сама карточка и есть разрешение на въезд. Срок действия и зона
+/// живут здесь же — отдельных пропусков больше нет, поэтому оператор заводит машину одним окном.
+/// </summary>
 public sealed class ParkingVehicle : BaseEntity
 {
     public Guid? ResidentId { get; set; }
@@ -1309,10 +1321,19 @@ public sealed class ParkingVehicle : BaseEntity
     public int? TimeLimitMinutes { get; set; }
     /// <summary>Категория: employee|management|vip|service — для отчётов и отображения.</summary>
     public string? Category { get; set; }
+    /// <summary>Дата окончания доступа (лицензии); после неё машину не пускают. null — бессрочно.</summary>
+    public DateOnly? AccessValidTo { get; set; }
+    /// <summary>Зона, куда разрешён въезд; null — все зоны.</summary>
+    public Guid? ZoneId { get; set; }
+    public ParkingZone? Zone { get; set; }
     public ICollection<ParkingPermit> Permits { get; set; } = new List<ParkingPermit>();
 }
 
-/// <summary>Пропуск (разрешение на въезд) для ТС; срок задаётся датами, null ValidTo — бессрочно.</summary>
+/// <summary>
+/// Пропуск — прежняя форма разрешения на въезд. Сейчас доступом управляет сама карточка машины
+/// (<see cref="ParkingVehicle.AccessValidTo"/> и <see cref="ParkingVehicle.ZoneId"/>), а таблица
+/// оставлена ради истории: миграция перенесла из неё сроки и зоны в машины.
+/// </summary>
 public sealed class ParkingPermit : BaseEntity
 {
     public Guid VehicleId { get; set; }

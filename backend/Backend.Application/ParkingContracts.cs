@@ -46,6 +46,44 @@ public interface IParkingAccessService
     Task<int> GetExitGraceMinutesAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Чем закончилась попытка открыть шлагбаум. Skipped — реле не настроено: шлагбаумом
+/// управляет сама камера, и это не ошибка. Triggered=false с Error — импульс не прошёл,
+/// машина осталась перед закрытым шлагбаумом.
+/// </summary>
+public sealed record ParkingBarrierResult(
+    bool Triggered,
+    bool Skipped,
+    string? DeviceName = null,
+    int? Output = null,
+    string? Error = null,
+    /// <summary>Чем открыли: "gate" — штатная команда шлагбаума, "io" — импульс на реле.</summary>
+    string? Method = null)
+{
+    public static ParkingBarrierResult NoDevice => new(false, true);
+}
+
+/// <summary>
+/// Управление шлагбаумом через релейный выход камеры. Единственное место, которое
+/// физически открывает проезд: и по решению камеры, и по команде оператора с кассы.
+/// </summary>
+public interface IParkingBarrierService
+{
+    /// <summary>Импульс на реле конкретной камеры. reason попадает в журнал при ошибке.</summary>
+    Task<ParkingBarrierResult> TriggerAsync(Guid deviceId, string reason, string? plate, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Открыть шлагбаум нужного направления: камера с настроенным реле, по возможности
+    /// в той же зоне. Нужно, когда проезд оформил оператор, а не камера.
+    /// </summary>
+    Task<ParkingBarrierResult> OpenAsync(
+        Backend.Domain.Entities.ParkingCameraDirection direction,
+        Guid? zoneId,
+        string? plate,
+        string? source,
+        CancellationToken cancellationToken);
+}
+
 /// <summary>Распознанный номер с камеры.</summary>
 public sealed record AnprPlateEvent(
     string Plate,

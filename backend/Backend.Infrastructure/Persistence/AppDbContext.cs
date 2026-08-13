@@ -101,6 +101,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.LastSeenUtc);
             entity.Property(x => x.Username).HasMaxLength(64);
             entity.Property(x => x.Password).HasMaxLength(120);
+            entity.Property(x => x.BarrierOutput);
             entity.HasIndex(x => x.DeviceIdentifier).IsUnique();
             entity.HasOne(x => x.DeviceStatus).WithMany(x => x.Devices).HasForeignKey(x => x.DeviceStatusId);
         });
@@ -737,9 +738,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.Property(x => x.Operator).HasMaxLength(120);
             entity.Property(x => x.PaymentMethod).HasMaxLength(32);
             entity.Property(x => x.Cost).HasPrecision(12, 2);
+            // Место освобождается, если его удалили из структуры: сессия при этом остаётся.
+            entity.HasOne(x => x.Space).WithMany().HasForeignKey(x => x.SpaceId).OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => new { x.ZoneId, x.ExitedUtc });
             entity.HasIndex(x => x.PlateNormalized);
             entity.HasIndex(x => x.EnteredUtc);
+            entity.HasIndex(x => x.SpaceId);
         });
 
         builder.Entity<ParkingTariff>(entity =>
@@ -839,9 +843,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Resident).WithMany(x => x.Vehicles).HasForeignKey(x => x.ResidentId).OnDelete(DeleteBehavior.SetNull);
             // Удаление владельца не трогает машины — они просто теряют привязку и квоту.
             entity.HasOne(x => x.Holder).WithMany(x => x.Vehicles).HasForeignKey(x => x.HolderId).OnDelete(DeleteBehavior.SetNull);
+            // Удаление зоны не удаляет машину: она просто получает доступ во все зоны.
+            entity.HasOne(x => x.Zone).WithMany().HasForeignKey(x => x.ZoneId).OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => x.PlateNormalized);
             entity.HasIndex(x => x.ResidentId);
             entity.HasIndex(x => x.HolderId);
+            entity.HasIndex(x => x.ZoneId);
         });
 
         builder.Entity<ParkingPermit>(entity =>

@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
 import { Button, Input } from '../../components/atoms'
 import { PageHeader, Modal } from '../../components/organisms'
-import { apiRequest } from '../../lib/api'
+import { apiRequest, getApiBaseUrl } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
 import { useModule } from '../../context/ModuleContext'
 
@@ -60,21 +60,71 @@ interface Scheme {
     }[]
 }
 
-/** Владелец мест: N мест и любое число закреплённых номеров. */
-interface Holder {
+/** Машина, стоящая на парковке прямо сейчас (/api/parking/live). */
+interface LiveInsideRow {
+    id: string
+    plate: string
+    enteredUtc: string
+    minutes: number
+    zoneName: string | null
+    spaceId: string | null
+    spaceCode: string | null
+    spaceType: SpaceType
+    cameraName: string | null
+    photoUrl: string | null
+    isPaid: boolean
+    brand: string | null
+    color: string | null
+    ownerName: string | null
+    holderName: string | null
+    category: string | null
+}
+/** Событие ленты: въезд, выезд, отказ на въезде или тревога чёрного списка. */
+interface LiveFeedRow {
+    id: string
+    kind: 'entry' | 'exit' | 'denied' | 'alarm' | 'recognition_error' | 'camera_error'
+    plate: string
+    atUtc: string
+    zoneName: string | null
+    spaceCode: string | null
+    source: string | null
+    /** У выезда — сколько минут простояла машина; у отказа/тревоги — текст из журнала. */
+    message: string | null
+}
+interface Occupancy {
+    commonCapacity: number
+    vipCapacity: number
+    commonUsed: number
+    vipUsed: number
+    commonFree: number
+    vipFree: number
+    insideTotal: number
+}
+interface LiveData {
+    serverUtc: string
+    inside: LiveInsideRow[]
+    feed: LiveFeedRow[]
+    occupiedSpaces: { spaceId: string; sessionId: string; plate: string; enteredUtc: string }[]
+    occupancy: Occupancy
+    entriesToday: number
+    exitsToday: number
+}
+/** Кто стоит на месте: схема красит такие места и подписывает номером. */
+type OccupiedMap = Map<string, { plate: string; enteredUtc: string }>
+
+/** ANPR-камера парковки: показываем её живой картинкой в своей зоне. */
+interface ParkingCamera {
     id: string
     name: string
-    phone: string | null
-    unit: string | null
-    spacesLimit: number
-    isActive: boolean
-    notes: string | null
-    plates: string[]
-    /** Сколько машин владельца стоит внутри прямо сейчас. */
-    occupied: number
+    ipAddress: string
+    zoneId: string | null
+    zoneName: string | null
+    direction: 'Entry' | 'Exit' | null
+    barrierOutput: number | null
+    status: 'Online' | 'Offline'
+    /** Адрес для VLC — без логина и пароля. */
+    rtspUrl: string
 }
-
-const emptyHolder = { name: '', phone: '', unit: '', spacesLimit: '1', isActive: true, notes: '' }
 
 const SPACE_TYPES: SpaceType[] = ['Regular', 'Vip', 'Disabled']
 
@@ -93,6 +143,11 @@ const PK_RESTYLE = `
 /* AktivParking panel: soft shadow + hairline top accent feel */
 .pk-page .ap-panel{box-shadow:var(--ap-shadow)!important;border-color:var(--ap-line)!important}
 .pk-page .ap-panel:hover{box-shadow:0 2px 6px rgba(37,38,65,.05),0 12px 30px rgba(37,38,65,.07)!important}
+/* Живая лента: новое событие подсвечивается, точка LIVE дышит */
+@keyframes pk-flash{0%{background:#EEF2FF}100%{background:transparent}}
+.pk-flash{animation:pk-flash 3.5s ease-out}
+@keyframes pk-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+.pk-live-dot{animation:pk-pulse 1.6s ease-in-out infinite}
 `
 
 
@@ -100,6 +155,49 @@ const TYPE_STYLE: Record<SpaceType, { icon: string; chip: string; dot: string }>
     Regular: { icon: 'local_parking', chip: 'bg-slate-100 text-slate-700 border-slate-200', dot: 'bg-slate-400' },
     Vip: { icon: 'star', chip: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
     Disabled: { icon: 'accessible', chip: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-400' },
+}
+
+/** Занятое место выбивается из цветов типа — оно должно бросаться в глаза на схеме. */
+const OCCUPIED_CHIP = 'bg-rose-500 text-white border-rose-500'
+
+const FEED_STYLE: Record<LiveFeedRow['kind'], { icon: string; chip: string }> = {
+    entry: { icon: 'login', chip: 'bg-emerald-50 text-emerald-700' },
+    exit: { icon: 'logout', chip: 'bg-sky-50 text-sky-700' },
+    denied: { icon: 'block', chip: 'bg-orange-50 text-orange-700' },
+    alarm: { icon: 'warning', chip: 'bg-red-50 text-red-700' },
+    // Плохо прочитанный номер и незакрывшийся шлагбаум — не отказы, а проблемы железа.
+    recognition_error: { icon: 'image_not_supported', chip: 'bg-amber-50 text-amber-700' },
+    camera_error: { icon: 'videocam_off', chip: 'bg-red-50 text-red-700' },
+}
+
+const fmtTime = (iso: string) =>
+    new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+const fmtDateTime = (iso: string) =>
+    new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+const fmtDur = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${Math.round(m % 60)}m` : `${Math.round(m)}m`)
+
+/** Как часто обновляем живую картину: достаточно быстро для шлагбаума, не грузит сервер. */
+const LIVE_INTERVAL_MS = 5000
+
+/** Кадр в секунду в плитке камеры и три — в развёрнутом окне: RTSP браузер не играет,
+ *  «видео» собирается из снимков, а каждый снимок — запрос к камере. */
+const CAMERA_TILE_MS = 1000
+const CAMERA_FULL_MS = 350
+
+const DIRECTION_STYLE: Record<'Entry' | 'Exit', { icon: string; chip: string }> = {
+    Entry: { icon: 'login', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    Exit: { icon: 'logout', chip: 'bg-sky-50 text-sky-700 border-sky-200' },
+}
+
+/** Уровни распознавания: готовый список процентов вместо поля ввода — порог выбирают
+ *  на глаз по журналу отбраковок, а не подбирают дробью. 0 — проверку не делать. */
+const CONFIDENCE_LEVELS = [0, 50, 60, 70, 75, 80, 85, 90, 95]
+
+/** Настройка хранится долей 0..1, но переживает и запись процентом — читаем оба вида. */
+const toPercent = (raw: string | null) => {
+    const v = Number(raw)
+    if (!Number.isFinite(v) || v <= 0) return 0
+    return Math.min(100, Math.round(v > 1 ? v : v * 100))
 }
 
 export function ParkingManagementPage() {
@@ -114,16 +212,22 @@ export function ParkingManagementPage() {
     const parkingMode: 'Paid' | 'Free' = parkingPaid ? 'Paid' : 'Free'
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
-    const [plates, setPlates] = useState<{ id: string; plate: string; listType: string; note: string | null; category?: string | null; validTo?: string | null }[]>([])
-    // Владельцы мест: у одного N мест и любое число машин.
-    const [holders, setHolders] = useState<Holder[]>([])
-    const [holderForm, setHolderForm] = useState(emptyHolder)
-    const [editingHolderId, setEditingHolderId] = useState<string | null>(null)
-    const [newPlate, setNewPlate] = useState('')
-    const [newPlateCategory, setNewPlateCategory] = useState('')
+    // Режим проезда: обе стороны на камерах или только въезд, а выезд закрывает оператор.
+    const [flowMode, setFlowMode] = useState<'EntryExit' | 'EntryOnly'>('EntryExit')
     // Платный режим: сколько минут даётся на выезд после оплаты (parking.exitGraceMinutes).
     const [exitGraceMinutes, setExitGraceMinutes] = useState('15')
-    const [occupancy, setOccupancy] = useState<{ commonCapacity: number; vipCapacity: number; commonUsed: number; vipUsed: number; commonFree: number; vipFree: number } | null>(null)
+    // Фильтр качества распознавания: по обрывку номера шлагбаум открываться не должен.
+    // Порог показываем процентами (сервер хранит долю 0..1) — оператору «80%» понятнее, чем «0.8».
+    const [minConfidencePct, setMinConfidencePct] = useState(0)
+    const [requireConfidence, setRequireConfidence] = useState(false)
+    const [minPlateLength, setMinPlateLength] = useState('5')
+    const [platePattern, setPlatePattern] = useState('')
+    const [allowReentry, setAllowReentry] = useState(false)
+    // Живая картина парковки: опрашиваем раз в LIVE_INTERVAL, отсюда же берём занятость мест.
+    const [live, setLive] = useState<LiveData | null>(null)
+    const [liveOffline, setLiveOffline] = useState(false)
+    const occupancy = live?.occupancy ?? null
+    const [cameras, setCameras] = useState<ParkingCamera[]>([])
     const [zones, setZones] = useState<Zone[]>([])
     const [floors, setFloors] = useState<Floor[]>([])
     const [rows, setRows] = useState<Row[]>([])
@@ -170,10 +274,7 @@ export function ParkingManagementPage() {
     }
 
     useEffect(() => { void loadZones() }, [token])
-    // Alt-rejim + nömrə siyahıları + tutum yüklə
-    const reloadPlates = () => apiRequest<typeof plates>('/api/parking/plates', { token }).then(setPlates).catch(() => { })
-    const reloadHolders = () => apiRequest<Holder[]>('/api/parking/holders', { token }).then(setHolders).catch(() => { })
-    const reloadOccupancy = () => apiRequest<NonNullable<typeof occupancy>>('/api/parking/occupancy', { token }).then(setOccupancy).catch(() => { })
+    // Alt-rejim + tanınma parametrləri + kameralar
     useEffect(() => {
         if (!token) return
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.freeSubMode', { token })
@@ -181,10 +282,57 @@ export function ParkingManagementPage() {
             .catch(() => { })
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.exitGraceMinutes', { token })
             .then((r) => { if (r?.value) setExitGraceMinutes(r.value) }).catch(() => { /* нет ключа — остаётся 15 */ })
-        void reloadPlates()
-        void reloadHolders()
-        void reloadOccupancy()
+        // Настройки распознавания читаем одним списком: ключей несколько, а запрос дешевле.
+        apiRequest<{ key: string; value: string | null }[]>('/api/system-settings', { token })
+            .then((all) => {
+                const get = (k: string) => all.find((x) => x.key === k)?.value ?? null
+                setMinConfidencePct(toPercent(get('parking.minPlateConfidence')))
+                const len = get('parking.minPlateLength'); if (len) setMinPlateLength(len)
+                const pat = get('parking.platePattern'); if (pat) setPlatePattern(pat)
+                setAllowReentry(get('parking.allowReentryWhileInside') === 'true')
+                setRequireConfidence(get('parking.requireConfidence') === 'true')
+                setFlowMode(get('parking.flowMode') === 'EntryOnly' ? 'EntryOnly' : 'EntryExit')
+            })
+            .catch(() => { /* значения по умолчанию совпадают с серверными */ })
+        // Камеры меняются редко — читаем один раз, статус онлайн приходит вместе со списком.
+        apiRequest<ParkingCamera[]>('/api/parking/cameras', { token }).then(setCameras).catch(() => { })
     }, [token])
+
+    // ─── Живой мониторинг ───
+    // Опрос вместо push: страница смотрит на парковку, пока открыта, и не держит соединение,
+    // когда вкладка спрятана.
+    const refreshLive = () => apiRequest<LiveData>('/api/parking/live', { token })
+        .then((d) => { setLive(d); setLiveOffline(false) })
+        .catch(() => { /* следующий тик покажет состояние */ })
+
+    useEffect(() => {
+        if (!token) return
+        let stopped = false
+        const tick = async () => {
+            if (document.hidden) return
+            try {
+                const d = await apiRequest<LiveData>('/api/parking/live', { token })
+                if (!stopped) { setLive(d); setLiveOffline(false) }
+            } catch {
+                if (!stopped) setLiveOffline(true)
+            }
+        }
+        void tick()
+        const timer = window.setInterval(() => void tick(), LIVE_INTERVAL_MS)
+        const onVisibility = () => { if (!document.hidden) void tick() }
+        document.addEventListener('visibilitychange', onVisibility)
+        return () => {
+            stopped = true
+            window.clearInterval(timer)
+            document.removeEventListener('visibilitychange', onVisibility)
+        }
+    }, [token])
+
+    const occupiedSpaces: OccupiedMap = useMemo(() => {
+        const map: OccupiedMap = new Map()
+        for (const o of live?.occupiedSpaces ?? []) map.set(o.spaceId, { plate: o.plate, enteredUtc: o.enteredUtc })
+        return map
+    }, [live])
 
     const saveFreeSetting = async (key: string, value: string) => {
         try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key, value: value.trim() }) }) }
@@ -196,54 +344,6 @@ export function ParkingManagementPage() {
         setFreeSubMode(m)
         try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.freeSubMode', value: m }) }) }
         catch { setFreeSubMode(prev) }
-    }
-    const addPlate = async () => {
-        const p = newPlate.trim()
-        if (!p) return
-        try {
-            await apiRequest('/api/parking/plates', {
-                method: 'POST', token,
-                body: JSON.stringify({
-                    plate: p,
-                    listType: 'Block',
-                    category: newPlateCategory || null,
-                }),
-            })
-            setNewPlate(''); setNewPlateCategory('')
-            await reloadHolders()
-            await reloadPlates()
-        }
-        catch { /* ignore */ }
-    }
-    const delPlate = async (id: string) => {
-        try { await apiRequest(`/api/parking/plates/${id}`, { method: 'DELETE', token }); setPlates((ps) => ps.filter((x) => x.id !== id)); await reloadHolders() }
-        catch { /* ignore */ }
-    }
-
-    // ─── Владельцы мест ───
-    const saveHolder = async () => {
-        const name = holderForm.name.trim()
-        if (!name) return
-        const body = JSON.stringify({
-            name,
-            phone: holderForm.phone.trim() || null,
-            unit: holderForm.unit.trim() || null,
-            spacesLimit: Math.max(1, parseInt(holderForm.spacesLimit, 10) || 1),
-            isActive: holderForm.isActive,
-            notes: holderForm.notes.trim() || null,
-        })
-        try {
-            if (editingHolderId) await apiRequest(`/api/parking/holders/${editingHolderId}`, { method: 'PUT', token, body })
-            else await apiRequest('/api/parking/holders', { method: 'POST', token, body })
-            setHolderForm(emptyHolder); setEditingHolderId(null)
-            await reloadHolders()
-        } catch { /* ignore */ }
-    }
-    const delHolder = async (id: string) => {
-        try {
-            await apiRequest(`/api/parking/holders/${id}`, { method: 'DELETE', token })
-            await reloadHolders(); await reloadPlates()
-        } catch { /* ignore */ }
     }
     useEffect(() => {
         if (!selectedZoneId) { setFloors([]); setSelectedFloorId(null); return }
@@ -297,19 +397,27 @@ export function ParkingManagementPage() {
                         </Button>
                     </div>
 
+                    {/* Живой мониторинг: кто внутри и кто только что проехал. */}
+                    <LiveMonitor live={live} offline={liveOffline} token={token} onChanged={refreshLive} />
+
                     {loadingZones ? (
                         <Spinner />
                     ) : zones.length === 0 ? (
                         <EmptyState icon="local_parking" text={t('parking.zones.empty')}
                             action={<Button icon="add" variant="outline" onClick={() => setZoneModal({ mode: 'create', data: null })}>{t('parking.zones.new')}</Button>} />
                     ) : (
-                        <SchemeView
-                            zones={zones}
-                            selectedZoneId={selectedZoneId}
-                            onSelectZone={setSelectedZoneId}
-                            scheme={scheme}
-                            loading={loadingScheme}
-                        />
+                        <>
+                            <SchemeView
+                                zones={zones}
+                                selectedZoneId={selectedZoneId}
+                                onSelectZone={setSelectedZoneId}
+                                scheme={scheme}
+                                loading={loadingScheme}
+                                occupied={occupiedSpaces}
+                            />
+                            {/* Камеры выбранной зоны: въезд и выезд рядом со схемой этой же зоны. */}
+                            <CameraWall cameras={cameras} zoneId={selectedZoneId} token={token} />
+                        </>
                     )}
 
                     <TypeLegend />
@@ -337,6 +445,31 @@ export function ParkingManagementPage() {
 
                     {/* Giriş məntiqi: alt-rejim + tutum + nömrə siyahıları */}
                     <div className="ap-panel space-y-5 rounded-2xl border border-border-base bg-surface p-5">
+                        {/* Режим проезда не зависит от платности: он про то, кто закрывает сессию —
+                            выездная камера или оператор. */}
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div className="text-sm font-bold text-text-dark">{t('parking.cfg.flowMode')}</div>
+                                <div className="mt-0.5 text-xs text-text-muted">
+                                    {t(flowMode === 'EntryOnly' ? 'parking.cfg.flowEntryOnlyHint' : 'parking.cfg.flowEntryExitHint')}
+                                </div>
+                            </div>
+                            <div className="inline-flex shrink-0 rounded-xl border border-border-base bg-slate-75 p-1">
+                                {(['EntryExit', 'EntryOnly'] as const).map((m) => (
+                                    <button key={m} type="button"
+                                        onClick={() => {
+                                            if (m === flowMode) return
+                                            const prev = flowMode
+                                            setFlowMode(m)
+                                            void saveFreeSetting('parking.flowMode', m).catch(() => setFlowMode(prev))
+                                        }}
+                                        className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${flowMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}>
+                                        {t(m === 'EntryExit' ? 'parking.cfg.flowEntryExit' : 'parking.cfg.flowEntryOnly')}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
                         {parkingMode === 'Free' && (
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
@@ -374,6 +507,81 @@ export function ParkingManagementPage() {
                             </div>
                         )}
 
+                        {/* Фильтр распознавания: что считать пригодным номером, прежде чем
+                            открывать шлагбаум. Отбракованные кадры видны в ленте и в журнале. */}
+                        <div className="rounded-xl border border-border-base p-3 space-y-3">
+                            <div>
+                                <div className="text-sm font-bold text-text-dark">{t('parking.cfg.recognition')}</div>
+                                <div className="mt-0.5 text-xs text-text-muted">{t('parking.cfg.recognitionHint')}</div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-3">
+                                <div>
+                                    <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.minConfidence')}</div>
+                                    <select
+                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                        value={minConfidencePct}
+                                        onChange={(e) => {
+                                            const pct = Number(e.target.value)
+                                            setMinConfidencePct(pct)
+                                            // Сервер ждёт долю 0..1: 80% → 0.8, «выкл» → 0.
+                                            void saveFreeSetting('parking.minPlateConfidence', String(pct / 100))
+                                        }}>
+                                        {CONFIDENCE_LEVELS.map((pct) => (
+                                            <option key={pct} value={pct}>
+                                                {pct === 0 ? t('parking.cfg.confidenceOff') : `${pct}%`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.minPlateLength')}</div>
+                                    <input type="number" min={0} max={16}
+                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
+                                        value={minPlateLength}
+                                        onChange={(e) => setMinPlateLength(e.target.value)}
+                                        onBlur={() => void saveFreeSetting('parking.minPlateLength', minPlateLength || '0')} />
+                                </div>
+                                <div>
+                                    <div className="text-xs text-text-muted mb-1.5">{t('parking.cfg.platePattern')}</div>
+                                    <input type="text" placeholder="^\d{2}[A-Z]{2}\d{3}$"
+                                        className="w-full rounded-lg border border-border-base bg-surface px-3 py-2 font-mono text-sm text-text-dark"
+                                        value={platePattern}
+                                        onChange={(e) => setPlatePattern(e.target.value)}
+                                        onBlur={() => void saveFreeSetting('parking.platePattern', platePattern)} />
+                                </div>
+                            </div>
+                            <div className="text-[11px] leading-relaxed text-text-light">{t('parking.cfg.minConfidenceHint')}</div>
+                            <div className="text-[11px] leading-relaxed text-text-light">{t('parking.cfg.platePatternHint')}</div>
+                            {/* Правило имеет смысл только при включённом пороге: без порога процент
+                                камеры вообще не смотрится. */}
+                            {minConfidencePct > 0 && (
+                                <label className="flex cursor-pointer items-start gap-2">
+                                    <input type="checkbox" checked={requireConfidence}
+                                        onChange={(e) => {
+                                            setRequireConfidence(e.target.checked)
+                                            void saveFreeSetting('parking.requireConfidence', String(e.target.checked))
+                                        }}
+                                        className="mt-0.5 h-4 w-4 rounded border-border-light text-primary focus:ring-primary/30" />
+                                    <span>
+                                        <span className="block text-sm font-bold text-text-dark">{t('parking.cfg.requireConfidence')}</span>
+                                        <span className="block text-[11px] text-text-muted">{t('parking.cfg.requireConfidenceHint')}</span>
+                                    </span>
+                                </label>
+                            )}
+                            <label className="flex cursor-pointer items-start gap-2">
+                                <input type="checkbox" checked={allowReentry}
+                                    onChange={(e) => {
+                                        setAllowReentry(e.target.checked)
+                                        void saveFreeSetting('parking.allowReentryWhileInside', String(e.target.checked))
+                                    }}
+                                    className="mt-0.5 h-4 w-4 rounded border-border-light text-primary focus:ring-primary/30" />
+                                <span>
+                                    <span className="block text-sm font-bold text-text-dark">{t('parking.cfg.allowReentry')}</span>
+                                    <span className="block text-[11px] text-text-muted">{t('parking.cfg.allowReentryHint')}</span>
+                                </span>
+                            </label>
+                        </div>
+
                         {occupancy && (
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="rounded-xl border border-border-base p-3">
@@ -387,107 +595,9 @@ export function ParkingManagementPage() {
                             </div>
                         )}
 
-                        <div>
-                            {/* Разрешения выдаются пропусками на машины из базы, поэтому список остался только запрещающим. */}
-                            <div className="mb-2 text-sm font-bold text-text-dark">{t('parking.cfg.blockListTitle')}</div>
-                            <div className="mb-3 flex flex-wrap items-center gap-2">
-                                <Input value={newPlate} onChange={(e) => setNewPlate(e.target.value)} placeholder="10-AA-100" />
-                                <select value={newPlateCategory} onChange={(e) => setNewPlateCategory(e.target.value)}
-                                    className="rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark">
-                                    <option value="">{t('parking.cfg.reasonAny')}</option>
-                                    <option value="unpaid">{t('parking.cfg.reason.unpaid')}</option>
-                                    <option value="violator">{t('parking.cfg.reason.violator')}</option>
-                                    <option value="stolen">{t('parking.cfg.reason.stolen')}</option>
-                                    <option value="banned">{t('parking.cfg.reason.banned')}</option>
-                                </select>
-                                <Button icon="add" onClick={addPlate}>{t('common.add')}</Button>
-                            </div>
-                            <div className="space-y-1">
-                                {plates.length === 0 && <div className="text-xs text-text-light">{t('common.noData')}</div>}
-                                {plates.map((p) => (
-                                    <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-75 px-3 py-1.5">
-                                        <span className="font-mono text-sm font-bold text-text-dark shrink-0">{p.plate}</span>
-                                        <span className="flex-1 truncate text-right text-[10px] text-text-muted">
-                                            {p.category ? t(`parking.cfg.reason.${p.category}`, { defaultValue: p.category }) : ''}
-                                        </span>
-                                        <button type="button" onClick={() => delPlate(p.id)} className="material-symbols-outlined text-base text-text-light hover:text-error-text shrink-0">close</button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        {/* Чёрный список и владельцы мест живут на своих страницах: в служебном
+                            окне остаются только настройки парковки и её структура. */}
                     </div>
-
-                    {/* Владельцы мест — только в режиме «по списку»: именно там работает квота. */}
-                    {parkingMode === 'Free' && freeSubMode === 'List' && (
-                        <div className="ap-panel space-y-4 rounded-2xl border border-border-base bg-surface p-5">
-                            <div>
-                                <div className="text-sm font-bold text-text-dark">{t('parking.holder.title')}</div>
-                                <div className="mt-0.5 text-xs text-text-muted">{t('parking.holder.hint')}</div>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                                <Input value={holderForm.name} onChange={(e) => setHolderForm({ ...holderForm, name: e.target.value })}
-                                    placeholder={t('parking.holder.name')} />
-                                <Input value={holderForm.phone} onChange={(e) => setHolderForm({ ...holderForm, phone: e.target.value })}
-                                    placeholder={t('parking.holder.phone')} />
-                                <Input value={holderForm.unit} onChange={(e) => setHolderForm({ ...holderForm, unit: e.target.value })}
-                                    placeholder={t('parking.holder.unit')} />
-                                <input type="number" min={1} title={t('parking.holder.spacesLimit')}
-                                    className="w-24 rounded-lg border border-border-base bg-surface px-3 py-2 text-sm text-text-dark"
-                                    value={holderForm.spacesLimit}
-                                    onChange={(e) => setHolderForm({ ...holderForm, spacesLimit: e.target.value })} />
-                                <Button icon={editingHolderId ? 'save' : 'add'} onClick={saveHolder} disabled={!holderForm.name.trim()}>
-                                    {editingHolderId ? t('common.save') : t('common.add')}
-                                </Button>
-                                {editingHolderId && (
-                                    <Button variant="outline" onClick={() => { setHolderForm(emptyHolder); setEditingHolderId(null) }}>
-                                        {t('common.cancel')}
-                                    </Button>
-                                )}
-                            </div>
-
-                            {holders.length === 0 ? (
-                                <div className="text-xs text-text-light">{t('common.noData')}</div>
-                            ) : (
-                                <div className="space-y-1.5">
-                                    {holders.map((h) => {
-                                        const full = h.occupied >= h.spacesLimit
-                                        return (
-                                            <div key={h.id} className="flex items-center gap-3 rounded-lg bg-slate-75 px-3 py-2">
-                                                <span className="min-w-0 flex-1">
-                                                    <span className="block truncate text-sm font-bold text-text-dark">
-                                                        {h.name}
-                                                        {h.unit ? <span className="ml-1 text-xs font-medium text-text-muted">· {h.unit}</span> : null}
-                                                        {!h.isActive && <span className="ml-1 text-xs font-medium text-text-light">({t('common.inactive')})</span>}
-                                                    </span>
-                                                    <span className="block truncate text-[11px] text-text-muted">
-                                                        {h.phone ? `${h.phone} · ` : ''}
-                                                        {h.plates.length > 0 ? h.plates.join(', ') : t('parking.holder.noPlates')}
-                                                    </span>
-                                                </span>
-                                                {/* Занято мест из выделенных: полная квота — остальные машины не пустят. */}
-                                                <span className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-black ${full ? 'bg-red-100 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}
-                                                    title={t('parking.holder.occupiedHint')}>
-                                                    {h.occupied} / {h.spacesLimit}
-                                                </span>
-                                                <button type="button" title={t('common.edit')}
-                                                    onClick={() => {
-                                                        setEditingHolderId(h.id)
-                                                        setHolderForm({
-                                                            name: h.name, phone: h.phone ?? '', unit: h.unit ?? '',
-                                                            spacesLimit: String(h.spacesLimit), isActive: h.isActive, notes: h.notes ?? '',
-                                                        })
-                                                    }}
-                                                    className="material-symbols-outlined shrink-0 text-base text-text-light hover:text-primary">edit</button>
-                                                <button type="button" title={t('common.delete')} onClick={() => delHolder(h.id)}
-                                                    className="material-symbols-outlined shrink-0 text-base text-text-light hover:text-error-text">close</button>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    )}
 
                     {/* Структура: зоны → этажи → ряды → места */}
                     {loadingZones ? (
@@ -559,14 +669,23 @@ export function ParkingManagementPage() {
                                                     </div>
                                                 </div>
                                                 <div className="mt-3 flex flex-wrap gap-2">
-                                                    {(spacesByRow[row.id] ?? []).map((s) => (
-                                                        <button key={s.id} type="button" title={t(`parking.types.${s.type}`)}
-                                                            onClick={() => setSpaceModal({ rowId: row.id, data: s })}
-                                                            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-transform hover:scale-105 ${TYPE_STYLE[s.type].chip} ${s.isActive ? '' : 'opacity-50'}`}>
-                                                            <span className="material-symbols-outlined text-[15px]">{TYPE_STYLE[s.type].icon}</span>
-                                                            {s.code}
-                                                        </button>
-                                                    ))}
+                                                    {(spacesByRow[row.id] ?? []).map((s) => {
+                                                        const busy = occupiedSpaces.get(s.id)
+                                                        return (
+                                                            <button key={s.id} type="button"
+                                                                title={busy
+                                                                    ? `${s.code} · ${busy.plate} · ${fmtDateTime(busy.enteredUtc)}`
+                                                                    : t(`parking.types.${s.type}`)}
+                                                                onClick={() => setSpaceModal({ rowId: row.id, data: s })}
+                                                                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-transform hover:scale-105 ${busy ? OCCUPIED_CHIP : TYPE_STYLE[s.type].chip} ${s.isActive ? '' : 'opacity-50'}`}>
+                                                                <span className="material-symbols-outlined text-[15px]">
+                                                                    {busy ? 'directions_car' : TYPE_STYLE[s.type].icon}
+                                                                </span>
+                                                                {s.code}
+                                                                {busy && <span className="font-mono text-[10px] opacity-90">{busy.plate}</span>}
+                                                            </button>
+                                                        )
+                                                    })}
                                                     {(spacesByRow[row.id]?.length ?? 0) === 0 && (
                                                         <span className="text-xs text-text-light">{t('parking.spaces.empty')}</span>
                                                     )}
@@ -613,14 +732,18 @@ export function ParkingManagementPage() {
 }
 
 // ─── Scheme view ────────────────────────────────────────────────────────────────
-function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
+function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading, occupied }: {
     zones: Zone[]
     selectedZoneId: string | null
     onSelectZone: (id: string) => void
     scheme: Scheme | null
     loading: boolean
+    occupied: OccupiedMap
 }) {
     const { t } = useTranslation()
+    // Сколько мест этого этажа занято — видно, не пересчитывая плитки глазами.
+    const floorBusy = (rows: { spaces: Space[] }[]) =>
+        rows.reduce((n, r) => n + r.spaces.filter((s) => occupied.has(s.id)).length, 0)
     return (
         <div className="space-y-5">
             <div className="flex flex-wrap gap-2">
@@ -638,11 +761,19 @@ function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
                 <EmptyState icon="grid_view" text={t('parking.scheme.empty')} />
             ) : (
                 <div className="space-y-6">
-                    {scheme.floors.map((f) => (
+                    {scheme.floors.map((f) => {
+                        const total = f.rows.reduce((n, r) => n + r.spaces.length, 0)
+                        const busy = floorBusy(f.rows)
+                        return (
                         <div key={f.id} className="ap-panel rounded-3xl border border-border-base bg-surface p-6 shadow-sm transition-shadow">
                             <div className="mb-4 flex items-center gap-2">
                                 <span className="material-symbols-outlined text-text-light">layers</span>
                                 <h3 className="text-base font-black text-text-dark">{t('parking.floors.level')} {f.level}</h3>
+                                {total > 0 && (
+                                    <span className="ml-auto rounded-lg bg-slate-75 px-2.5 py-1 text-[11px] font-black text-text-muted">
+                                        {t('parking.live.occupied')}: <span className={busy > 0 ? 'text-rose-600' : ''}>{busy}</span> / {total}
+                                    </span>
+                                )}
                             </div>
                             {f.rows.length === 0 ? (
                                 <p className="text-xs text-text-light">{t('parking.rows.empty')}</p>
@@ -652,13 +783,28 @@ function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
                                         <div key={row.id} className="flex items-start gap-3">
                                             <div className="w-16 shrink-0 pt-2 text-[10px] font-black uppercase tracking-widest text-text-light">{row.name}</div>
                                             <div className="flex flex-wrap gap-1.5">
-                                                {row.spaces.map((s) => (
-                                                    <span key={s.id} title={`${s.code} · ${t(`parking.types.${s.type}`)}`}
-                                                        className={`flex h-11 w-12 flex-col items-center justify-center rounded-lg border text-[10px] font-bold ${TYPE_STYLE[s.type].chip} ${s.isActive ? '' : 'opacity-40 line-through'}`}>
-                                                        <span className="material-symbols-outlined text-[16px]">{TYPE_STYLE[s.type].icon}</span>
-                                                        <span className="truncate max-w-[44px]">{s.code}</span>
-                                                    </span>
-                                                ))}
+                                                {row.spaces.map((s) => {
+                                                    const busySpace = occupied.get(s.id)
+                                                    return (
+                                                        <span key={s.id}
+                                                            title={busySpace
+                                                                ? `${s.code} · ${busySpace.plate} · ${t('parking.ap.entered')}: ${fmtDateTime(busySpace.enteredUtc)}`
+                                                                : `${s.code} · ${t(`parking.types.${s.type}`)} · ${t('parking.live.free')}`}
+                                                            className={`flex h-12 w-16 flex-col items-center justify-center rounded-lg border text-[10px] font-bold transition-colors ${busySpace ? OCCUPIED_CHIP : TYPE_STYLE[s.type].chip} ${s.isActive ? '' : 'opacity-40 line-through'}`}>
+                                                            {busySpace ? (
+                                                                <>
+                                                                    <span className="truncate max-w-[56px] font-mono text-[9px] leading-tight">{busySpace.plate}</span>
+                                                                    <span className="truncate max-w-[56px] text-[9px] opacity-80">{s.code}</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="material-symbols-outlined text-[16px]">{TYPE_STYLE[s.type].icon}</span>
+                                                                    <span className="truncate max-w-[56px]">{s.code}</span>
+                                                                </>
+                                                            )}
+                                                        </span>
+                                                    )
+                                                })}
                                                 {row.spaces.length === 0 && <span className="py-2 text-xs text-text-light">{t('parking.spaces.empty')}</span>}
                                             </div>
                                         </div>
@@ -666,10 +812,412 @@ function SchemeView({ zones, selectedZoneId, onSelectZone, scheme, loading }: {
                                 </div>
                             )}
                         </div>
-                    ))}
+                        )
+                    })}
                 </div>
             )}
         </div>
+    )
+}
+
+// ─── Камеры зоны ────────────────────────────────────────────────────────────────
+/**
+ * Стена камер выбранной зоны: въезд слева, выезд справа, камеры без зоны — в конце
+ * (обычно так и остаётся единственная камера на маленькой парковке).
+ */
+function CameraWall({ cameras, zoneId, token }: { cameras: ParkingCamera[]; zoneId: string | null; token: string | null }) {
+    const { t } = useTranslation()
+    const [full, setFull] = useState<ParkingCamera | null>(null)
+
+    const shown = useMemo(() => {
+        const mine = cameras.filter((c) => (zoneId ? c.zoneId === zoneId : true) || c.zoneId === null)
+        const order = (c: ParkingCamera) => (c.direction === 'Entry' ? 0 : c.direction === 'Exit' ? 1 : 2)
+        return [...mine].sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name))
+    }, [cameras, zoneId])
+
+    if (cameras.length === 0) return null
+
+    return (
+        <div className="ap-panel rounded-3xl border border-border-base bg-surface p-5 shadow-sm sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="material-symbols-outlined text-text-light">videocam</span>
+                <h3 className="text-base font-black text-text-dark">{t('parking.cameras.title')}</h3>
+                <span className="text-xs font-bold text-text-light">{t('parking.cameras.subtitle')}</span>
+            </div>
+
+            {shown.length === 0 ? (
+                <p className="py-8 text-center text-xs text-text-light">{t('parking.cameras.emptyZone')}</p>
+            ) : (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {shown.map((c) => (
+                        <CameraTile key={c.id} camera={c} token={token} intervalMs={CAMERA_TILE_MS} onExpand={() => setFull(c)} />
+                    ))}
+                </div>
+            )}
+
+            {full && <CameraModal camera={full} token={token} onClose={() => setFull(null)} />}
+        </div>
+    )
+}
+
+/**
+ * Живая картинка одной камеры. RTSP в браузере не играется, поэтому кадры тянем
+ * по одному: запрос с токеном → blob → <img>. Прошлый blob обязательно отзываем,
+ * иначе за час наблюдения вкладка съест сотни мегабайт.
+ */
+function CameraSnapshot({ cameraId, token, intervalMs, className }: {
+    cameraId: string; token: string | null; intervalMs: number; className?: string
+}) {
+    const { t } = useTranslation()
+    const [src, setSrc] = useState<string | null>(null)
+    const [offline, setOffline] = useState(false)
+    const urlRef = useRef<string | null>(null)
+
+    useEffect(() => {
+        if (!token) return
+        let stopped = false
+        let timer = 0
+
+        const revoke = () => { if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null } }
+
+        const tick = async () => {
+            if (document.hidden) { schedule(); return }
+            // Молчащая камера не должна подвешивать плитку: ждём кадр ограниченное время.
+            const abort = new AbortController()
+            const guard = window.setTimeout(() => abort.abort(), 10_000)
+            try {
+                const res = await fetch(`${getApiBaseUrl()}/api/parking/cameras/${cameraId}/snapshot`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: abort.signal,
+                })
+                if (!res.ok) throw new Error(String(res.status))
+                const blob = await res.blob()
+                if (stopped) return
+                const url = URL.createObjectURL(blob)
+                revoke()
+                urlRef.current = url
+                setSrc(url)
+                setOffline(false)
+            } catch {
+                if (!stopped) setOffline(true)
+            } finally {
+                window.clearTimeout(guard)
+                schedule()
+            }
+        }
+        // Следующий кадр запрашиваем только после предыдущего: медленная камера
+        // не должна копить очередь запросов.
+        const schedule = () => { if (!stopped) timer = window.setTimeout(() => void tick(), intervalMs) }
+
+        void tick()
+        return () => { stopped = true; window.clearTimeout(timer); revoke() }
+    }, [cameraId, token, intervalMs])
+
+    return (
+        <div className={`relative flex items-center justify-center overflow-hidden bg-slate-900 ${className ?? ''}`}>
+            {src ? (
+                <img src={src} alt="" className="h-full w-full object-contain" />
+            ) : (
+                <span className="material-symbols-outlined animate-spin text-2xl text-white/60">progress_activity</span>
+            )}
+            {offline && (
+                <span className="absolute inset-x-0 bottom-0 bg-red-600/90 py-1 text-center text-[10px] font-black uppercase tracking-widest text-white">
+                    {t('parking.cameras.noSignal')}
+                </span>
+            )}
+        </div>
+    )
+}
+
+function CameraTile({ camera, token, intervalMs, onExpand }: {
+    camera: ParkingCamera; token: string | null; intervalMs: number; onExpand: () => void
+}) {
+    const { t } = useTranslation()
+    const dir = camera.direction ? DIRECTION_STYLE[camera.direction] : null
+    return (
+        <div className="overflow-hidden rounded-2xl border border-border-light">
+            <button type="button" onClick={onExpand} className="block w-full cursor-pointer" title={t('parking.cameras.expand')}>
+                <CameraSnapshot cameraId={camera.id} token={token} intervalMs={intervalMs} className="aspect-video w-full" />
+            </button>
+            <div className="flex items-center gap-2 px-3 py-2">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${camera.status === 'Online' ? 'bg-emerald-500' : 'bg-red-500'}`}
+                    title={t(camera.status === 'Online' ? 'devicesTab.online' : 'devicesTab.offline')} />
+                <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold text-text-dark">{camera.name}</span>
+                    <span className="block truncate text-[11px] text-text-light">{camera.zoneName ?? t('parking.cameras.noZone')} · {camera.ipAddress}</span>
+                </span>
+                {dir && (
+                    <span className={`shrink-0 rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wider ${dir.chip}`}>
+                        <span className="material-symbols-outlined mr-0.5 align-middle text-[13px]">{dir.icon}</span>
+                        {t(camera.direction === 'Entry' ? 'devicesTab.anpr.entry' : 'devicesTab.anpr.exit')}
+                    </span>
+                )}
+                <BarrierOpenButton camera={camera} token={token} />
+            </div>
+        </div>
+    )
+}
+
+/** Открыть шлагбаум этой камеры руками — машина без номера, сбой распознавания, эвакуатор. */
+function BarrierOpenButton({ camera, token, wide }: { camera: ParkingCamera; token: string | null; wide?: boolean }) {
+    const { t } = useTranslation()
+    const [busy, setBusy] = useState(false)
+    const [result, setResult] = useState<'ok' | 'skipped' | 'error' | null>(null)
+
+    const open = async () => {
+        if (!token) return
+        setBusy(true); setResult(null)
+        try {
+            const r = await apiRequest<{ triggered: boolean; skipped: boolean }>(
+                `/api/parking/cameras/${camera.id}/open`, { method: 'POST', token })
+            setResult(r.triggered ? 'ok' : r.skipped ? 'skipped' : 'error')
+        } catch { setResult('error') }
+        finally {
+            setBusy(false)
+            window.setTimeout(() => setResult(null), 3000)
+        }
+    }
+
+    const title = result === 'ok' ? t('parking.cameras.opened')
+        : result === 'skipped' ? t('parking.pos.barrierByCamera')
+            : result === 'error' ? t('parking.cameras.openFailed')
+                : t('parking.cameras.open')
+
+    return (
+        <button type="button" title={title} disabled={busy} onClick={() => void open()}
+            className={`flex shrink-0 items-center justify-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wider transition-colors disabled:opacity-50 ${
+                result === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : result === 'error' ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-border-base text-text-muted hover:bg-slate-75'} ${wide ? 'px-3 py-2' : ''}`}>
+            <span className="material-symbols-outlined text-[14px]">
+                {busy ? 'hourglass_top' : result === 'ok' ? 'check' : 'door_open'}
+            </span>
+            {wide && t('parking.cameras.open')}
+        </button>
+    )
+}
+
+/** Развёрнутая камера: кадры чаще + адрес RTSP, чтобы открыть поток в VLC. */
+function CameraModal({ camera, token, onClose }: { camera: ParkingCamera; token: string | null; onClose: () => void }) {
+    const { t } = useTranslation()
+    const [copied, setCopied] = useState(false)
+    return (
+        <Modal isOpen size="xl" title={camera.name} onClose={onClose}>
+            <div className="space-y-3">
+                <CameraSnapshot cameraId={camera.id} token={token} intervalMs={CAMERA_FULL_MS} className="aspect-video w-full rounded-2xl" />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                    <span className={`h-2 w-2 rounded-full ${camera.status === 'Online' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                    {camera.zoneName ?? t('parking.cameras.noZone')}
+                    {camera.direction && <> · {t(camera.direction === 'Entry' ? 'devicesTab.anpr.entry' : 'devicesTab.anpr.exit')}</>}
+                    <> · {camera.ipAddress}</>
+                    <span className="ml-auto"><BarrierOpenButton camera={camera} token={token} wide /></span>
+                </div>
+                <div>
+                    <div className="mb-1.5 text-xs text-text-muted">{t('parking.cameras.rtspHint')}</div>
+                    <div className="flex gap-2">
+                        <input readOnly value={camera.rtspUrl}
+                            onFocus={(e) => e.currentTarget.select()}
+                            className="min-w-0 flex-1 rounded-lg border border-border-base bg-slate-75 px-3 py-2 font-mono text-xs text-text-dark" />
+                        <Button variant="outline" icon={copied ? 'check' : 'content_copy'}
+                            onClick={() => {
+                                void navigator.clipboard?.writeText(camera.rtspUrl)
+                                setCopied(true)
+                                window.setTimeout(() => setCopied(false), 2000)
+                            }}>
+                            {t(copied ? 'parking.cameras.copied' : 'parking.cameras.copy')}
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </Modal>
+    )
+}
+
+// ─── Live monitor: кто внутри + лента въездов/выездов ───────────────────────────
+function LiveMonitor({ live, offline, token, onChanged }: {
+    live: LiveData | null; offline: boolean; token: string | null; onChanged: () => void
+}) {
+    const { t } = useTranslation()
+    // Свежие события подсвечиваем один раз: при первой загрузке подсвечивать нечего.
+    const seenRef = useRef<Set<string> | null>(null)
+    const [fresh, setFresh] = useState<Set<string>>(new Set())
+    // Ручное снятие машины с парковки: подтверждаем — оно закрывает сессию и считает долг.
+    const [closing, setClosing] = useState<LiveInsideRow | null>(null)
+    const [busy, setBusy] = useState(false)
+    const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null)
+
+    const closeSession = async (row: LiveInsideRow, openBarrier: boolean) => {
+        if (!token) return
+        setBusy(true)
+        try {
+            const r = await apiRequest<{ debt: number; barrierTriggered: boolean; barrierSkipped: boolean; barrierError: string | null }>(
+                `/api/parking/sessions/${row.id}/close`,
+                { method: 'POST', token, body: JSON.stringify({ openBarrier }) },
+            )
+            setNote(openBarrier && !r.barrierTriggered && !r.barrierSkipped
+                ? { ok: false, text: t('parking.pos.barrierFailed', { error: r.barrierError ?? '' }) }
+                : { ok: true, text: t('parking.live.removed', { plate: row.plate }) })
+            setClosing(null)
+            onChanged()
+        } catch (e) {
+            setNote({ ok: false, text: e instanceof Error ? e.message : 'error' })
+        } finally { setBusy(false) }
+    }
+
+    useEffect(() => {
+        if (!live) return
+        const ids = live.feed.map((f) => f.id)
+        if (seenRef.current === null) { seenRef.current = new Set(ids); return }
+        const seen = seenRef.current
+        const added = ids.filter((id) => !seen.has(id))
+        // Список ленты и есть память: старые события уходят вниз и не возвращаются.
+        seenRef.current = new Set(ids)
+        if (added.length === 0) return
+        setFresh(new Set(added))
+        const timer = window.setTimeout(() => setFresh(new Set()), 3500)
+        return () => window.clearTimeout(timer)
+    }, [live])
+
+    const inside = live?.inside ?? []
+    const feed = live?.feed ?? []
+    const occ = live?.occupancy
+
+    /** У отказа сервер шлёт код причины — показываем его словами, если перевод есть. */
+    const feedNote = (e: LiveFeedRow) =>
+        e.kind === 'denied' && e.message
+            ? t(`parking.pos.reason.${e.message}`, { defaultValue: e.message })
+            : e.message
+
+    return (
+        <div className="ap-panel rounded-3xl border border-border-base bg-surface p-5 shadow-sm sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+                <span className="material-symbols-outlined text-text-light">sensors</span>
+                <h3 className="text-base font-black text-text-dark">{t('parking.live.title')}</h3>
+                <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-black uppercase tracking-widest ${offline ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${offline ? 'bg-red-500' : 'pk-live-dot bg-emerald-500'}`} />
+                    {offline ? t('parking.live.offline') : t('parking.live.badge')}
+                </span>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <Stat label={t('parking.live.insideCount')} value={occ?.insideTotal ?? inside.length} />
+                    <Stat label={t('parking.live.entriesToday')} value={live?.entriesToday ?? 0} />
+                    <Stat label={t('parking.live.exitsToday')} value={live?.exitsToday ?? 0} />
+                    {occ && <Stat label={t('parking.live.freeSpaces')} value={occ.commonFree + occ.vipFree} />}
+                </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+                {/* Машины внутри — с номерами, местом и временем стоянки. */}
+                <div className="rounded-2xl border border-border-light">
+                    <div className="flex items-center justify-between border-b border-border-light px-4 py-2.5">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{t('parking.live.insideTitle')}</p>
+                        <span className="rounded-md bg-slate-75 px-2 py-0.5 text-[11px] font-black text-text-muted">{inside.length}</span>
+                    </div>
+                    <div className="max-h-80 divide-y divide-border-light overflow-y-auto">
+                        {inside.length === 0 && <p className="px-4 py-10 text-center text-xs text-text-light">{t('parking.live.noInside')}</p>}
+                        {inside.map((v) => (
+                            <div key={v.id} className="flex items-center gap-3 px-4 py-2.5">
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-75 text-text-muted">
+                                    <span className="material-symbols-outlined text-[18px]">directions_car</span>
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <p className="flex items-center gap-2 truncate">
+                                        <span className="font-mono text-sm font-black text-text-dark">{v.plate}</span>
+                                        {v.spaceCode ? (
+                                            <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-mono text-[10px] font-black text-rose-600">{v.spaceCode}</span>
+                                        ) : (
+                                            <span className="rounded-md bg-slate-75 px-1.5 py-0.5 text-[10px] font-bold text-text-light">{t('parking.live.noSpace')}</span>
+                                        )}
+                                    </p>
+                                    <p className="truncate text-[11px] text-text-muted">
+                                        {[v.brand, v.color, v.ownerName ?? v.holderName, v.zoneName].filter(Boolean).join(' · ') || '—'}
+                                    </p>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                    <p className="font-mono text-xs font-bold text-text-dark">{fmtDur(v.minutes)}</p>
+                                    <p className="font-mono text-[10px] text-text-light">{fmtTime(v.enteredUtc)}</p>
+                                </div>
+                                {/* Снять машину руками: в режиме «только вход» это штатный способ
+                                    закрыть сессию, в обычном — на случай пропущенного выезда. */}
+                                <button type="button" title={t('parking.live.remove')}
+                                    onClick={() => { setNote(null); setClosing(v) }}
+                                    className="material-symbols-outlined shrink-0 text-[18px] text-text-light hover:text-error-text">
+                                    logout
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                    {note && (
+                        <p className={`px-4 py-2 text-[11px] font-bold ${note.ok ? 'text-green-700' : 'text-error-text'}`}>{note.text}</p>
+                    )}
+                </div>
+
+                {/* Лента: въезды, выезды и отказы по мере поступления. */}
+                <div className="rounded-2xl border border-border-light">
+                    <div className="flex items-center justify-between border-b border-border-light px-4 py-2.5">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{t('parking.live.feedTitle')}</p>
+                        <span className="text-[10px] font-bold text-text-light">{t('parking.live.last24h')}</span>
+                    </div>
+                    <div className="max-h-80 divide-y divide-border-light overflow-y-auto">
+                        {feed.length === 0 && <p className="px-4 py-10 text-center text-xs text-text-light">{t('parking.live.noFeed')}</p>}
+                        {feed.map((e) => {
+                            const st = FEED_STYLE[e.kind] ?? FEED_STYLE.entry
+                            return (
+                                <div key={e.id} className={`flex items-center gap-3 px-4 py-2.5 ${fresh.has(e.id) ? 'pk-flash' : ''}`}>
+                                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${st.chip}`}>
+                                        <span className="material-symbols-outlined text-[18px]">{st.icon}</span>
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="flex items-center gap-2 truncate">
+                                            <span className="font-mono text-sm font-black text-text-dark">{e.plate}</span>
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-text-light">{t(`parking.live.kind.${e.kind}`)}</span>
+                                            {e.spaceCode && <span className="font-mono text-[10px] font-bold text-text-muted">{e.spaceCode}</span>}
+                                        </p>
+                                        <p className="truncate text-[11px] text-text-muted">
+                                            {e.kind === 'exit' && e.message
+                                                ? `${t('parking.ap.duration')}: ${fmtDur(Number(e.message))}${e.source ? ` · ${e.source}` : ''}`
+                                                : [e.source, e.zoneName, e.kind !== 'exit' ? feedNote(e) : null].filter(Boolean).join(' · ') || '—'}
+                                        </p>
+                                    </div>
+                                    <span className="shrink-0 font-mono text-[11px] text-text-light">{fmtTime(e.atUtc)}</span>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            </div>
+
+            {/* Снятие с парковки: два исхода — просто убрать номер или ещё и открыть шлагбаум. */}
+            {closing && (
+                <Modal isOpen title={t('parking.live.removeTitle', { plate: closing.plate })} onClose={() => setClosing(null)}>
+                    <div className="space-y-4 pt-2">
+                        <p className="text-sm text-text-dark">{t('parking.live.removeHint')}</p>
+                        <div className="rounded-xl bg-slate-75 px-4 py-3 text-xs text-text-muted">
+                            {t('parking.ap.entered')}: <span className="font-mono font-bold text-text-dark">{fmtDateTime(closing.enteredUtc)}</span>
+                            {' · '}{t('parking.ap.duration')}: <span className="font-mono font-bold text-text-dark">{fmtDur(closing.minutes)}</span>
+                            {closing.spaceCode && <> · {t('parking.live.space')}: <span className="font-mono font-bold text-text-dark">{closing.spaceCode}</span></>}
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                            <Button fullWidth icon="door_open" isLoading={busy} onClick={() => void closeSession(closing, true)}>
+                                {t('parking.live.removeAndOpen')}
+                            </Button>
+                            <Button fullWidth variant="outline" icon="delete" isLoading={busy} onClick={() => void closeSession(closing, false)}>
+                                {t('parking.live.removeOnly')}
+                            </Button>
+                        </div>
+                        <Button fullWidth variant="outline" onClick={() => setClosing(null)}>{t('common.cancel')}</Button>
+                    </div>
+                </Modal>
+            )}
+        </div>
+    )
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+    return (
+        <span className="inline-flex items-baseline gap-1.5 rounded-xl border border-border-light px-3 py-1.5">
+            <span className="text-sm font-black text-text-dark">{value}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-text-light">{label}</span>
+        </span>
     )
 }
 
@@ -932,6 +1480,16 @@ function TypeLegend() {
                     {t(`parking.types.${tp}`)}
                 </span>
             ))}
+            {/* Занятость важнее типа: её цвет объясняем отдельно. */}
+            <span className="mx-1 h-4 w-px bg-border-base" />
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-text-muted">
+                <span className="h-3 w-3 rounded-full bg-rose-500" />
+                {t('parking.live.occupied')}
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-text-muted">
+                <span className="h-3 w-3 rounded-full border border-border-base bg-white" />
+                {t('parking.live.free')}
+            </span>
         </div>
     )
 }

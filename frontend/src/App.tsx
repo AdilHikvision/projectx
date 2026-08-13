@@ -40,10 +40,11 @@ const GymAnalyticsPage = lazy(() => named(import('./pages/gym'), 'GymAnalyticsPa
 const GymPosPage = lazy(() => named(import('./pages/gym'), 'GymPosPage'))
 const ParkingManagementPage = lazy(() => named(import('./pages/parking'), 'ParkingManagementPage'))
 
-// ─── Aktiv Parking (нативные страницы ProjectX: жильцы, транспорт, пропуска, отчёты) ───
+// ─── Aktiv Parking (нативные страницы ProjectX: белый и чёрный списки, владельцы, отчёты) ───
 const ApHomePage = lazy(() => named(import('./pages/parking'), 'ParkingHomePage'))
 const ParkingVehiclesPage = lazy(() => named(import('./pages/parking'), 'ParkingVehiclesPage'))
-const ApPermitsPage = lazy(() => named(import('./pages/parking'), 'ParkingPermitsPage'))
+const ParkingBlacklistPage = lazy(() => named(import('./pages/parking'), 'ParkingBlacklistPage'))
+const ParkingHoldersPage = lazy(() => named(import('./pages/parking'), 'ParkingHoldersPage'))
 const ApReportsPage = lazy(() => named(import('./pages/parking'), 'ParkingReportsPage'))
 const ParkingTariffsPage = lazy(() => named(import('./pages/parking'), 'ParkingTariffsPage'))
 const ParkingHistoryPage = lazy(() => named(import('./pages/parking'), 'ParkingHistoryPage'))
@@ -115,10 +116,13 @@ function App() {
           {/* ─── Parking Management module ─── */}
           <Route path="/parking/management" element={<ParkingManagementPage />} />
 
-          {/* ─── Aktiv Parking (нативно) — жильцы, пропуска, отчёты ─── */}
+          {/* ─── Aktiv Parking (нативно) — белый и чёрный списки, владельцы мест, отчёты ─── */}
           <Route path="/parking/ap-home" element={<ApHomePage />} />
           <Route path="/parking/vehicles" element={<ParkingVehiclesPage />} />
-          <Route path="/parking/ap-permits" element={<ApPermitsPage />} />
+          <Route path="/parking/blacklist" element={<ParkingBlacklistPage />} />
+          <Route path="/parking/holders" element={<ParkingHoldersPage />} />
+          {/* Пропуска отменены: разрешение — сама карточка белого списка. */}
+          <Route path="/parking/ap-permits" element={<Navigate to="/parking/vehicles" replace />} />
           <Route path="/parking/ap-reports" element={<ApReportsPage />} />
           <Route path="/parking/tariffs" element={<ParkingTariffsPage />} />
           <Route path="/parking/history" element={<ParkingHistoryPage />} />

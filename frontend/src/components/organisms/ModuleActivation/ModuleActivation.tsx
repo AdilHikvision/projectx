@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../../auth/AuthContext'
 import { useModule } from '../../../context/ModuleContext'
@@ -12,6 +12,14 @@ type ParkingMode = 'Free' | 'Paid'
    Набор включённых модулей хранится в системных настройках (EnabledModules),
    то есть действует на всю установку, а не на конкретный браузер. ═══ */
 
+/**
+ * PIN служебного меню. Защищает от случайного нажатия комбинации и от того, чтобы
+ * набор модулей менял кто попало с открытого рабочего места. Это не криптозащита:
+ * код лежит в собранном фронтенде, и настоящие права по-прежнему держат права
+ * пользователя на сохранение системных настроек.
+ */
+const SERVICE_PIN = '9339'
+
 export function ModuleActivation() {
     const { t } = useTranslation()
     const { token } = useAuth()
@@ -24,6 +32,11 @@ export function ModuleActivation() {
     /** Режим парковки — такое же решение уровня установки, как и набор модулей. */
     const [parkingMode, setParkingMode] = useState<ParkingMode>('Free')
     const [savedParkingMode, setSavedParkingMode] = useState<ParkingMode>('Free')
+    /** PIN спрашиваем при каждом открытии: снятая блокировка не переживает закрытие окна. */
+    const [unlocked, setUnlocked] = useState(false)
+    const [pin, setPin] = useState('')
+    const [pinError, setPinError] = useState(false)
+    const pinRef = useRef<HTMLInputElement>(null)
 
     // При каждом открытии показываем актуальное состояние, а не остатки прошлого сеанса.
     useEffect(() => {
@@ -36,9 +49,20 @@ export function ModuleActivation() {
         return () => window.removeEventListener('keydown', onKey)
     }, [isActivationOpen, enabledModules, closeActivation])
 
-    // Текущий режим парковки читаем при открытии; ключа может не быть — тогда бесплатный.
+    // Каждое открытие начинается с запертого окна и пустого поля.
     useEffect(() => {
-        if (!isActivationOpen || !token) return
+        if (isActivationOpen) {
+            setUnlocked(false)
+            setPin('')
+            setPinError(false)
+            // Фокус в поле, чтобы PIN можно было набрать сразу после комбинации клавиш.
+            requestAnimationFrame(() => pinRef.current?.focus())
+        }
+    }, [isActivationOpen])
+
+    // Текущий режим парковки читаем после снятия блокировки: до PIN содержимое окна не нужно.
+    useEffect(() => {
+        if (!isActivationOpen || !unlocked || !token) return
         apiRequest<{ key: string; value: string }>('/api/system-settings/parking.mode', { token })
             .then((r) => {
                 const mode: ParkingMode = r?.value === 'Paid' ? 'Paid' : 'Free'
@@ -46,9 +70,21 @@ export function ModuleActivation() {
                 setSavedParkingMode(mode)
             })
             .catch(() => { setParkingMode('Free'); setSavedParkingMode('Free') })
-    }, [isActivationOpen, token])
+    }, [isActivationOpen, unlocked, token])
 
     if (!isActivationOpen) return null
+
+    const submitPin = () => {
+        if (pin === SERVICE_PIN) {
+            setUnlocked(true)
+            setPin('')
+            setPinError(false)
+        } else {
+            setPinError(true)
+            setPin('')
+            pinRef.current?.focus()
+        }
+    }
 
     const toggle = (key: ModuleKey) => {
         setSaved(false)
@@ -126,6 +162,52 @@ export function ModuleActivation() {
                     </code>
                 </div>
 
+                {/* Пока PIN не введён, окно показывает только замок: ни модулей, ни режима парковки. */}
+                {!unlocked && (
+                    <div className="px-7 py-8">
+                        <p className="text-[12.5px] leading-relaxed text-white/55">{t('moduleActivation.pinHint')}</p>
+                        <div className="mt-5 flex gap-2">
+                            <input
+                                ref={pinRef}
+                                type="password"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                maxLength={8}
+                                value={pin}
+                                onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setPinError(false) }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') submitPin() }}
+                                placeholder="••••"
+                                aria-label={t('moduleActivation.pinTitle')}
+                                className={`h-12 flex-1 rounded-xl border bg-black/30 px-4 text-center text-[20px] font-bold tracking-[0.5em] text-white outline-none transition-colors ${
+                                    pinError ? 'border-red-400/60' : 'border-white/10 focus:border-violet-400/60'
+                                }`}
+                            />
+                            <button
+                                type="button"
+                                onClick={submitPin}
+                                disabled={pin.length === 0}
+                                className="h-12 rounded-xl bg-violet-500 px-6 text-[12.5px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                            >
+                                {t('moduleActivation.pinUnlock')}
+                            </button>
+                        </div>
+                        {pinError && (
+                            <p className="mt-3 flex items-center gap-1.5 rounded-xl bg-red-500/10 px-3.5 py-3 text-[11.5px] text-red-300 ring-1 ring-red-400/20">
+                                <span className="material-symbols-outlined text-[15px]">lock</span>
+                                {t('moduleActivation.pinWrong')}
+                            </p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={closeActivation}
+                            className="mt-5 h-11 w-full rounded-xl bg-white/10 text-[12.5px] font-semibold text-white/80 transition-colors hover:bg-white/15"
+                        >
+                            {t('common.close')}
+                        </button>
+                    </div>
+                )}
+
+                {unlocked && (
                 <div className="flex-1 min-h-0 overflow-y-auto px-7 py-5">
                     {!token && (
                         <p className="mb-4 rounded-xl bg-amber-500/10 px-4 py-3 text-[12px] text-amber-200 ring-1 ring-amber-400/20">
@@ -213,7 +295,9 @@ export function ModuleActivation() {
                         </p>
                     )}
                 </div>
+                )}
 
+                {unlocked && (
                 <div className="flex gap-2 border-t border-white/10 px-7 py-5">
                     <button
                         type="button"
@@ -231,6 +315,7 @@ export function ModuleActivation() {
                         {t('common.close')}
                     </button>
                 </div>
+                )}
             </div>
         </div>
     )

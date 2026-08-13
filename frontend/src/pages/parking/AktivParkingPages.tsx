@@ -7,12 +7,12 @@ import { ConfirmDialog } from '../../components/molecules'
 import { apiRequest, getApiBaseUrl } from '../../lib/api'
 import { useAuth } from '../../auth/AuthContext'
 
-/* ═══ Aktiv Parking — нативные страницы (жильцы, транспорт, пропуска, отчёты, главная).
+/* ═══ Aktiv Parking — нативные страницы (белый список, отчёты, главная).
    Работают только с бэкендом ProjectX (/api/parking/...), внешний сервер не нужен. ═══ */
 
-interface Vehicle { id: string; plate: string; brand: string | null; color: string | null; notes: string | null; isActive: boolean; ownerName: string | null; ownerPhone: string | null; permitStatus: string; country?: string | null; company?: string | null; vehicleType?: string | null; photoUrl?: string | null; holderId?: string | null; holderName?: string | null; timeLimitMinutes?: number | null; category?: string | null }
+/** Запись белого списка: сама карточка и есть разрешение на въезд. */
+interface Vehicle { id: string; plate: string; brand: string | null; color: string | null; notes: string | null; isActive: boolean; ownerName: string | null; ownerPhone: string | null; accessStatus: string; country?: string | null; company?: string | null; vehicleType?: string | null; photoUrl?: string | null; holderId?: string | null; holderName?: string | null; timeLimitMinutes?: number | null; category?: string | null; accessValidTo?: string | null; zoneId?: string | null; zoneName?: string | null }
 interface VehicleHistoryRow { enteredUtc: string; exitedUtc: string | null; durationMinutes: number | null; cost: number | null; paymentMethod: string | null; cameraName: string | null }
-interface Permit { id: string; vehicleId: string; plate: string; vehicleBrand: string | null; ownerName: string | null; zoneId: string | null; zoneName: string | null; validFrom: string; validTo: string | null; isActive: boolean; notes: string | null; status: string }
 interface ZoneRef { id: string; name: string }
 /** Владелец мест: квота ограничивает, сколько его машин стоит одновременно. */
 interface HolderRef { id: string; name: string; spacesLimit: number; isActive: boolean }
@@ -122,8 +122,20 @@ export function ParkingHomePage() {
   )
 }
 
-/* ─── Транспорт (база автомобилей; владелец — текстовые поля) ─── */
-const emptyVehicleForm = { plate: '', brand: '', color: '', notes: '', isActive: true, country: '', company: '', vehicleType: '', photoUrl: '', ownerName: '', ownerPhone: '', holderId: '', timeLimitMinutes: '', category: '' }
+/* ─── Белый список: номер, владелец, срок лицензии и зона доступа ─── */
+
+/** Лицензию по умолчанию выдаём на год: годовой пропуск — обычный случай на парковке. */
+function defaultLicenseEnd(): string {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+const emptyVehicleForm = () => ({
+  plate: '', brand: '', color: '', notes: '', isActive: true, country: '', company: '',
+  vehicleType: '', photoUrl: '', ownerName: '', ownerPhone: '', holderId: '',
+  timeLimitMinutes: '', category: '', accessValidTo: defaultLicenseEnd(), zoneId: '',
+})
 
 export function ParkingVehiclesPage() {
   const { t } = useTranslation()
@@ -134,28 +146,32 @@ export function ParkingVehiclesPage() {
   const [saving, setSaving] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [vehForm, setVehForm] = useState(emptyVehicleForm)
+  const [vehForm, setVehForm] = useState(emptyVehicleForm())
+  const [moreOpen, setMoreOpen] = useState(false)
   const [confirmDel, setConfirmDel] = useState<Vehicle | null>(null)
   const [histFor, setHistFor] = useState<Vehicle | null>(null)
   const [histRows, setHistRows] = useState<VehicleHistoryRow[]>([])
   const [holders, setHolders] = useState<HolderRef[]>([])
+  const [zones, setZones] = useState<ZoneRef[]>([])
 
   const load = useCallback(async () => {
     if (!token) return
     try {
-      // Владельцы нужны для выпадающего списка в карточке машины.
-      const [v, h] = await Promise.all([
+      // Владельцы и зоны нужны для выпадающих списков в карточке машины.
+      const [v, h, z] = await Promise.all([
         apiRequest<Vehicle[]>('/api/parking/vehicles', { token }),
         apiRequest<HolderRef[]>('/api/parking/holders', { token }).catch(() => [] as HolderRef[]),
+        apiRequest<ZoneRef[]>('/api/parking/zones', { token }).catch(() => [] as ZoneRef[]),
       ])
-      setVehicles(v); setHolders(h); setError(null)
+      setVehicles(v); setHolders(h); setZones(z); setError(null)
     } catch (e) { setError(e instanceof Error ? e.message : 'error') }
   }, [token])
   useEffect(() => { void load() }, [load])
 
   const vehQ = vehSearch.trim().toLowerCase()
   const shownVehicles = vehicles.filter((v) =>
-    !vehQ || v.plate.toLowerCase().includes(vehQ) || (v.brand ?? '').toLowerCase().includes(vehQ) || (v.ownerName ?? '').toLowerCase().includes(vehQ))
+    !vehQ || v.plate.toLowerCase().includes(vehQ) || (v.brand ?? '').toLowerCase().includes(vehQ)
+    || (v.ownerName ?? '').toLowerCase().includes(vehQ) || (v.holderName ?? '').toLowerCase().includes(vehQ))
 
   const saveVehicle = async () => {
     if (!token || !vehForm.plate.trim()) return
@@ -170,10 +186,25 @@ export function ParkingVehiclesPage() {
         holderId: vehForm.holderId || null,
         timeLimitMinutes: vehForm.timeLimitMinutes ? Math.max(1, parseInt(vehForm.timeLimitMinutes, 10) || 0) : null,
         category: vehForm.category || null,
+        // Пустая дата — доступ бессрочный, пустая зона — въезд во все зоны.
+        accessValidTo: vehForm.accessValidTo || null,
+        zoneId: vehForm.zoneId || null,
       })
       await apiRequest(editingId ? `/api/parking/vehicles/${editingId}` : '/api/parking/vehicles', { method: editingId ? 'PUT' : 'POST', token, body })
       setModalOpen(false); await load()
     } catch (e) { setError(e instanceof Error ? e.message : 'error') } finally { setSaving(false) }
+  }
+
+  const openCreate = () => { setVehForm(emptyVehicleForm()); setEditingId(null); setMoreOpen(false); setModalOpen(true) }
+  const openEdit = (v: Vehicle) => {
+    setVehForm({
+      plate: v.plate, brand: v.brand ?? '', color: v.color ?? '', notes: v.notes ?? '', isActive: v.isActive,
+      country: v.country ?? '', company: v.company ?? '', vehicleType: v.vehicleType ?? '', photoUrl: v.photoUrl ?? '',
+      ownerName: v.ownerName ?? '', ownerPhone: v.ownerPhone ?? '', holderId: v.holderId ?? '',
+      timeLimitMinutes: v.timeLimitMinutes != null ? String(v.timeLimitMinutes) : '', category: v.category ?? '',
+      accessValidTo: v.accessValidTo ?? '', zoneId: v.zoneId ?? '',
+    })
+    setEditingId(v.id); setMoreOpen(false); setModalOpen(true)
   }
 
   const doDelete = async () => {
@@ -205,16 +236,17 @@ export function ParkingVehiclesPage() {
         <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Input placeholder={t('parking.ap.searchVehicle')} value={vehSearch} onChange={(e) => setVehSearch(e.target.value)} />
-            <Button icon="add" onClick={() => { setVehForm(emptyVehicleForm); setEditingId(null); setModalOpen(true) }}>{t('parking.ap.addVehicle')}</Button>
+            <Button icon="add" onClick={openCreate}>{t('parking.ap.addVehicle')}</Button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
                   <th className="px-5 py-3 text-left">{t('parking.ap.plate')}</th>
-                  <th className="px-5 py-3 text-left">{t('parking.ap.brand')}</th>
                   <th className="px-5 py-3 text-left">{t('parking.ap.owner')}</th>
-                  <th className="px-5 py-3 text-left">{t('parking.ap.permit')}</th>
+                  <th className="px-5 py-3 text-left">{t('parking.ap.zone')}</th>
+                  <th className="px-5 py-3 text-left">{t('parking.veh.licenseTo')}</th>
+                  <th className="px-5 py-3 text-left">{t('common.status')}</th>
                   <th className="px-5 py-3 text-right">{t('common.actions')}</th>
                 </tr>
               </thead>
@@ -224,24 +256,27 @@ export function ParkingVehiclesPage() {
                     <td className="px-5 py-3 font-mono font-black text-text-dark whitespace-nowrap">
                       {v.country && <span className="mr-1.5 text-[9px] font-black text-text-light border border-border rounded px-1 py-0.5 align-middle">{v.country}</span>}
                       {v.photoUrl ? <a href={v.photoUrl} target="_blank" rel="noreferrer" className="underline decoration-dotted">{v.plate}</a> : v.plate}
-                      {!v.isActive && <span className="ml-2 text-[9px] font-black text-text-light uppercase">{t('parking.ap.inactive')}</span>}
+                      {(v.brand || v.color) && (
+                        <span className="block font-sans text-[10px] font-medium text-text-light">
+                          {v.brand ?? ''}{v.color ? ` · ${v.color}` : ''}
+                        </span>
+                      )}
                     </td>
+                    {/* Владелец — из справочника владельцев мест; свободный текст остался запасным. */}
                     <td className="px-5 py-3 text-text-light">
-                      {v.brand ?? '—'}{v.color ? ` · ${v.color}` : ''}
-                      {v.vehicleType && <span className="block text-[10px]">{t(`parking.veh.type.${v.vehicleType}`, { defaultValue: v.vehicleType })}</span>}
+                      {v.holderName ?? v.ownerName ?? '—'}
+                      {v.ownerPhone && <span className="block text-[10px]">{v.ownerPhone}</span>}
                     </td>
-                    <td className="px-5 py-3 text-text-light">
-                      {v.ownerName ?? '—'}{v.ownerPhone ? ` · ${v.ownerPhone}` : ''}
-                      {v.company && <span className="block text-[10px]">{v.company}</span>}
-                    </td>
-                    <td className="px-5 py-3"><StatusChip status={v.permitStatus} /></td>
+                    <td className="px-5 py-3 text-text-light">{v.zoneName ?? t('parking.ap.allZones')}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-text-light">{v.accessValidTo ?? t('parking.ap.unlimited')}</td>
+                    <td className="px-5 py-3"><StatusChip status={v.accessStatus} /></td>
                     <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                       <button type="button" className="text-[10px] font-black uppercase tracking-wider text-text-light hover:text-primary hover:underline"
                         onClick={() => void openHistory(v)}>
                         {t('parking.veh.history')}
                       </button>
                       <button type="button" className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline"
-                        onClick={() => { setVehForm({ plate: v.plate, brand: v.brand ?? '', color: v.color ?? '', notes: v.notes ?? '', isActive: v.isActive, country: v.country ?? '', company: v.company ?? '', vehicleType: v.vehicleType ?? '', photoUrl: v.photoUrl ?? '', ownerName: v.ownerName ?? '', ownerPhone: v.ownerPhone ?? '', holderId: v.holderId ?? '', timeLimitMinutes: v.timeLimitMinutes != null ? String(v.timeLimitMinutes) : '', category: v.category ?? '' }); setEditingId(v.id); setModalOpen(true) }}>
+                        onClick={() => openEdit(v)}>
                         {t('common.edit')}
                       </button>
                       <button type="button" className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline"
@@ -252,7 +287,7 @@ export function ParkingVehiclesPage() {
                   </tr>
                 ))}
                 {shownVehicles.length === 0 && (
-                  <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-text-light">{t('parking.ap.noVehicles')}</td></tr>
+                  <tr><td colSpan={6} className="px-5 py-10 text-center text-sm text-text-light">{t('parking.ap.noVehicles')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -263,36 +298,70 @@ export function ParkingVehiclesPage() {
       {modalOpen && (
         <Modal isOpen title={editingId ? t('parking.ap.editVehicle') : t('parking.ap.addVehicle')} onClose={() => setModalOpen(false)}>
           <div className="space-y-3">
-            <div className="grid grid-cols-[1fr_90px] gap-3">
-              <Input placeholder={t('parking.ap.plate')} value={vehForm.plate} onChange={(e) => setVehForm({ ...vehForm, plate: e.target.value.toUpperCase() })} autoFocus />
-              <Input placeholder={t('parking.veh.country')} value={vehForm.country} onChange={(e) => setVehForm({ ...vehForm, country: e.target.value.toUpperCase() })} maxLength={4} />
+            {/* Четыре поля регистрации: номер, владелец, срок лицензии, зона доступа.
+                Остальные приметы машины — под «Дополнительно», они на проезд не влияют. */}
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.ap.plate')}</label>
+              <Input placeholder="10-AA-100" value={vehForm.plate} onChange={(e) => setVehForm({ ...vehForm, plate: e.target.value.toUpperCase() })} autoFocus />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Input placeholder={t('parking.ap.brand')} value={vehForm.brand} onChange={(e) => setVehForm({ ...vehForm, brand: e.target.value })} />
-              <Input placeholder={t('parking.ap.color')} value={vehForm.color} onChange={(e) => setVehForm({ ...vehForm, color: e.target.value })} />
-            </div>
-            <select className={fieldCls} value={vehForm.vehicleType} onChange={(e) => setVehForm({ ...vehForm, vehicleType: e.target.value })}>
-              <option value="">{t('parking.veh.typeLabel')}</option>
-              {['car', 'truck', 'bus', 'motorcycle', 'other'].map((k) => <option key={k} value={k}>{t(`parking.veh.type.${k}`)}</option>)}
-            </select>
-            <div className="grid grid-cols-2 gap-3">
-              <Input placeholder={t('parking.ap.owner')} value={vehForm.ownerName} onChange={(e) => setVehForm({ ...vehForm, ownerName: e.target.value })} />
-              <Input placeholder={t('parking.veh.ownerPhone')} value={vehForm.ownerPhone} onChange={(e) => setVehForm({ ...vehForm, ownerPhone: e.target.value })} />
-            </div>
-            <Input placeholder={t('parking.veh.company')} value={vehForm.company} onChange={(e) => setVehForm({ ...vehForm, company: e.target.value })} />
-            <Input placeholder={t('parking.veh.photoUrl')} value={vehForm.photoUrl} onChange={(e) => setVehForm({ ...vehForm, photoUrl: e.target.value })} />
-            {/* Владелец мест ограничивает, сколько его машин стоит одновременно. */}
-            <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.ap.owner')}</label>
+              {/* Владелец мест ограничивает, сколько его машин стоит одновременно. */}
               <select className={fieldCls} value={vehForm.holderId} onChange={(e) => setVehForm({ ...vehForm, holderId: e.target.value })} title={t('parking.holder.assignHint')}>
                 <option value="">{t('parking.holder.none')}</option>
                 {holders.filter((h) => h.isActive).map((h) => <option key={h.id} value={h.id}>{h.name} ({h.spacesLimit})</option>)}
               </select>
-              <select className={fieldCls} value={vehForm.category} onChange={(e) => setVehForm({ ...vehForm, category: e.target.value })}>
-                <option value="">{t('parking.cfg.categoryAny')}</option>
-                {['employee', 'management', 'vip', 'service'].map((k) => <option key={k} value={k}>{t(`parking.cfg.category.${k}`)}</option>)}
-              </select>
             </div>
-            <Input type="number" min={0} placeholder={t('parking.cfg.limitHint')} value={vehForm.timeLimitMinutes} onChange={(e) => setVehForm({ ...vehForm, timeLimitMinutes: e.target.value })} />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.veh.licenseTo')}</label>
+                <input type="date" className={fieldCls} value={vehForm.accessValidTo}
+                  onChange={(e) => setVehForm({ ...vehForm, accessValidTo: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.veh.zoneAccess')}</label>
+                <select className={fieldCls} value={vehForm.zoneId} onChange={(e) => setVehForm({ ...vehForm, zoneId: e.target.value })}>
+                  <option value="">{t('parking.ap.allZones')}</option>
+                  {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="text-[11px] leading-relaxed text-text-light">{t('parking.veh.licenseHint')}</div>
+
+            <button type="button" onClick={() => setMoreOpen((v) => !v)}
+              className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-text-light hover:text-primary">
+              <span className="material-symbols-outlined text-base">{moreOpen ? 'expand_less' : 'expand_more'}</span>
+              {t('parking.veh.more')}
+            </button>
+            {moreOpen && (
+              <div className="space-y-3 rounded-xl border border-divider-light p-3">
+                <div className="grid grid-cols-[1fr_90px] gap-3">
+                  <Input placeholder={t('parking.ap.brand')} value={vehForm.brand} onChange={(e) => setVehForm({ ...vehForm, brand: e.target.value })} />
+                  <Input placeholder={t('parking.veh.country')} value={vehForm.country} onChange={(e) => setVehForm({ ...vehForm, country: e.target.value.toUpperCase() })} maxLength={4} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input placeholder={t('parking.ap.color')} value={vehForm.color} onChange={(e) => setVehForm({ ...vehForm, color: e.target.value })} />
+                  <select className={fieldCls} value={vehForm.vehicleType} onChange={(e) => setVehForm({ ...vehForm, vehicleType: e.target.value })}>
+                    <option value="">{t('parking.veh.typeLabel')}</option>
+                    {['car', 'truck', 'bus', 'motorcycle', 'other'].map((k) => <option key={k} value={k}>{t(`parking.veh.type.${k}`)}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input placeholder={t('parking.veh.contactName')} value={vehForm.ownerName} onChange={(e) => setVehForm({ ...vehForm, ownerName: e.target.value })} />
+                  <Input placeholder={t('parking.veh.ownerPhone')} value={vehForm.ownerPhone} onChange={(e) => setVehForm({ ...vehForm, ownerPhone: e.target.value })} />
+                </div>
+                <Input placeholder={t('parking.veh.company')} value={vehForm.company} onChange={(e) => setVehForm({ ...vehForm, company: e.target.value })} />
+                <Input placeholder={t('parking.veh.photoUrl')} value={vehForm.photoUrl} onChange={(e) => setVehForm({ ...vehForm, photoUrl: e.target.value })} />
+                <div className="grid grid-cols-2 gap-3">
+                  <select className={fieldCls} value={vehForm.category} onChange={(e) => setVehForm({ ...vehForm, category: e.target.value })}>
+                    <option value="">{t('parking.cfg.categoryAny')}</option>
+                    {['employee', 'management', 'vip', 'service'].map((k) => <option key={k} value={k}>{t(`parking.cfg.category.${k}`)}</option>)}
+                  </select>
+                  <Input type="number" min={0} placeholder={t('parking.cfg.limitHint')} value={vehForm.timeLimitMinutes} onChange={(e) => setVehForm({ ...vehForm, timeLimitMinutes: e.target.value })} />
+                </div>
+              </div>
+            )}
+
             <label className="flex items-center gap-2 text-sm font-bold text-text-dark cursor-pointer">
               <input type="checkbox" checked={vehForm.isActive} onChange={(e) => setVehForm({ ...vehForm, isActive: e.target.checked })} className="w-4 h-4 accent-primary" />
               {t('parking.ap.active')}
@@ -330,169 +399,6 @@ export function ParkingVehiclesPage() {
                 </tbody>
               </table>
             )}
-          </div>
-        </Modal>
-      )}
-
-      {confirmDel && (
-        <ConfirmDialog isOpen title={t('parking.ap.deleteQuestion', { name: confirmDel.plate })} message={t('companyTab.actionCannotBeUndone')}
-          onConfirm={doDelete} onClose={() => setConfirmDel(null)} isLoading={saving} variant="danger" />
-      )}
-    </AppLayout>
-  )
-}
-
-/* ─── Пропуска ─── */
-const emptyPermitForm = { vehicleId: '', zoneId: '', validFrom: new Date().toISOString().slice(0, 10), validTo: '', isActive: true, notes: '' }
-
-export function ParkingPermitsPage() {
-  const { t } = useTranslation()
-  const { token } = useAuth()
-  const [permits, setPermits] = useState<Permit[]>([])
-  const [vehicles, setVehicles] = useState<Vehicle[]>([])
-  const [zones, setZones] = useState<ZoneRef[]>([])
-  const [statusTab, setStatusTab] = useState<'all' | 'active' | 'scheduled' | 'suspended' | 'expired'>('all')
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState(emptyPermitForm)
-  const [confirmDel, setConfirmDel] = useState<Permit | null>(null)
-
-  const load = useCallback(async () => {
-    if (!token) return
-    try {
-      const [p, v, z] = await Promise.all([
-        apiRequest<Permit[]>('/api/parking/permits', { token }),
-        apiRequest<Vehicle[]>('/api/parking/vehicles', { token }),
-        apiRequest<{ id: string; name: string }[]>('/api/parking/zones', { token }),
-      ])
-      setPermits(p); setVehicles(v); setZones(z); setError(null)
-    } catch (e) { setError(e instanceof Error ? e.message : 'error') }
-  }, [token])
-  useEffect(() => { void load() }, [load])
-
-  const shown = permits.filter((p) => statusTab === 'all' || p.status === statusTab)
-  const count = (s: string) => permits.filter((p) => p.status === s).length
-  const fieldCls = 'w-full h-10 px-3 rounded-xl border border-divider-light bg-white text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/10 outline-none'
-
-  const save = async () => {
-    if (!token || !form.vehicleId || !form.validFrom) return
-    setSaving(true)
-    try {
-      const body = JSON.stringify({ vehicleId: form.vehicleId, zoneId: form.zoneId || null, validFrom: form.validFrom, validTo: form.validTo || null, isActive: form.isActive, notes: form.notes.trim() || null })
-      await apiRequest(editingId ? `/api/parking/permits/${editingId}` : '/api/parking/permits', { method: editingId ? 'PUT' : 'POST', token, body })
-      setModalOpen(false); await load()
-    } catch (e) { setError(e instanceof Error ? e.message : 'error') } finally { setSaving(false) }
-  }
-
-  const doDelete = async () => {
-    if (!token || !confirmDel) return
-    setSaving(true)
-    try {
-      await apiRequest(`/api/parking/permits/${confirmDel.id}`, { method: 'DELETE', token })
-      setConfirmDel(null); await load()
-    } catch (e) { setError(e instanceof Error ? e.message : 'error') } finally { setSaving(false) }
-  }
-
-  return (
-    <AppLayout>
-      <div className="p-6 space-y-6">
-        <PageHeader title={t('parking.ap.permitsTitle')} description={t('parking.ap.permitsDesc')} />
-        {error && <div className="p-4 bg-error-bg text-error-text rounded-2xl text-sm font-bold">{error}</div>}
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex gap-1 bg-surface rounded-2xl shadow-sm p-1">
-            {(['all', 'active', 'scheduled', 'suspended', 'expired'] as const).map((s) => (
-              <button key={s} type="button" onClick={() => setStatusTab(s)}
-                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${statusTab === s ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-dark'}`}>
-                {s === 'all' ? t('common.all') : t(`parking.ap.status.${s}`)}
-                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md leading-none ${statusTab === s ? 'bg-white/20' : 'bg-background-light text-text-muted'}`}>
-                  {s === 'all' ? permits.length : count(s)}
-                </span>
-              </button>
-            ))}
-          </div>
-          <Button icon="add" onClick={() => { setForm(emptyPermitForm); setEditingId(null); setModalOpen(true) }}>{t('parking.ap.addPermit')}</Button>
-        </div>
-
-        <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                  <th className="px-5 py-3 text-left">{t('parking.ap.plate')}</th>
-                  <th className="px-5 py-3 text-left">{t('parking.ap.owner')}</th>
-                  <th className="px-5 py-3 text-left">{t('parking.ap.zone')}</th>
-                  <th className="px-5 py-3 text-left">{t('common.from')}</th>
-                  <th className="px-5 py-3 text-left">{t('common.to')}</th>
-                  <th className="px-5 py-3 text-left">{t('common.status')}</th>
-                  <th className="px-5 py-3 text-right">{t('common.actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((p) => (
-                  <tr key={p.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
-                    <td className="px-5 py-3 font-mono font-black text-text-dark">{p.plate}<span className="ml-2 text-[11px] font-normal text-text-light">{p.vehicleBrand ?? ''}</span></td>
-                    <td className="px-5 py-3 text-text-light">{p.ownerName ?? '—'}</td>
-                    <td className="px-5 py-3 text-text-light">{p.zoneName ?? t('parking.ap.allZones')}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-text-light">{p.validFrom}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-text-light">{p.validTo ?? t('parking.ap.unlimited')}</td>
-                    <td className="px-5 py-3"><StatusChip status={p.status} /></td>
-                    <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
-                      <button type="button" className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline"
-                        onClick={() => { setForm({ vehicleId: p.vehicleId, zoneId: p.zoneId ?? '', validFrom: p.validFrom, validTo: p.validTo ?? '', isActive: p.isActive, notes: p.notes ?? '' }); setEditingId(p.id); setModalOpen(true) }}>
-                        {t('common.edit')}
-                      </button>
-                      <button type="button" className="text-[10px] font-black uppercase tracking-wider text-error-text hover:underline"
-                        onClick={() => setConfirmDel(p)}>
-                        {t('common.delete')}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {shown.length === 0 && (
-                  <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-text-light">{t('parking.ap.noPermits')}</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {modalOpen && (
-        <Modal isOpen title={editingId ? t('parking.ap.editPermit') : t('parking.ap.addPermit')} onClose={() => setModalOpen(false)}>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.ap.vehicle')}</label>
-              <select className={fieldCls} value={form.vehicleId} onChange={(e) => setForm({ ...form, vehicleId: e.target.value })}>
-                <option value="">—</option>
-                {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plate}{v.ownerName ? ` — ${v.ownerName}` : ''}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.ap.zone')}</label>
-              <select className={fieldCls} value={form.zoneId} onChange={(e) => setForm({ ...form, zoneId: e.target.value })}>
-                <option value="">{t('parking.ap.allZones')}</option>
-                {zones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('common.from')}</label>
-                <input type="date" className={fieldCls} value={form.validFrom} onChange={(e) => setForm({ ...form, validFrom: e.target.value })} />
-              </div>
-              <div>
-                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('common.to')}</label>
-                <input type="date" className={fieldCls} value={form.validTo} onChange={(e) => setForm({ ...form, validTo: e.target.value })} />
-              </div>
-            </div>
-            <Input placeholder={t('common.optional')} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-            <label className="flex items-center gap-2 text-sm font-bold text-text-dark cursor-pointer">
-              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} className="w-4 h-4 accent-primary" />
-              {t('parking.ap.permitActive')}
-            </label>
-            <Button fullWidth isLoading={saving} disabled={!form.vehicleId || !form.validFrom} onClick={save}>{editingId ? t('common.save') : t('common.add')}</Button>
           </div>
         </Modal>
       )}

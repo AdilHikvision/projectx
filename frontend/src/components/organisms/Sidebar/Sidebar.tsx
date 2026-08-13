@@ -47,7 +47,8 @@ const PRIMARY_NAV: NavConfig[] = [
     // ─── Aktiv Parking (нативные страницы ProjectX) ───
     // "Ana Səhifə" Dashboard tabında göstərilir (parking modulunda), ona görə burada ayrıca yoxdur.
     { to: '/parking/vehicles', icon: 'directions_car', labelKey: 'parking.nav.vehicles', anyOf: ['Parking.View'], modules: ['parking'] },
-    { to: '/parking/ap-permits', icon: 'verified_user', labelKey: 'parking.nav.permits', anyOf: ['Parking.View'], modules: ['parking'] },
+    { to: '/parking/holders', icon: 'key', labelKey: 'parking.nav.holders', anyOf: ['Parking.View'], modules: ['parking'] },
+    { to: '/parking/blacklist', icon: 'block', labelKey: 'parking.nav.blacklist', anyOf: ['Parking.View'], modules: ['parking'] },
     { to: '/parking/pos', icon: 'point_of_sale', labelKey: 'parking.nav.pos', anyOf: ['Parking.Operate'], modules: ['parking'], paidParkingOnly: true },
     { to: '/parking/tariffs', icon: 'sell', labelKey: 'parking.nav.tariffs', anyOf: ['Parking.Manage'], modules: ['parking'], paidParkingOnly: true },
     { to: '/parking/history', icon: 'history', labelKey: 'parking.nav.history', anyOf: ['Parking.View'], modules: ['parking'] },

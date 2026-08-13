@@ -101,6 +101,7 @@ public static class DependencyInjection
         // Парковка: решение о доступе — scoped (работает с DbContext), обработчик ANPR —
         // singleton, потому что живёт рядом с фоновым alertStream и помнит последние проезды.
         services.AddScoped<Backend.Application.Parking.IParkingAccessService, Parking.ParkingAccessService>();
+        services.AddScoped<Backend.Application.Parking.IParkingBarrierService, Parking.ParkingBarrierService>();
         services.AddSingleton<Backend.Application.Parking.IParkingAnprHandler, Parking.ParkingAnprHandler>();
         services.AddHostedService<Parking.ParkingOverstayService>();
         services.AddHostedService<TimeSyncSchedulerService>();

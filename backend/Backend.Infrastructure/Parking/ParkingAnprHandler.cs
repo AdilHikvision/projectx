@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using Backend.Application.Parking;
 using Backend.Domain.Entities;
-using Backend.Infrastructure.Devices;
 using Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -51,8 +50,41 @@ public sealed class ParkingAnprHandler(
             return;
         }
 
+        // Качество распознавания проверяем до любых решений: по обрывку номера нельзя ни
+        // открыть шлагбаум, ни закрыть чужую сессию. Отбраковка попадает в журнал —
+        // по ней видно, что камера читает плохо.
+        var quality = await PlateQualityOptions.LoadAsync(db, ct);
+        var check = PlateQuality.Validate(plateEvent.Plate, plateEvent.Confidence, quality);
+        if (!check.Ok)
+        {
+            logger.LogInformation("ANPR {Device}: plate «{Plate}» rejected ({Reason})", device.Name, plateEvent.Plate, check.Reason);
+            db.ParkingEvents.Add(new ParkingEvent
+            {
+                Type = "recognition_error",
+                Message = $"Plate rejected: {check.Reason}{(check.Detail is null ? "" : $" — {check.Detail}")}",
+                Plate = plateEvent.Plate.Trim(),
+                Source = device.Name
+            });
+            await db.SaveChangesAsync(ct);
+            return;
+        }
+
         var access = scope.ServiceProvider.GetRequiredService<IParkingAccessService>();
-        var direction = await ResolveDirectionAsync(db, device, norm, plateEvent, ct);
+        var barrier = scope.ServiceProvider.GetRequiredService<IParkingBarrierService>();
+
+        // Режим проезда: «только вход» означает, что выезд камеры не оформляют — сессию
+        // закрывает оператор.
+        var entryOnly = string.Equals(await ReadSettingAsync(db, "parking.flowMode", ct), "EntryOnly", StringComparison.OrdinalIgnoreCase);
+        if (entryOnly && device.ParkingDirection == ParkingCameraDirection.Exit)
+        {
+            // Выездная камера в этом режиме — только глаза и реле для оператора: ни закрывать
+            // сессию, ни тем более открывать новую по её кадру нельзя.
+            logger.LogDebug("ANPR {Device}: exit camera ignored in entry-only mode ({Plate})", device.Name, plateEvent.Plate);
+            return;
+        }
+        var direction = entryOnly
+            ? ParkingCameraDirection.Entry
+            : await ResolveDirectionAsync(db, device, norm, plateEvent, ct);
 
         if (direction == ParkingCameraDirection.Exit)
         {
@@ -66,8 +98,32 @@ public sealed class ParkingAnprHandler(
                 return;
             }
             logger.LogInformation("ANPR {Device}: exit {Plate}, closed {Closed} session(s)", device.Name, plateEvent.Plate, exit.Closed);
-            if (exit.Closed > 0) await TryOpenBarrierAsync(db, device, ct);
+            if (exit.Closed > 0) await barrier.TriggerAsync(device.Id, "exit", plateEvent.Plate, ct);
             return;
+        }
+
+        // Машина уже числится внутри, а камера сняла её на въезде: либо это повторное
+        // распознавание, либо «паровозик» — второй проезжает под чужой номер. Шлагбаум
+        // не открываем. Если машина застряла внутри из-за пропущенного выезда, оператор
+        // закрывает сессию кнопкой «Выпустить» на кассе.
+        if (!quality.AllowReentryWhileInside)
+        {
+            var alreadyInside = await db.ParkingSessions.AsNoTracking()
+                .AnyAsync(s => s.ExitedUtc == null && s.PlateNormalized == norm, ct);
+            if (alreadyInside)
+            {
+                logger.LogInformation("ANPR {Device}: entry {Plate} ignored — already inside", device.Name, plateEvent.Plate);
+                db.ParkingEvents.Add(new ParkingEvent
+                {
+                    Type = "denied",
+                    Message = "already-inside",
+                    Plate = plateEvent.Plate.Trim(),
+                    Source = device.Name
+                });
+                await db.SaveChangesAsync(ct);
+                _recent[deviceIdentifier] = new Recent(norm, DateTime.UtcNow, null, null);
+                return;
+            }
         }
 
         var decision = await access.DecideAsync(new ParkingAccessInput(
@@ -84,7 +140,7 @@ public sealed class ParkingAnprHandler(
         logger.LogInformation("ANPR {Device}: entry {Plate} → allowed={Allowed} ({Reason})",
             device.Name, plateEvent.Plate, decision.Allowed, decision.Reason);
 
-        if (decision.Allowed) await TryOpenBarrierAsync(db, device, ct);
+        if (decision.Allowed) await barrier.TriggerAsync(device.Id, $"entry ({decision.Reason})", plateEvent.Plate, ct);
     }
 
     public async Task AttachSnapshotAsync(string deviceIdentifier, byte[] image, CancellationToken ct)
@@ -136,30 +192,6 @@ public sealed class ParkingAnprHandler(
         var hasOpen = await db.ParkingSessions.AsNoTracking()
             .AnyAsync(x => x.ExitedUtc == null && x.PlateNormalized == plateNormalized, ct);
         return hasOpen ? ParkingCameraDirection.Exit : ParkingCameraDirection.Entry;
-    }
-
-    /// <summary>
-    /// Импульс на реле камеры (ISAPI IO output). Номер выхода — в настройке parking.barrierOutput,
-    /// 0 или пусто означает, что шлагбаумом управляет сама камера и трогать её не нужно.
-    /// </summary>
-    private async Task TryOpenBarrierAsync(AppDbContext db, Device device, CancellationToken ct)
-    {
-        var output = ReadInt(await ReadSettingAsync(db, "parking.barrierOutput", ct), 0);
-        if (output <= 0) return;
-
-        try
-        {
-            var user = device.Username ?? configuration["Hikvision:Username"] ?? "admin";
-            var pwd = device.Password ?? configuration["Hikvision:Password"] ?? "";
-            var client = new IsapiClient(device.IpAddress, device.Port, user, pwd, TimeSpan.FromSeconds(8));
-            var body = "<IOPortData><outputState>high</outputState></IOPortData>";
-            var (ok, _, err) = await client.PutAsync($"ISAPI/System/IO/outputs/{output}/trigger", body, "application/xml", ct);
-            if (!ok) logger.LogWarning("ANPR {Device}: barrier trigger failed: {Error}", device.Name, err ?? "unknown");
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "ANPR {Device}: barrier trigger threw", device.Name);
-        }
     }
 
     private static async Task<string?> ReadSettingAsync(AppDbContext db, string key, CancellationToken ct) =>

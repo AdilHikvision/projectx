@@ -80,6 +80,34 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         return vehicle?.TimeLimitMinutes is > 0 ? vehicle.TimeLimitMinutes : null;
     }
 
+    /// <summary>
+    /// Первое свободное место нужного типа: не занято открытой сессией и активно.
+    /// Порядок обхода — как на схеме (этаж → ряд → место), чтобы машины заполняли парковку
+    /// сверху вниз, а не в случайном порядке. null — свободных мест этого типа нет
+    /// (тогда сессия останется без места: занятость по счётчикам считается отдельно).
+    /// </summary>
+    public static async Task<(Guid SpaceId, Guid ZoneId)?> PickFreeSpaceAsync(
+        AppDbContext db, ParkingSpaceType type, Guid? zoneId, CancellationToken ct)
+    {
+        var taken = await db.ParkingSessions.AsNoTracking()
+            .Where(s => s.ExitedUtc == null && s.SpaceId != null)
+            .Select(s => s.SpaceId!.Value)
+            .ToListAsync(ct);
+
+        var q = db.ParkingSpaces.AsNoTracking()
+            .Where(sp => sp.IsActive && sp.Type == type && !taken.Contains(sp.Id));
+        if (zoneId.HasValue) q = q.Where(sp => sp.Row!.Floor!.ZoneId == zoneId.Value);
+
+        var found = await q
+            .OrderBy(sp => sp.Row!.Floor!.Level)
+            .ThenBy(sp => sp.Row!.SortOrder)
+            .ThenBy(sp => sp.SortOrder)
+            .ThenBy(sp => sp.Code)
+            .Select(sp => new { sp.Id, ZoneId = sp.Row!.Floor!.ZoneId })
+            .FirstOrDefaultAsync(ct);
+        return found is null ? null : (found.Id, found.ZoneId);
+    }
+
     public async Task<ParkingAccessDecision> DecideAsync(ParkingAccessInput input, CancellationToken ct)
     {
         var norm = NormalizePlate(input.Plate);
@@ -116,12 +144,16 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             var already = await db.ParkingSessions.FirstOrDefaultAsync(x => x.ExitedUtc == null && x.PlateNormalized == norm, ct);
             if (already is null)
             {
+                // Конкретное место нужно, чтобы схема парковки показывала, кто где стоит.
+                var space = await PickFreeSpaceAsync(db, spaceType, input.ZoneId, ct);
                 var session = new ParkingSession
                 {
                     Plate = input.Plate.Trim(),
                     PlateNormalized = norm,
-                    ZoneId = input.ZoneId,
+                    // Камера может не знать зону — берём её у выданного места.
+                    ZoneId = input.ZoneId ?? space?.ZoneId,
                     SpaceType = spaceType,
+                    SpaceId = space?.SpaceId,
                     IsPaid = paid,
                     CameraName = input.Camera,
                     PhotoUrl = input.PhotoUrl,
@@ -150,7 +182,7 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             return new ParkingAccessDecision(true, "subscription", Subscription: sub.Name, SessionId: openedSessionId);
         }
 
-        // Машина из базы: от неё зависят пропуск, владелец мест и лимит стоянки.
+        // Машина из белого списка: от неё зависят разрешение на въезд, владелец мест и лимит стоянки.
         var vehicle = await db.ParkingVehicles.AsNoTracking()
             .FirstOrDefaultAsync(v => v.IsActive && v.PlateNormalized == norm, ct);
 
@@ -173,14 +205,12 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
             return (occupied >= limit, $"Holder «{holder.Name}»: {occupied}/{limit} spaces busy");
         }
 
-        // Действующий пропуск на сегодня пропускает в любом режиме (кроме чёрного списка выше).
-        var hasPermit = vehicle is not null && await db.ParkingPermits.AsNoTracking()
-            .AnyAsync(p => p.IsActive
-                && p.VehicleId == vehicle.Id
-                && p.ValidFrom <= today
-                && (p.ValidTo == null || p.ValidTo >= today)
-                && (p.ZoneId == null || input.ZoneId == null || p.ZoneId == input.ZoneId), ct);
-        if (hasPermit)
+        // Белый список: машина с непросроченной лицензией и подходящей зоной проходит
+        // в любом режиме (кроме чёрного списка выше). Просроченная лицензия или чужая зона —
+        // причина отказа: по ней в журнале видно, что именно закрыло шлагбаум.
+        var licenseExpired = vehicle?.AccessValidTo is { } validTo && validTo < today;
+        var wrongZone = vehicle?.ZoneId is { } allowedZone && input.ZoneId is { } askedZone && allowedZone != askedZone;
+        if (vehicle is not null && !licenseExpired && !wrongZone)
         {
             var (busy, detail) = await HolderSpacesBusy();
             if (busy)
@@ -189,8 +219,8 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
                 await db.SaveChangesAsync(ct);
                 return new ParkingAccessDecision(false, "holder-spaces-busy");
             }
-            await OpenSessionIfRequested(paid: false, paymentMethod: "permit");
-            return new ParkingAccessDecision(true, "permit", SessionId: openedSessionId);
+            await OpenSessionIfRequested(paid: false, paymentMethod: "whitelist");
+            return new ParkingAccessDecision(true, "whitelist", SessionId: openedSessionId);
         }
 
         var settings = await db.SystemSettings.AsNoTracking()
@@ -222,11 +252,11 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         }
         else if (string.Equals(subMode, "List", StringComparison.OrdinalIgnoreCase))
         {
-            // Режим «по пропускам»: без действующего пропуска не пускаем. Сам пропуск
-            // проверен выше и уже вернул бы разрешение, поэтому сюда попадают только те,
-            // у кого его нет или он просрочен.
+            // Режим «по белому списку»: машина без действующей записи не проезжает. Годная
+            // запись проверена выше и уже вернула бы разрешение, поэтому сюда попадают
+            // только отсутствующие, просроченные и приехавшие в чужую зону.
             allow = false;
-            reason = vehicle is null ? "not-in-vehicles" : "no-permit";
+            reason = vehicle is null ? "not-in-whitelist" : licenseExpired ? "license-expired" : "wrong-zone";
         }
         else
         {

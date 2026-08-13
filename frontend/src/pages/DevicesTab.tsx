@@ -31,6 +31,8 @@ interface Device {
   macAddress?: string | null
   parkingDirection?: string | null
   parkingZoneId?: string | null
+  /** Реле шлагбаума на камере; null/0 — шлагбаумом управляет сама камера. */
+  barrierOutput?: number | null
 }
 
 interface ParkingZoneOption {
@@ -70,6 +72,8 @@ interface DeviceFormData {
   /** Только для ANPR-камеры: '' — определять по открытой сессии, иначе Entry/Exit. */
   parkingDirection: '' | 'Entry' | 'Exit'
   parkingZoneId: string
+  /** Номер релейного выхода камеры; пусто или 0 — сервер шлагбаумом не управляет. */
+  barrierOutput: string
 }
 
 const emptyForm: DeviceFormData = {
@@ -83,6 +87,7 @@ const emptyForm: DeviceFormData = {
   password: '',
   parkingDirection: '',
   parkingZoneId: '',
+  barrierOutput: '',
 }
 
 /** Тип устройства 6 = ANPR-камера: только у неё есть настройки парковки. */
@@ -211,6 +216,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
   const [addDevicePassword, setAddDevicePassword] = useState('')
   const [discoverSearchQuery, setDiscoverSearchQuery] = useState('')
   const [networkWarningMessage, setNetworkWarningMessage] = useState<string | null>(null)
+  // Проверка реле шлагбаума при пусконаладке: результат показываем прямо в карточке камеры.
+  const [barrierTest, setBarrierTest] = useState<{ ok: boolean; text: string } | null>(null)
+  const [barrierTesting, setBarrierTesting] = useState(false)
 
   const loadData = useCallback(async () => {
     if (!token) return
@@ -427,7 +435,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
       password: '',
       parkingDirection: (device.parkingDirection === 'Entry' || device.parkingDirection === 'Exit') ? device.parkingDirection : '',
       parkingZoneId: device.parkingZoneId ?? '',
+      barrierOutput: device.barrierOutput ? String(device.barrierOutput) : '',
     })
+    setBarrierTest(null)
     setModalMode('edit')
   }
 
@@ -494,6 +504,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
           password: formData.password || null,
           parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
           parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
+          barrierOutput: formData.deviceType === ANPR_DEVICE_TYPE ? (parseInt(formData.barrierOutput, 10) || null) : null,
         }),
       })
       setDevices((prev) => [...prev, { ...created, status: 'Offline' }])
@@ -525,6 +536,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
           password: formData.password || null,
           parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
           parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
+          barrierOutput: formData.deviceType === ANPR_DEVICE_TYPE ? (parseInt(formData.barrierOutput, 10) || null) : null,
         }),
       })
       setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
@@ -533,6 +545,33 @@ export const DevicesTab = forwardRef((_props, ref) => {
       setError(e instanceof Error ? e.message : t('devicesTab.failedUpdateDevice'))
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  /**
+   * Импульс на реле выбранной камеры. Проверять имеет смысл только у сохранённой камеры:
+   * сервер берёт номер выхода из базы, а не из формы.
+   */
+  async function handleBarrierTest() {
+    if (!token || !editingDevice) return
+    setBarrierTesting(true)
+    setBarrierTest(null)
+    try {
+      const res = await apiRequest<{ triggered: boolean; skipped: boolean; output?: number | null; method?: string | null; error?: string | null }>(
+        `/api/devices/${editingDevice.id}/barrier-test`,
+        { method: 'POST', token }
+      )
+      if (res.triggered) setBarrierTest({
+        ok: true,
+        // Какой способ сработал — важно при пусконаладке: от него зависит, нужен ли номер реле.
+        text: res.method === 'gate' ? t('devicesTab.anpr.testOkGate') : t('devicesTab.anpr.testOk', { output: res.output ?? 0 }),
+      })
+      else if (res.skipped) setBarrierTest({ ok: false, text: t('devicesTab.anpr.testSkipped') })
+      else setBarrierTest({ ok: false, text: res.error || t('devicesTab.anpr.testFailed') })
+    } catch (e) {
+      setBarrierTest({ ok: false, text: e instanceof Error ? e.message : t('devicesTab.anpr.testFailed') })
+    } finally {
+      setBarrierTesting(false)
     }
   }
 
@@ -873,7 +912,39 @@ export const DevicesTab = forwardRef((_props, ref) => {
                   {parkingZones.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
                 </select>
               </div>
+              {/* Реле шлагбаума: пока номер не задан, камера открывает шлагбаум сама,
+                  и решения сервера (чёрный список, режим «по пропускам») на железо не влияют. */}
+              <div>
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.anpr.barrierOutput')}</label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={formData.barrierOutput}
+                  onChange={(e) => setFormData((p) => ({ ...p, barrierOutput: e.target.value }))}
+                  placeholder="0"
+                />
+              </div>
+              {modalMode === 'edit' && (
+                <div className="flex items-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    icon="bolt"
+                    fullWidth
+                    isLoading={barrierTesting}
+                    onClick={() => void handleBarrierTest()}
+                  >
+                    {t('devicesTab.anpr.testBarrier')}
+                  </Button>
+                </div>
+              )}
+              {barrierTest && (
+                <p className={`col-span-2 text-[11px] font-bold ${barrierTest.ok ? 'text-green-700' : 'text-error-text'}`}>
+                  {barrierTest.text}
+                </p>
+              )}
               <p className="col-span-2 text-[10px] text-text-light leading-relaxed">{t('devicesTab.anpr.hint')}</p>
+              <p className="col-span-2 text-[10px] text-text-light leading-relaxed">{t('devicesTab.anpr.barrierHint')}</p>
             </div>
           )}
 

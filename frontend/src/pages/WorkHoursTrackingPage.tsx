@@ -321,6 +321,20 @@ function formatTimeOnly(iso: string) {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+/**
+ * Десятичные часы → "1.6h". Опоздание, ранний уход и сверхурочные в отчётах смотрят
+ * в часах — так же, как в расчёте зарплаты («Опоздан. ч»), поэтому короткие значения
+ * не превращаются обратно в минуты.
+ */
+function formatHours(hours: number): string {
+  return `${hours.toFixed(1)}h`
+}
+
+/** Минуты → часы для тех же колонок: опоздание и ранний уход приходят с сервера в минутах. */
+function formatMinutesAsHours(minutes: number): string {
+  return formatHours(minutes / 60)
+}
+
 /** Десятичные часы → "Hh Mm" (9.5 → "9h 30m", 0.5 → "30m", 9 → "9h"). */
 function formatHM(hours: number): string {
   const totalMin = Math.round(hours * 60)
@@ -1697,9 +1711,9 @@ useEffect(() => {
                             )}
                           </td>
                           <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>
-                          <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{d.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{d.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesAsHours(d.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesAsHours(d.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
+                          <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHours(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
                           <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                             <button type="button" onClick={() => openPermission(d)} className={`text-[10px] font-black uppercase tracking-wider hover:underline ${(d.permissionHours ?? 0) > 0 ? 'text-sky-600' : 'text-text-light'}`}>
@@ -1772,9 +1786,9 @@ useEffect(() => {
                             {absent > 0 && <span>{t('workHours.absentLabel')}: <strong className="text-error-text">{absent}d</strong></span>}
                             <span>{t('workHours.actual')}: <strong className="text-text-dark">{formatHM(totalActual)}</strong></span>
                             <span>{t('workHours.norm')}: <strong className="text-text-dark">{formatHM(totalNorm)}</strong></span>
-                            {totalOT > 0 && <span>{t('workHours.ot')}: <strong className="text-purple-700">+{formatHM(totalOT)}</strong></span>}
+                            {totalOT > 0 && <span>{t('workHours.ot')}: <strong className="text-purple-700">+{formatHours(totalOT)}</strong></span>}
                             {deficit > 0.05 && <span>{t('workHours.deficit')}: <strong className="text-red-600">-{formatHM(deficit)}</strong></span>}
-                            {totalLate > 0 && <span>{t('workHours.late')}: <strong className="text-amber-700">{totalLate}m</strong></span>}
+                            {totalLate > 0 && <span>{t('workHours.late')}: <strong className="text-amber-700">{formatMinutesAsHours(totalLate)}</strong></span>}
                             {totalEarlyDays > 0 && <span>{t('workHours.early')}: <strong className="text-orange-600">{totalEarlyDays}d</strong></span>}
                           </div>
                         </div>
@@ -1813,9 +1827,9 @@ useEffect(() => {
                                   </td>
                                   <td className="px-5 py-2 text-right font-mono text-text-dark">{r.totalHours > 0 ? formatHM(r.totalHours) : <span className="text-text-light">—</span>}</td>
                                   <td className="px-5 py-2 text-right font-mono text-text-light">{r.normHours > 0 ? formatHM(r.normHours) : '—'}</td>
-                                  <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{r.lateMinutes}m</span> : <span className="text-text-light">—</span>}</td>
-                                  <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{r.earlyLeaveMinutes}m</span> : <span className="text-text-light">—</span>}</td>
-                                  <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesAsHours(r.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesAsHours(r.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHours(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
                                 </tr>
                               ))}
                             </tbody>
