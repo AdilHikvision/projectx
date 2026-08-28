@@ -57,6 +57,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
     const [parkingPaid, setParkingPaid] = useState<boolean>(
         () => localStorage.getItem(PARKING_MODE_CACHE_KEY) === 'Paid',
     )
+
     const [isPickerOpen, setPickerOpen] = useState(false)
     const [isActivationOpen, setActivationOpen] = useState(false)
 
@@ -138,6 +139,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
         setParkingPaid(mode === 'Paid')
         localStorage.setItem(PARKING_MODE_CACHE_KEY, mode)
     }, [])
+
 
     const saveEnabledModules = useCallback(async (keys: ModuleKey[]) => {
         const next = ALL_KEYS.filter((k) => keys.includes(k))

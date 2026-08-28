@@ -18,16 +18,19 @@ interface NavConfig {
     modules?: ModuleKey[];
     /** Показывать только когда парковка в платном режиме (parking.mode = Paid). */
     paidParkingOnly?: boolean;
+    /** Название в модуле ЖКХ. Без поля название одинаково во всех модулях. */
+    housingLabelKey?: string;
 }
 
 // Top section — feature pages. Dashboard is visible in every module; the rest are Workforce-only.
 const PRIMARY_NAV: NavConfig[] = [
     { to: '/dashboard', icon: 'grid_view', labelKey: 'nav.dashboard', modules: ['workforce'] },
-    { to: '/', icon: 'grid_view', labelKey: 'nav.dashboard', end: true, modules: ['gym', 'parking'] },
-    { to: '/people', icon: 'group', labelKey: 'nav.people', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce'] },
-    { to: '/monitoring', icon: 'monitor_heart', labelKey: 'nav.monitoring', anyOf: ['Devices.View'], modules: ['workforce'] },
-    { to: '/access-levels', icon: 'admin_panel_settings', labelKey: 'nav.accessLevels', anyOf: ['AccessLevels.View'], modules: ['workforce'] },
+    { to: '/', icon: 'grid_view', labelKey: 'nav.dashboard', end: true, modules: ['gym', 'parking', 'housing'] },
+    { to: '/people', icon: 'group', labelKey: 'nav.people', housingLabelKey: 'nav.peopleAndResidents', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce', 'housing'] },
+    { to: '/monitoring', icon: 'monitor_heart', labelKey: 'nav.monitoring', anyOf: ['Devices.View'], modules: ['workforce', 'housing'] },
+    { to: '/access-levels', icon: 'admin_panel_settings', labelKey: 'nav.accessLevels', anyOf: ['AccessLevels.View'], modules: ['workforce', 'housing'] },
     { to: '/work-hours', icon: 'schedule', labelKey: 'nav.workHours', anyOf: ['Attendance.View'], modules: ['workforce'] },
+    { to: '/authentication-records', icon: 'fingerprint', labelKey: 'nav.authRecords', anyOf: ['Attendance.View'], modules: ['workforce', 'housing'] },
     { to: '/schedule-planner', icon: 'calendar_month', labelKey: 'nav.schedulePlanner', anyOf: ['Schedules.View'], modules: ['workforce'] },
     { to: '/approvals', icon: 'approval', labelKey: 'nav.approvals', anyOf: ['Attendance.Manage', 'Leaves.Manage'], modules: ['workforce'] },
     { to: '/geo-zones', icon: 'my_location', labelKey: 'nav.geoZones', anyOf: ['GeoZones.Manage'], modules: ['workforce'] },
@@ -69,6 +72,7 @@ export function Sidebar() {
     // и своё состояние сбрасывалось бы в «бесплатный» — пункты «Касса» и «Тарифы»
     // мигали бы при каждом переходе, пока идёт запрос.
     const { activeModule, openPicker, canSwitchModules, parkingPaid } = useModule();
+    const isHousing = activeModule === 'housing';
     const module = MODULES[activeModule];
 
     const isAllowed = (item: NavConfig): boolean => {
@@ -76,6 +80,14 @@ export function Sidebar() {
         if (item.paidParkingOnly && !parkingPaid) return false;
         if (!item.anyOf || item.anyOf.length === 0) return true;
         return hasAnyPermission(item.anyOf);
+    };
+
+    // В модуле ЖКХ «Работники» становятся «Жильцами и работниками»: страница одна,
+    // просто в ней появляется вкладка жильцов.
+    const navLabel = (item: NavConfig): string => {
+        if (item.label) return item.label;
+        const key = isHousing && item.housingLabelKey ? item.housingLabelKey : item.labelKey;
+        return key ? t(key) : '';
     };
 
     const primary = PRIMARY_NAV.filter(isAllowed);
@@ -96,12 +108,22 @@ export function Sidebar() {
                             <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">Aktiv Parking</h1>
                         </div>
                     </>
+                ) : isHousing ? (
+                    <>
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-teal-500 to-emerald-600 text-white">
+                            <span className="material-symbols-outlined text-[22px]">apartment</span>
+                        </span>
+                        <div>
+                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('modules.housing')}</h1>
+                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">{t('housing.subtitle')}</p>
+                        </div>
+                    </>
                 ) : (
                     <>
                         <Logo size={40} />
                         <div>
-                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('common.appName')}</h1>
-                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">Davamiyyət sistemi</p>
+                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('modules.workforce')}</h1>
+                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">{t('modules.workforceSubtitle')}</p>
                         </div>
                     </>
                 )}
@@ -128,7 +150,7 @@ export function Sidebar() {
 
             <nav className="flex-1 overflow-y-auto px-3 space-y-1">
                 {primary.map(item => (
-                    <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label ?? (item.labelKey ? t(item.labelKey) : '')} end={item.end} />
+                    <NavItem key={item.to} to={item.to} icon={item.icon} label={navLabel(item)} end={item.end} />
                 ))}
             </nav>
 
@@ -137,7 +159,7 @@ export function Sidebar() {
                     <p className="px-3 text-[9px] font-extrabold text-text-light tracking-[0.18em] uppercase mb-2">{t('nav.system')}</p>
                     <nav className="space-y-1">
                         {system.map(item => (
-                            <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label ?? (item.labelKey ? t(item.labelKey) : '')} />
+                            <NavItem key={item.to} to={item.to} icon={item.icon} label={navLabel(item)} />
                         ))}
                     </nav>
                 </div>

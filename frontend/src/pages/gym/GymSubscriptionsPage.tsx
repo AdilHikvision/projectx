@@ -187,7 +187,7 @@ export function GymSubscriptionsPage() {
 
                     {view === 'tariffs' && (loading ? (
                         <div className="flex items-center justify-center py-20">
-                            <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                            <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                         </div>
                     ) : tariffs.length === 0 ? (
                         <div className="flex flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border-base bg-surface py-20 text-center text-text-light">
@@ -487,7 +487,7 @@ function GiftCertificatesSection({ token }: { token: string | null }) {
             </div>
 
             {loading ? (
-                <div className="flex items-center justify-center py-16"><span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span></div>
+                <div className="flex items-center justify-center py-16"><span className="spinner-ring text-3xl text-primary" aria-hidden="true" /></div>
             ) : certs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 rounded-3xl border border-dashed border-border-base bg-surface py-16 text-center text-text-light">
                     <span className="material-symbols-outlined text-5xl">redeem</span>

@@ -187,7 +187,7 @@ export function AssistantChat() {
                         {isThinking && (
                             <div className="flex justify-start">
                                 <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-slate-75 px-3.5 py-2.5">
-                                    <span className="material-symbols-outlined animate-spin text-[16px] text-primary">progress_activity</span>
+                                    <span className="spinner-ring text-[16px] text-primary" aria-hidden="true" />
                                     <span className="text-xs font-semibold text-text-muted">{t('assistant.thinking')}</span>
                                 </div>
                             </div>

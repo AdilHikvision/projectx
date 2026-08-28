@@ -294,7 +294,7 @@ export function NewCustomerWizard({ open, onClose, onDone }: { open: boolean; on
                                             {kind === 'face' ? 'face' : kind === 'card' ? 'badge' : 'fingerprint'}
                                         </span>
                                         <span className="text-xs font-bold text-text-dark">{t(`gym.wizard.credentials.${kind}`)}</span>
-                                        {capturing === kind && <span className="material-symbols-outlined animate-spin text-base text-primary">progress_activity</span>}
+                                        {capturing === kind && <span className="spinner-ring text-base text-primary" aria-hidden="true" />}
                                         {capMsg[kind] && <span className="text-[10px] leading-tight text-text-muted">{capMsg[kind]}</span>}
                                     </button>
                                 ))}

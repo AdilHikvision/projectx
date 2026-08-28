@@ -149,7 +149,7 @@ export function GeoZonesPage() {
             </div>
             {loading ? (
               <div className="flex items-center justify-center py-16">
-                <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
               </div>
             ) : zones.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">

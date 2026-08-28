@@ -7,6 +7,8 @@ import { Button } from '../components/atoms'
 import { ErrorDialog } from '../components/organisms'
 import { apiRequest } from '../lib/api'
 import { PersonBiometricsStep } from './PersonBiometricsStep'
+import { useModule } from '../context/ModuleContext'
+import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
 import { PM_INPUT, PmField } from './personFormUi'
 
 /* ═══ Страница добавления сотрудника / посетителя — мастер из двух шагов на одном экране.
@@ -18,6 +20,13 @@ import { PM_INPUT, PmField } from './personFormUi'
 interface AccessLevel { id: string; name: string }
 interface Company { id: string; name: string }
 interface DepartmentTreeItem { id: string; name: string }
+
+/** Виды записей на экране добавления. Порядок задаёт порядок кнопок. */
+const PERSON_KINDS = [
+  { route: 'employee', labelKey: 'people.kindEmployee' },
+  { route: 'resident', labelKey: 'people.kindResident' },
+  { route: 'visitor', labelKey: 'people.kindVisitor' },
+] as const
 interface Position { id: string; name: string }
 
 export function PersonCreatePage() {
@@ -25,7 +34,14 @@ export function PersonCreatePage() {
   const { token } = useAuth()
   const navigate = useNavigate()
   const { type } = useParams<{ type: string }>()
-  const isEmployee = type !== 'visitor'
+  const { activeModule } = useModule()
+  // Жильца заводят только в модуле ЖКХ — в Workforce этой кнопки нет.
+  const isHousingModule = activeModule === 'housing'
+  // Три вида на одном экране: работник, жилец, посетитель. Работник и жилец —
+  // одна и та же сущность на бэкенде, различает их поле kind.
+  const isResident = type === 'resident'
+  const isVisitor = type === 'visitor'
+  const isEmployee = !isVisitor
 
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
@@ -49,7 +65,10 @@ export function PersonCreatePage() {
     departmentId: null as string | null,
     positionId: null as string | null,
     companyId: null as string | null,
+    apartment: '',
+    housingBlockId: null as string | null,
   })
+  const [housingBlocks, setHousingBlocks] = useState<HousingBlockItem[]>([])
 
   const loadAccessLevels = useCallback(async () => {
     if (!token) return
@@ -92,8 +111,13 @@ export function PersonCreatePage() {
     void load()
     void loadAccessLevels()
     if (isEmployee) void loadPositions()
+    if (isHousingModule) {
+      loadHousingBlocks(token)
+        .then((list) => { if (!cancelled) setHousingBlocks(list) })
+        .catch(() => { if (!cancelled) setHousingBlocks([]) })
+    }
     return () => { cancelled = true }
-  }, [token, isEmployee, loadAccessLevels, loadPositions])
+  }, [token, isEmployee, isHousingModule, loadAccessLevels, loadPositions])
 
   useEffect(() => { void loadDepartments(formData.companyId) }, [loadDepartments, formData.companyId])
 
@@ -133,7 +157,11 @@ export function PersonCreatePage() {
             ...common,
             gender: formData.gender.trim() || null,
             onlyVerify: formData.onlyVerify,
-            positionId: formData.positionId || null,
+            // У жильца нет должности: отдела и должности у него в форме тоже нет.
+            positionId: isResident ? null : formData.positionId || null,
+            kind: isResident ? 'resident' : 'employee',
+            apartment: isResident ? formData.apartment.trim() || null : null,
+            housingBlockId: isResident ? formData.housingBlockId : null,
           })
         : JSON.stringify({ ...common, documentNumber: null })
 
@@ -167,7 +195,7 @@ export function PersonCreatePage() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="min-w-0">
             <h1 className="text-xl font-black text-text-dark tracking-tight">
-              {isEmployee ? t('people.addEmployee') : t('people.addVisitor')}
+              {isResident ? t('people.addResident') : isEmployee ? t('people.addEmployee') : t('people.addVisitor')}
             </h1>
             <p className="text-xs text-text-light mt-1">{t('people.createPageHint')}</p>
           </div>
@@ -188,6 +216,26 @@ export function PersonCreatePage() {
 
         {/* Карточка с полями */}
         <div className="rounded-[18px] border border-[#EFEFF5] bg-surface p-6 md:p-7 space-y-5">
+          {/* Вид записи. Переключаем маршрутом, а не состоянием: до сохранения на экране
+              ещё нечего терять, а адрес страницы остаётся честным. Жилец — только в ЖКХ. */}
+          <PmField label={t('people.personKind')}>
+            <div className="flex h-12 rounded-xl border border-[#E6E6F0] overflow-hidden max-w-md">
+              {PERSON_KINDS.filter((k) => k.route !== 'resident' || isHousingModule).map((k) => (
+                <button
+                  key={k.route}
+                  type="button"
+                  disabled={createdId !== null}
+                  onClick={() => navigate(`/people/new/${k.route}`, { replace: true })}
+                  className={`flex-1 min-w-0 px-2 text-[13px] font-bold truncate transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    type === k.route ? 'bg-primary/10 text-primary' : 'bg-white text-text-light hover:text-text-dark'
+                  }`}
+                >
+                  {t(k.labelKey)}
+                </button>
+              ))}
+            </div>
+          </PmField>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-[18px]">
             <PmField label={t('people.firstName')} required>
               <input
@@ -266,7 +314,37 @@ export function PersonCreatePage() {
               </PmField>
             )}
 
-            {departments.length > 0 && (
+            {/* Адрес жильца: у работника этих полей нет, у жильца нет отдела и должности. */}
+            {isResident && (
+              <>
+                <PmField label={t('people.block')}>
+                  <select
+                    value={formData.housingBlockId ?? ''}
+                    onChange={(e) => setFormData((p) => ({ ...p, housingBlockId: e.target.value || null }))}
+                    className={PM_INPUT}
+                  >
+                    <option value="">{t('people.notAssigned')}</option>
+                    {flattenHousingBlocks(housingBlocks).map((b) => (
+                      <option key={b.id} value={b.id}>{b.label}</option>
+                    ))}
+                  </select>
+                  {housingBlocks.length === 0 && (
+                    <span className="text-[11px] text-text-light">{t('people.noHousingBlocks')}</span>
+                  )}
+                </PmField>
+                <PmField label={t('people.apartment')}>
+                  <input
+                    type="text"
+                    value={formData.apartment}
+                    onChange={(e) => setFormData((p) => ({ ...p, apartment: e.target.value }))}
+                    placeholder={t('people.apartmentPlaceholder')}
+                    className={PM_INPUT}
+                  />
+                </PmField>
+              </>
+            )}
+
+            {!isResident && departments.length > 0 && (
               <PmField label={t('people.department')}>
                 <select
                   value={formData.departmentId ?? ''}
@@ -279,7 +357,7 @@ export function PersonCreatePage() {
               </PmField>
             )}
 
-            {isEmployee && positions.length > 0 && (
+            {isEmployee && !isResident && positions.length > 0 && (
               <PmField label={t('people.position')}>
                 <select
                   value={formData.positionId ?? ''}
@@ -293,7 +371,7 @@ export function PersonCreatePage() {
             )}
           </div>
 
-          {isEmployee && (
+          {isEmployee && !isResident && (
             <label className="flex items-start gap-3 p-4 rounded-[14px] border border-[#EEEBFB] bg-[#FAF9FE] cursor-pointer hover:border-[#DDD9F7] transition-colors">
               <input
                 type="checkbox"

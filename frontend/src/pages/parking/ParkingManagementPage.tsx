@@ -212,6 +212,9 @@ export function ParkingManagementPage() {
     const parkingMode: 'Paid' | 'Free' = parkingPaid ? 'Paid' : 'Free'
     // Pulsuz alt-rejim: List (İcazə siyahısı) / Capacity (Tutum)
     const [freeSubMode, setFreeSubMode] = useState<'List' | 'Capacity'>('Capacity')
+    // Подрежим выезда внутри «по белому списку»: Session — выпускаем только тех, кто числится
+    // внутри; List — выпускаем по списку, факт въезда не проверяется.
+    const [listExitMode, setListExitMode] = useState<'Session' | 'List'>('Session')
     // Режим проезда: обе стороны на камерах или только въезд, а выезд закрывает оператор.
     const [flowMode, setFlowMode] = useState<'EntryExit' | 'EntryOnly'>('EntryExit')
     // Платный режим: сколько минут даётся на выезд после оплаты (parking.exitGraceMinutes).
@@ -292,6 +295,7 @@ export function ParkingManagementPage() {
                 setAllowReentry(get('parking.allowReentryWhileInside') === 'true')
                 setRequireConfidence(get('parking.requireConfidence') === 'true')
                 setFlowMode(get('parking.flowMode') === 'EntryOnly' ? 'EntryOnly' : 'EntryExit')
+                setListExitMode(get('parking.listExitMode') === 'List' ? 'List' : 'Session')
             })
             .catch(() => { /* значения по умолчанию совпадают с серверными */ })
         // Камеры меняются редко — читаем один раз, статус онлайн приходит вместе со списком.
@@ -344,6 +348,13 @@ export function ParkingManagementPage() {
         setFreeSubMode(m)
         try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.freeSubMode', value: m }) }) }
         catch { setFreeSubMode(prev) }
+    }
+    const changeListExitMode = async (m: 'Session' | 'List') => {
+        if (m === listExitMode) return
+        const prev = listExitMode
+        setListExitMode(m)
+        try { await apiRequest('/api/system-settings', { method: 'POST', token, body: JSON.stringify({ key: 'parking.listExitMode', value: m }) }) }
+        catch { setListExitMode(prev) }
     }
     useEffect(() => {
         if (!selectedZoneId) { setFloors([]); setSelectedFloorId(null); return }
@@ -485,6 +496,29 @@ export function ParkingManagementPage() {
                                         <button key={m} type="button" onClick={() => changeFreeSubMode(m)}
                                             className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${freeSubMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}>
                                             {t(m === 'List' ? 'parking.cfg.subModeList' : 'parking.cfg.subModeCapacity')}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Подрежим выезда живёт только внутри «по белому списку»: в режиме
+                            «по местам» выпускать без сессии нельзя — иначе счётчик занятости поедет. */}
+                        {parkingMode === 'Free' && freeSubMode === 'List' && (
+                            <div className="flex flex-col gap-3 rounded-xl border border-border-base p-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <div className="text-sm font-bold text-text-dark">{t('parking.cfg.listExitMode')}</div>
+                                    <div className="mt-0.5 text-xs text-text-muted">
+                                        {listExitMode === 'List'
+                                            ? t('parking.cfg.listExitListHint')
+                                            : t('parking.cfg.listExitSessionHint')}
+                                    </div>
+                                </div>
+                                <div className="inline-flex shrink-0 rounded-xl border border-border-base bg-slate-75 p-1">
+                                    {(['Session', 'List'] as const).map((m) => (
+                                        <button key={m} type="button" onClick={() => void changeListExitMode(m)}
+                                            className={`rounded-lg px-4 py-2 text-xs font-bold transition-colors ${listExitMode === m ? 'bg-primary text-white shadow-primary' : 'text-text-muted hover:text-text-dark'}`}>
+                                            {t(m === 'Session' ? 'parking.cfg.listExitSession' : 'parking.cfg.listExitList')}
                                         </button>
                                     ))}
                                 </div>
@@ -918,7 +952,7 @@ function CameraSnapshot({ cameraId, token, intervalMs, className }: {
             {src ? (
                 <img src={src} alt="" className="h-full w-full object-contain" />
             ) : (
-                <span className="material-symbols-outlined animate-spin text-2xl text-white/60">progress_activity</span>
+                <span className="spinner-ring text-2xl text-white/60" aria-hidden="true" />
             )}
             {offline && (
                 <span className="absolute inset-x-0 bottom-0 bg-red-600/90 py-1 text-center text-[10px] font-black uppercase tracking-widest text-white">
@@ -1497,7 +1531,7 @@ function TypeLegend() {
 function Spinner() {
     return (
         <div className="flex items-center justify-center py-20">
-            <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+            <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
         </div>
     )
 }

@@ -36,7 +36,7 @@ public sealed class DailyReportNotificationService(
         var today = yesterday.AddDays(1);
 
         var totalEmployees = await db.Employees.AsNoTracking()
-            .CountAsync(e => e.IsActive, ct);
+            .CountAsync(e => e.Kind == PersonKind.Employee && e.IsActive, ct);
 
         var presentIds = await db.AttendanceRecords.AsNoTracking()
             .Where(r => r.EventTimeUtc >= yesterday && r.EventTimeUtc < today)

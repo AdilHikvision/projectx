@@ -32,6 +32,7 @@ export function ModuleActivation() {
     /** Режим парковки — такое же решение уровня установки, как и набор модулей. */
     const [parkingMode, setParkingMode] = useState<ParkingMode>('Free')
     const [savedParkingMode, setSavedParkingMode] = useState<ParkingMode>('Free')
+
     /** PIN спрашиваем при каждом открытии: снятая блокировка не переживает закрытие окна. */
     const [unlocked, setUnlocked] = useState(false)
     const [pin, setPin] = useState('')
@@ -114,6 +115,7 @@ export function ModuleActivation() {
                 // Сразу применяем в интерфейсе: пункты «Касса» и «Тарифы» появятся без перезагрузки.
                 applyParkingMode(parkingMode)
             }
+
             setSaved(true)
         } catch (e) {
             setError(e instanceof Error ? e.message : t('moduleActivation.saveFailed'))

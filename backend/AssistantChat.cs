@@ -556,6 +556,7 @@ public sealed class AssistantToolbox(AppDbContext db, IReadOnlySet<string> permi
         {
             if (!Can(Permissions.EmployeesView)) return Denied(Permissions.EmployeesView);
             employees = await db.Employees.AsNoTracking()
+                .Where(e => e.Kind == PersonKind.Employee)
                 .Where(e =>
                     EF.Functions.ILike(e.FirstName + " " + e.LastName, pattern) ||
                     EF.Functions.ILike(e.LastName + " " + e.FirstName, pattern) ||
@@ -645,7 +646,7 @@ public sealed class AssistantToolbox(AppDbContext db, IReadOnlySet<string> permi
         if (!Can(Permissions.DepartmentsView, Permissions.EmployeesView)) return Denied(Permissions.DepartmentsView);
         var items = await db.Departments.AsNoTracking()
             .OrderBy(d => d.SortOrder).ThenBy(d => d.Name)
-            .Select(d => new { d.Id, d.Name, Employees = d.Employees.Count })
+            .Select(d => new { d.Id, d.Name, Employees = d.Employees.Count(e => e.Kind == PersonKind.Employee) })
             .ToListAsync(ct);
         return (JsonSerializer.Serialize(items, JsonOpts), null, false);
     }
@@ -772,6 +773,8 @@ public sealed class AssistantToolbox(AppDbContext db, IReadOnlySet<string> permi
         var employee = await db.Employees.Include(e => e.WorkSchedule)
             .FirstOrDefaultAsync(e => e.Id == employeeId, ct);
         if (employee is null) return (Err("employee not found"), null, true);
+        // Жилец не участвует в учёте рабочего времени — расписание ему назначать нечему.
+        if (employee.Kind != PersonKind.Employee) return (Err("resident has no work schedule"), null, true);
 
         string summary;
         if (Guid.TryParse(Str(input, "schedule_id"), out var scheduleId))

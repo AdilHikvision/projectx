@@ -332,7 +332,7 @@ export function SelfServicePage() {
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background-light">
-        <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
+        <span className="spinner-ring text-5xl text-primary" aria-hidden="true" />
       </div>
     )
   }

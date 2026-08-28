@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/fonts.css";
 
 /* ═══════════════════════════════════════════════════════════════
    ProjectX Design System — "Violet Aurora"
@@ -167,6 +168,20 @@
   }
 }
 
+/* Иконки — лигатуры Material Symbols. Пока шрифт не загружен, браузер
+   отрисовал бы текст самой лигатуры (progress_activity, alternate_email …),
+   что выглядит как «ключи переводов». Прячем текст до готовности шрифта —
+   класс icon-font-ready ставит main.tsx. */
+html:not(.icon-font-ready) .material-symbols-outlined {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  overflow: hidden;
+  color: transparent;
+  background-color: rgba(128, 121, 165, 0.12);
+  border-radius: 0.2em;
+}
+
 @layer utilities {
 
   /* All icons render through the Rounded family — softer, friendlier
@@ -218,6 +233,28 @@
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
+    }
+  }
+
+  /* Спиннер на чистом CSS. Раньше он рисовался лигатурой Material Symbols
+     (progress_activity), и пока иконочный шрифт грузился с Google Fonts,
+     на экране крутилось само слово. Размер берётся из font-size (text-*),
+     цвет — из currentColor (text-primary и т.п.). */
+  .spinner-ring {
+    display: inline-block;
+    flex: none;
+    width: 1em;
+    height: 1em;
+    border: 0.12em solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    vertical-align: -0.15em;
+    animation: spinner-rotate 0.7s linear infinite;
+  }
+
+  @keyframes spinner-rotate {
+    to {
+      transform: rotate(360deg);
     }
   }
 

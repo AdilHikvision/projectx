@@ -21,6 +21,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<DeviceStatus> DeviceStatuses => Set<DeviceStatus>();
     public DbSet<Department> Departments => Set<Department>();
+    public DbSet<HousingBlock> HousingBlocks => Set<HousingBlock>();
     public DbSet<Position> Positions => Set<Position>();
     public DbSet<Employee> Employees => Set<Employee>();
     public DbSet<Visitor> Visitors => Set<Visitor>();
@@ -132,6 +133,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<HousingBlock>(entity =>
+        {
+            entity.ToTable("housing_blocks");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Description).HasMaxLength(500);
+            // Restrict, как у департаментов: узел с детьми удаляется только после детей.
+            entity.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<Position>(entity =>
         {
             entity.ToTable("positions");
@@ -170,6 +181,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasOne(x => x.Position).WithMany(x => x.Employees).HasForeignKey(x => x.PositionId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.Company).WithMany(x => x.Employees).HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.WorkSchedule).WithMany(x => x.Employees).HasForeignKey(x => x.WorkScheduleId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.HousingBlock).WithMany(x => x.Residents).HasForeignKey(x => x.HousingBlockId).OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<Visitor>(entity =>

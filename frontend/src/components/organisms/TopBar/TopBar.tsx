@@ -3,6 +3,8 @@ import { Logo } from '../../atoms';
 import { useAuth } from '../../../auth/AuthContext';
 import { useNotifications } from '../../../hooks/useNotifications';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useModule } from '../../../context/ModuleContext';
+import type { ModuleKey } from '../../../config/modules';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -18,21 +20,48 @@ interface NavItem {
     labelKey: string;
     path: string;
     icon: string;
-    keywordsKey: string;
+    /** Ключ со списком синонимов для поиска. Нет ключа — ищем только по названию. */
+    keywordsKey?: string;
+    /** Пункт виден только в этих модулях. Без поля — виден всегда (Настройки, Статус). */
+    modules?: ModuleKey[];
+    /** Показывать, если есть хотя бы одно из прав. Пусто — показывать всем. */
+    anyOf?: string[];
+    /** Только для платного режима парковки (parking.mode = Paid). */
+    paidParkingOnly?: boolean;
+    /** Название в модуле ЖКХ. Без поля название одинаково во всех модулях. */
+    housingLabelKey?: string;
+    /** Синонимы для модуля ЖКХ — ищем и по ним, чтобы «жильцы» находили страницу. */
+    housingKeywordsKey?: string;
 }
 
+// Список зеркалит сайдбар: в поиске не должно быть страниц выключенного модуля
+// или тех, на которые у пользователя нет прав.
 const NAV_ITEMS: NavItem[] = [
-    { labelKey: 'nav.dashboard', path: '/', icon: 'grid_view', keywordsKey: 'topBar.navKeywords.dashboard' },
-    { labelKey: 'nav.people', path: '/people', icon: 'group', keywordsKey: 'topBar.navKeywords.people' },
-    { labelKey: 'nav.monitoring', path: '/monitoring', icon: 'monitor_heart', keywordsKey: 'topBar.navKeywords.monitoring' },
-    { labelKey: 'nav.accessLevels', path: '/access-levels', icon: 'admin_panel_settings', keywordsKey: 'topBar.navKeywords.accessLevels' },
-    { labelKey: 'nav.workHours', path: '/work-hours', icon: 'schedule', keywordsKey: 'topBar.navKeywords.workHours' },
-    { labelKey: 'nav.schedulePlanner', path: '/schedule-planner', icon: 'calendar_month', keywordsKey: 'topBar.navKeywords.schedulePlanner' },
-    { labelKey: 'nav.approvals', path: '/approvals', icon: 'approval', keywordsKey: 'topBar.navKeywords.approvals' },
-    { labelKey: 'nav.geoZones', path: '/geo-zones', icon: 'my_location', keywordsKey: 'topBar.navKeywords.geoZones' },
-    { labelKey: 'nav.payroll', path: '/payroll', icon: 'payments', keywordsKey: 'topBar.navKeywords.payroll' },
-    { labelKey: 'nav.settings', path: '/settings', icon: 'settings', keywordsKey: 'topBar.navKeywords.settings' },
-    { labelKey: 'nav.systemStatus', path: '/status', icon: 'monitoring', keywordsKey: 'topBar.navKeywords.systemStatus' },
+    // ─── Workforce ───
+    { labelKey: 'nav.dashboard', path: '/dashboard', icon: 'grid_view', keywordsKey: 'topBar.navKeywords.dashboard', modules: ['workforce'] },
+    { labelKey: 'nav.people', path: '/people', icon: 'group', keywordsKey: 'topBar.navKeywords.people', housingLabelKey: 'nav.peopleAndResidents', housingKeywordsKey: 'topBar.navKeywords.residents', modules: ['workforce', 'housing'], anyOf: ['Employees.View', 'Visitors.View'] },
+    { labelKey: 'nav.monitoring', path: '/monitoring', icon: 'monitor_heart', keywordsKey: 'topBar.navKeywords.monitoring', modules: ['workforce', 'housing'], anyOf: ['Devices.View'] },
+    { labelKey: 'nav.accessLevels', path: '/access-levels', icon: 'admin_panel_settings', keywordsKey: 'topBar.navKeywords.accessLevels', modules: ['workforce', 'housing'], anyOf: ['AccessLevels.View'] },
+    { labelKey: 'nav.workHours', path: '/work-hours', icon: 'schedule', keywordsKey: 'topBar.navKeywords.workHours', modules: ['workforce'], anyOf: ['Attendance.View'] },
+    { labelKey: 'nav.schedulePlanner', path: '/schedule-planner', icon: 'calendar_month', keywordsKey: 'topBar.navKeywords.schedulePlanner', modules: ['workforce'], anyOf: ['Schedules.View'] },
+    { labelKey: 'nav.approvals', path: '/approvals', icon: 'approval', keywordsKey: 'topBar.navKeywords.approvals', modules: ['workforce'], anyOf: ['Attendance.Manage', 'Leaves.Manage'] },
+    { labelKey: 'nav.geoZones', path: '/geo-zones', icon: 'my_location', keywordsKey: 'topBar.navKeywords.geoZones', modules: ['workforce'], anyOf: ['GeoZones.Manage'] },
+    { labelKey: 'nav.payroll', path: '/payroll', icon: 'payments', keywordsKey: 'topBar.navKeywords.payroll', modules: ['workforce'], anyOf: ['Payroll.View'] },
+
+    // ─── Parking ───
+    { labelKey: 'nav.dashboard', path: '/', icon: 'grid_view', keywordsKey: 'topBar.navKeywords.dashboard', modules: ['parking', 'housing'] },
+    { labelKey: 'parking.nav.management', path: '/parking/management', icon: 'local_parking', keywordsKey: 'topBar.navKeywords.parkingManagement', modules: ['parking'], anyOf: ['Parking.Manage'] },
+    { labelKey: 'parking.nav.vehicles', path: '/parking/vehicles', icon: 'directions_car', keywordsKey: 'topBar.navKeywords.parkingVehicles', modules: ['parking'], anyOf: ['Parking.View'] },
+    { labelKey: 'parking.nav.holders', path: '/parking/holders', icon: 'key', keywordsKey: 'topBar.navKeywords.parkingHolders', modules: ['parking'], anyOf: ['Parking.View'] },
+    { labelKey: 'parking.nav.blacklist', path: '/parking/blacklist', icon: 'block', keywordsKey: 'topBar.navKeywords.parkingBlacklist', modules: ['parking'], anyOf: ['Parking.View'] },
+    { labelKey: 'parking.nav.pos', path: '/parking/pos', icon: 'point_of_sale', keywordsKey: 'topBar.navKeywords.parkingPos', modules: ['parking'], anyOf: ['Parking.Operate'], paidParkingOnly: true },
+    { labelKey: 'parking.nav.tariffs', path: '/parking/tariffs', icon: 'sell', keywordsKey: 'topBar.navKeywords.parkingTariffs', modules: ['parking'], anyOf: ['Parking.Manage'], paidParkingOnly: true },
+    { labelKey: 'parking.nav.history', path: '/parking/history', icon: 'history', keywordsKey: 'topBar.navKeywords.parkingHistory', modules: ['parking'], anyOf: ['Parking.View'] },
+    { labelKey: 'parking.nav.reports', path: '/parking/ap-reports', icon: 'bar_chart', keywordsKey: 'topBar.navKeywords.parkingReports', modules: ['parking'], anyOf: ['Parking.View'] },
+
+    // ─── Общие ───
+    { labelKey: 'nav.settings', path: '/settings', icon: 'settings', keywordsKey: 'topBar.navKeywords.settings', anyOf: ['Settings.Manage', 'Companies.Manage', 'Users.Manage', 'Roles.Manage', 'Audit.View'] },
+    { labelKey: 'nav.systemStatus', path: '/status', icon: 'monitoring', keywordsKey: 'topBar.navKeywords.systemStatus', anyOf: ['System.Manage'] },
 ]
 
 function getInitials(email: string | null | undefined): string {
@@ -45,7 +74,9 @@ function getInitials(email: string | null | undefined): string {
 }
 
 export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAction }: TopBarProps) {
-    const { user, logout } = useAuth();
+    const { user, logout, hasAnyPermission } = useAuth();
+    const { activeModule, parkingPaid } = useModule();
+    const isHousing = activeModule === 'housing';
     const { t } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
@@ -57,10 +88,28 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const results = query.trim()
-        ? NAV_ITEMS.filter(item =>
-            t(item.labelKey).toLowerCase().includes(query.toLowerCase()) ||
-            t(item.keywordsKey).toLowerCase().includes(query.toLowerCase())
+    // Сначала отсекаем чужой модуль и недоступные права — иначе в поиске
+    // всплывали бы страницы модуля, который в этой установке выключен.
+    const available = NAV_ITEMS.filter(item => {
+        if (item.modules && !item.modules.includes(activeModule)) return false;
+        if (item.paidParkingOnly && !parkingPaid) return false;
+        if (!item.anyOf || item.anyOf.length === 0) return true;
+        return hasAnyPermission(item.anyOf);
+    });
+
+    // В модуле ЖКХ «Работники» показываются как «Жильцы и работники» и находятся
+    // ещё и по слову «жильцы».
+    const labelOf = (item: NavItem) => t(isHousing && item.housingLabelKey ? item.housingLabelKey : item.labelKey);
+    const keywordsOf = (item: NavItem) => [
+        item.keywordsKey,
+        isHousing ? item.housingKeywordsKey : undefined,
+    ].filter(Boolean).map(k => t(k as string).toLowerCase());
+
+    const needle = query.trim().toLowerCase();
+    const results = needle
+        ? available.filter(item =>
+            labelOf(item).toLowerCase().includes(needle) ||
+            keywordsOf(item).some(k => k.includes(needle))
         )
         : [];
 
@@ -177,7 +226,7 @@ export function TopBar({ title, breadcrumb, searchPlaceholder, actionIcon, onAct
                                         <span className={`material-symbols-outlined text-[18px] shrink-0 ${i === activeIndex ? 'text-primary icon-fill' : 'text-text-muted'}`}>
                                             {item.icon}
                                         </span>
-                                        <span className="text-sm font-semibold">{t(item.labelKey)}</span>
+                                        <span className="text-sm font-semibold">{labelOf(item)}</span>
                                         {i === activeIndex && (
                                             <span className="material-symbols-outlined ml-auto text-[16px] text-primary/60">keyboard_return</span>
                                         )}

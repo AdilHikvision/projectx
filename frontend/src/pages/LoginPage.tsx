@@ -53,7 +53,7 @@ export function LoginPage() {
   if (setupRequired === null) {
     return (
       <div className="fixed inset-0 z-9999 flex items-center justify-center bg-background-light" aria-busy="true">
-        <span className="material-symbols-outlined animate-spin text-5xl text-primary">progress_activity</span>
+        <span className="spinner-ring text-5xl text-primary" aria-hidden="true" />
       </div>
     )
   }

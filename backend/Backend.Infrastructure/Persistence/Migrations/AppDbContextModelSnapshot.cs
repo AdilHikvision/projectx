@@ -644,6 +644,9 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Apartment")
+                        .HasColumnType("text");
+
                     b.Property<Guid?>("CompanyId")
                         .HasColumnType("uuid");
 
@@ -671,8 +674,14 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<Guid?>("HousingBlockId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
 
                     b.Property<string>("LastName")
                         .IsRequired()
@@ -713,6 +722,8 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasIndex("EmployeeNo")
                         .IsUnique()
                         .HasFilter("EmployeeNo IS NOT NULL");
+
+                    b.HasIndex("HousingBlockId");
 
                     b.HasIndex("PositionId");
 
@@ -2041,6 +2052,40 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.HasIndex("IsActive");
 
                     b.ToTable("gym_tariffs", (string)null);
+                });
+
+            modelBuilder.Entity("Backend.Domain.Entities.HousingBlock", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentId");
+
+                    b.ToTable("housing_blocks", (string)null);
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.Iris", b =>
@@ -3604,6 +3649,11 @@ namespace Backend.Infrastructure.Persistence.Migrations
                         .HasForeignKey("DepartmentId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Backend.Domain.Entities.HousingBlock", "HousingBlock")
+                        .WithMany("Residents")
+                        .HasForeignKey("HousingBlockId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Backend.Domain.Entities.Position", "Position")
                         .WithMany("Employees")
                         .HasForeignKey("PositionId")
@@ -3617,6 +3667,8 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Company");
 
                     b.Navigation("Department");
+
+                    b.Navigation("HousingBlock");
 
                     b.Navigation("Position");
 
@@ -3908,6 +3960,16 @@ namespace Backend.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("Stocktake");
+                });
+
+            modelBuilder.Entity("Backend.Domain.Entities.HousingBlock", b =>
+                {
+                    b.HasOne("Backend.Domain.Entities.HousingBlock", "Parent")
+                        .WithMany("Children")
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Parent");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.Iris", b =>
@@ -4214,6 +4276,13 @@ namespace Backend.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Backend.Domain.Entities.GymStocktake", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("Backend.Domain.Entities.HousingBlock", b =>
+                {
+                    b.Navigation("Children");
+
+                    b.Navigation("Residents");
                 });
 
             modelBuilder.Entity("Backend.Domain.Entities.ParkingFloor", b =>

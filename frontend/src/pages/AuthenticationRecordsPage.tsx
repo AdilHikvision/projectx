@@ -1,0 +1,466 @@
+import { useEffect, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { AppLayout } from '../components/templates'
+import { Button, Spinner } from '../components/atoms'
+import { PageHeader, Modal } from '../components/organisms'
+import { apiRequest } from '../lib/api'
+import { useAuth } from '../auth/AuthContext'
+import { useModule } from '../context/ModuleContext'
+import { loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
+
+/* ═══════════════════════════════════════════════════════════════
+   Записи аутентификации — сырые проходы с устройств за один день.
+   Показываются только люди, заведённые в базе: сервер джоинит
+   device_auth_logs с карточками по табельному номеру.
+   Модуль ЖКХ добавляет к работникам жильцов (переключатель в окне
+   выбора); в Workforce выбираются только работники.
+   ═══════════════════════════════════════════════════════════════ */
+
+type PersonKind = 'employee' | 'resident'
+
+interface PersonItem {
+  id: string
+  firstName: string
+  lastName: string
+  employeeNo: string | null
+  apartment?: string | null
+  housingBlockId?: string | null
+  housingBlockName?: string | null
+  department?: { id: string; name: string } | null
+}
+
+/** Отдел или блок ЖКХ: окно выбора работает с ними одинаково. */
+interface GroupNode {
+  id: string
+  name: string
+  parentId?: string | null
+  sortOrder: number
+}
+
+interface AuthRecord {
+  id: string
+  personId: string
+  firstName: string
+  lastName: string
+  employeeNo: string | null
+  eventTimeUtc: string
+  deviceId: string | null
+  deviceName: string | null
+}
+
+/** Сегодня в локальной зоне (не UTC — иначе после 20:00 в Баку открывался бы завтрашний день). */
+function todayLocal(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+/** С секундами: за минуту у одного человека бывает несколько аутентификаций. */
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+}
+
+/** Узел вместе со всеми потомками — выбрав корпус/отдел, видим и вложенные. */
+function descendantsOf(nodes: { id: string; parentId?: string | null }[], rootId: string): Set<string> {
+  const set = new Set<string>([rootId])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of nodes) {
+      if (n.parentId && set.has(n.parentId) && !set.has(n.id)) {
+        set.add(n.id)
+        grew = true
+      }
+    }
+  }
+  return set
+}
+
+export function AuthenticationRecordsPage() {
+  const { t } = useTranslation()
+  const { token } = useAuth()
+  const { activeModule } = useModule()
+  // Жильцы есть только в ЖКХ — в Workforce переключатель не показываем.
+  const housingModule = activeModule === 'housing'
+
+  const [kind, setKind] = useState<PersonKind>('employee')
+  const [date, setDate] = useState<string>(todayLocal)
+  const [personId, setPersonId] = useState('')
+  const [deptId, setDeptId] = useState('')
+  const [blockId, setBlockId] = useState('')
+
+  const [people, setPeople] = useState<PersonItem[]>([])
+  const [deptTree, setDeptTree] = useState<GroupNode[]>([])
+  const [blocks, setBlocks] = useState<HousingBlockItem[]>([])
+
+  const [records, setRecords] = useState<AuthRecord[]>([])
+  const [error, setError] = useState<string | null>(null)
+  // Кнопка «Обновить» перезапрашивает те же фильтры — меняем счётчик, а не состояние загрузки.
+  const [reloadTick, setReloadTick] = useState(0)
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerGroupId, setPickerGroupId] = useState<string | null>(null)
+  const [groupSearch, setGroupSearch] = useState('')
+  const [personSearch, setPersonSearch] = useState('')
+
+  // Списки людей и структура: справочники для окна выбора.
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    void apiRequest<PersonItem[]>(`/api/employees?kind=${kind}`, { token })
+      .then((list) => { if (!cancelled) setPeople(list) })
+      .catch(() => { if (!cancelled) setPeople([]) })
+    return () => { cancelled = true }
+  }, [token, kind])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    void apiRequest<GroupNode[]>('/api/departments/tree', { token })
+      .then((list) => { if (!cancelled) setDeptTree(list) })
+      .catch(() => { if (!cancelled) setDeptTree([]) })
+    return () => { cancelled = true }
+  }, [token])
+
+  useEffect(() => {
+    if (!token || !housingModule) return
+    let cancelled = false
+    void loadHousingBlocks(token)
+      .then((list) => { if (!cancelled) setBlocks(list) })
+      .catch(() => { if (!cancelled) setBlocks([]) })
+    return () => { cancelled = true }
+  }, [token, housingModule])
+
+  // Показанные данные отстают от фильтров ровно пока идёт запрос — отдельный
+  // флаг загрузки не нужен (и не заставляет эффект синхронно менять state).
+  const requestKey = [date, kind, personId, deptId, blockId, reloadTick].join('|')
+  const loading = loadedKey !== requestKey
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const params = new URLSearchParams({ date, kind })
+    // Человек важнее отдела/блока: выбрано что-то одно.
+    if (personId) params.set('employeeId', personId)
+    else if (deptId) params.set('departmentId', deptId)
+    else if (blockId) params.set('housingBlockId', blockId)
+    void apiRequest<AuthRecord[]>(`/api/authentication-records?${params}`, { token })
+      .then((list) => {
+        if (cancelled) return
+        setRecords(list)
+        setError(null)
+        setLoadedKey(requestKey)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setRecords([])
+        setError(err instanceof Error ? err.message : String(err))
+        setLoadedKey(requestKey)
+      })
+    return () => { cancelled = true }
+  }, [token, date, kind, personId, deptId, blockId, requestKey])
+
+  const residents = kind === 'resident'
+
+  const switchKind = (next: PersonKind) => {
+    if (next === kind) return
+    setKind(next)
+    setPersonId('')
+    setDeptId('')
+    setBlockId('')
+    setPickerGroupId(null)
+    setGroupSearch('')
+    setPersonSearch('')
+  }
+
+  const openPicker = () => {
+    setPickerGroupId(null)
+    setGroupSearch('')
+    setPersonSearch('')
+    setPickerOpen(true)
+  }
+
+  const pickPerson = (id: string) => {
+    setPersonId(id)
+    setDeptId('')
+    setBlockId('')
+    setPickerOpen(false)
+  }
+
+  const pickWholeGroup = (id: string) => {
+    setPersonId('')
+    if (residents) { setBlockId(id); setDeptId('') }
+    else { setDeptId(id); setBlockId('') }
+    setPickerOpen(false)
+  }
+
+  const selectionLabel = (): string => {
+    const person = people.find((p) => p.id === personId)
+    if (person) return `${person.firstName} ${person.lastName}`
+    if (deptId) {
+      const dept = deptTree.find((d) => d.id === deptId)
+      if (dept) return `${dept.name} · ${t('workHours.wholeDept')}`
+    }
+    if (blockId) {
+      const block = blocks.find((b) => b.id === blockId)
+      if (block) return `${block.name} · ${t('authRecords.wholeBlock')}`
+    }
+    return residents ? t('authRecords.allResidents') : t('workHours.allEmployees')
+  }
+
+  // Список в правой колонке окна выбора: сузили группой слева + строкой поиска.
+  const groupNodes: GroupNode[] = residents ? blocks : deptTree
+  const groupScope = pickerGroupId ? descendantsOf(groupNodes, pickerGroupId) : null
+  const personQuery = personSearch.trim().toLowerCase()
+  const pickerPeople = people.filter((p) => {
+    if (groupScope) {
+      const groupId = residents ? p.housingBlockId : p.department?.id
+      if (!groupId || !groupScope.has(groupId)) return false
+    }
+    if (!personQuery) return true
+    const haystack = [`${p.firstName} ${p.lastName}`, p.employeeNo ?? '', p.apartment ?? ''].join(' ').toLowerCase()
+    return haystack.includes(personQuery)
+  })
+
+  const groupQuery = groupSearch.trim().toLowerCase()
+  const groupBtnCls = (active: boolean) =>
+    `w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`
+
+  const renderGroupTree = (parentId: string | null, depth: number): ReactNode[] =>
+    groupNodes
+      .filter((n) => (n.parentId ?? null) === parentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+      .flatMap((n) => [
+        <button
+          key={n.id}
+          type="button"
+          onClick={() => setPickerGroupId(n.id)}
+          className={groupBtnCls(pickerGroupId === n.id)}
+          style={{ paddingLeft: 12 + depth * 16 }}
+        >
+          {n.name}
+        </button>,
+        ...renderGroupTree(n.id, depth + 1),
+      ])
+
+  return (
+    <AppLayout onAction={() => {}}>
+      <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
+        <div className="p-6 md:p-10 space-y-6">
+
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 animate-in slide-in-from-top-4 duration-500">
+            <PageHeader
+              className="p-0 border-none shadow-none bg-transparent"
+              title={t('authRecords.pageTitle')}
+              description={t('authRecords.pageDescription')}
+            />
+          </div>
+
+          {/* Filters */}
+          <div className="bg-surface rounded-2xl p-5 shadow-sm flex flex-wrap gap-4 items-end">
+            <div className="space-y-1 flex-1 min-w-[160px]">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('authRecords.person')}</label>
+              <button
+                type="button"
+                onClick={openPicker}
+                className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2"
+              >
+                <span className="truncate">{selectionLabel()}</span>
+                <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <Button type="button" icon="refresh" variant="outline" disabled={loading} onClick={() => setReloadTick((n) => n + 1)}>
+                {t('authRecords.refresh')}
+              </Button>
+            </div>
+          </div>
+
+          {/* Results */}
+          <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-3">
+              <p className="text-xs font-black text-text-light uppercase tracking-widest">
+                {t('authRecords.recordsCount', { count: records.length })}
+              </p>
+              {!loading && !error && records.length > 0 && (
+                <p className="text-[11px] font-bold text-text-light">{formatDate(`${date}T00:00:00`)}</p>
+              )}
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center py-16">
+                <Spinner />
+              </div>
+            ) : error ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-error-text">
+                <span className="material-symbols-outlined text-4xl">error</span>
+                <p className="text-sm font-semibold">{error}</p>
+              </div>
+            ) : records.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
+                <span className="material-symbols-outlined text-4xl">fingerprint</span>
+                <p className="text-sm">{t('authRecords.empty')}</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
+                      <th className="px-5 py-3 text-left">{t('authRecords.colName')}</th>
+                      <th className="px-5 py-3 text-left">{t('authRecords.colDate')}</th>
+                      <th className="px-5 py-3 text-left">{t('authRecords.colDevice')}</th>
+                      <th className="px-5 py-3 text-left">{t('authRecords.colTime')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records.map((r) => (
+                      <tr key={r.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
+                        <td className="px-5 py-3 font-bold text-text-dark">
+                          {r.firstName} {r.lastName}
+                          {r.employeeNo && <span className="ml-2 text-[10px] font-bold text-text-light">#{r.employeeNo}</span>}
+                        </td>
+                        <td className="px-5 py-3 font-mono text-text-dark">{formatDate(r.eventTimeUtc)}</td>
+                        <td className="px-5 py-3 text-text-dark">{r.deviceName ?? <span className="text-text-light">—</span>}</td>
+                        <td className="px-5 py-3 font-mono text-text-dark">{formatTime(r.eventTimeUtc)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Person picker: слева отделы (в ЖКХ — блоки), справа поиск и люди */}
+          {pickerOpen && (
+            <Modal isOpen title={t('authRecords.pickPersonTitle')} onClose={() => setPickerOpen(false)}>
+              <div className="space-y-4">
+                {housingModule && (
+                  <div className="flex rounded-xl bg-background-light p-1 gap-1 w-fit">
+                    {(['employee', 'resident'] as PersonKind[]).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => switchKind(k)}
+                        className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-colors ${kind === k ? 'bg-primary text-white' : 'text-text-light hover:text-text-dark'}`}
+                      >
+                        {t(k === 'resident' ? 'people.residents' : 'people.employees')}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Departments / housing blocks */}
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={groupSearch}
+                      onChange={(e) => setGroupSearch(e.target.value)}
+                      placeholder={t(residents ? 'authRecords.blockSearchPlaceholder' : 'workHours.deptSearchPlaceholder')}
+                      className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                    <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+                      <button type="button" onClick={() => setPickerGroupId(null)} className={groupBtnCls(pickerGroupId === null)}>
+                        {t(residents ? 'authRecords.allBlocks' : 'people.allDepartments')}
+                      </button>
+                      {groupQuery
+                        ? groupNodes
+                            .filter((n) => n.name.toLowerCase().includes(groupQuery))
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map((n) => (
+                              <button key={n.id} type="button" onClick={() => setPickerGroupId(n.id)} className={groupBtnCls(pickerGroupId === n.id)}>
+                                {n.name}
+                              </button>
+                            ))
+                        : renderGroupTree(null, 0)}
+                    </div>
+                  </div>
+
+                  {/* People of the selected group */}
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={personSearch}
+                      onChange={(e) => setPersonSearch(e.target.value)}
+                      placeholder={t(residents ? 'authRecords.residentSearchPlaceholder' : 'workHours.empSearchPlaceholder')}
+                      className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                    />
+                    <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
+                      <button
+                        type="button"
+                        onClick={() => pickPerson('')}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${!personId && !deptId && !blockId ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
+                      >
+                        {t(residents ? 'authRecords.allResidents' : 'workHours.allEmployees')}
+                      </button>
+                      {pickerGroupId && (() => {
+                        const groupCount = people.filter((p) => {
+                          const groupId = residents ? p.housingBlockId : p.department?.id
+                          return groupId != null && groupScope!.has(groupId)
+                        }).length
+                        const active = !personId && (residents ? blockId : deptId) === pickerGroupId
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => pickWholeGroup(pickerGroupId)}
+                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="material-symbols-outlined text-base shrink-0">{residents ? 'apartment' : 'groups'}</span>
+                              <span className="truncate">
+                                {t(residents ? 'authRecords.selectWholeBlock' : 'workHours.selectWholeDept', { count: groupCount })}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })()}
+                      {pickerPeople.length === 0 ? (
+                        <p className="px-3 py-4 text-xs text-text-light">
+                          {t(residents ? 'authRecords.noResidentsInBlock' : 'workHours.noEmployeesInDept')}
+                        </p>
+                      ) : (
+                        pickerPeople.map((p) => {
+                          const active = personId === p.id
+                          const subtitle = residents
+                            ? [p.housingBlockName, p.apartment && `${t('authRecords.apartmentShort')} ${p.apartment}`].filter(Boolean).join(' · ')
+                            : p.department?.name
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => pickPerson(p.id)}
+                              className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${active ? 'bg-primary text-white' : 'hover:bg-background-light'}`}
+                            >
+                              <span className={`block text-sm font-bold truncate ${active ? 'text-white' : 'text-text-dark'}`}>{p.firstName} {p.lastName}</span>
+                              {subtitle && <span className={`block text-[10px] truncate ${active ? 'text-white/80' : 'text-text-light'}`}>{subtitle}</span>}
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Modal>
+          )}
+
+        </div>
+      </div>
+    </AppLayout>
+  )
+}

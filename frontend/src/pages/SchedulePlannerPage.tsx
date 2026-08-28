@@ -526,7 +526,7 @@ export function SchedulePlannerPage() {
                 {/* ── Grid ── */}
                 {loading ? (
                     <div className="flex-1 flex items-center justify-center text-text-muted text-sm gap-2">
-                        <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>{t('common.loading')}
+                        <span className="spinner-ring text-xl" aria-hidden="true" />{t('common.loading')}
                     </div>
                 ) : fetchError ? (
                     <div className="flex-1 flex items-center justify-center">
@@ -625,7 +625,7 @@ export function SchedulePlannerPage() {
                                                             <button onClick={() => saveEmployee(emp.employeeId)}
                                                                 disabled={isSaving}
                                                                 className="text-[10px] font-black text-white bg-primary px-2 py-0.5 rounded-md hover:bg-primary/80 disabled:opacity-50 transition-colors flex items-center gap-1">
-                                                                {isSaving && <span className="material-symbols-outlined text-[10px] animate-spin">progress_activity</span>}
+                                                                {isSaving && <span className="spinner-ring text-[10px]" aria-hidden="true" />}
                                                                 {t('common.save')}
                                                             </button>
                                                         </div>

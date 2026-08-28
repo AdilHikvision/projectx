@@ -452,13 +452,18 @@ export function PersonBiometricsStep({
           ))}
         </div>
 
-        {/* Рамка с фото (по макету: подложка #F8F8FC, внутри 186px) */}
+        {/* Рамка с фото. Высота не фиксирована: 186px — только минимум, чтобы пустое
+            состояние и превью веб-камеры не схлопывались. Снимок задаёт высоту сам и
+            вписывается целиком (object-contain) — вертикальные фото с терминалов больше
+            не обрезаются по краям рамки, а горизонтальные не тонут в белых полях. */}
         <div className="mt-4 relative bg-[#F8F8FC] rounded-[14px] p-2.5">
-          <div className="h-[186px] rounded-[11px] overflow-hidden bg-white grid place-items-center">
+          <div className="min-h-[186px] max-h-[420px] rounded-[11px] overflow-hidden bg-white grid place-items-center">
             {mode === 'webcam' ? (
-              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+              // Превью тоже вписываем: иначе кадрируешь лицо по одной картинке, а в файл
+              // уходит полный кадр камеры — и снимок получается не тем, что видел оператор.
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-[186px] object-contain" />
             ) : faceId && token ? (
-              <FaceThumbnail faceId={faceId} token={token} className="w-full h-full object-cover" alt="" />
+              <FaceThumbnail faceId={faceId} token={token} className="max-w-full max-h-[420px] object-contain" alt="" />
             ) : (
               <div className="flex flex-col items-center gap-2 text-text-light">
                 <span className="material-symbols-outlined text-4xl">face</span>
@@ -511,7 +516,7 @@ export function PersonBiometricsStep({
 
         {progress && (
           <p className="mt-4 flex items-center gap-2 text-[11.5px] font-semibold text-primary">
-            <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+            <span className="spinner-ring text-[16px]" aria-hidden="true" />
             {progress}
           </p>
         )}

@@ -1888,8 +1888,12 @@ app.MapPost("/api/settings/smtp/test", async (SmtpTestRequest request, IEmailSer
 {
     if (string.IsNullOrWhiteSpace(request.To))
         return Results.BadRequest(new { message = "Recipient email is required." });
-    var ok = await emailService.TestConnectionAsync(request.To, cancellationToken);
-    return ok ? Results.Ok(new { message = $"Test email sent to {request.To}." }) : Results.BadRequest(new { message = "Failed to send test email. Check SMTP settings." });
+    var result = await emailService.TestConnectionAsync(request.To, new SmtpTestOptions(
+        request.Enabled, request.Host, request.Port, request.Username, request.Password,
+        request.FromAddress, request.FromName, request.EnableSsl), cancellationToken);
+    return result.Success
+        ? Results.Ok(new { message = $"Test email sent to {request.To}." })
+        : Results.BadRequest(new { message = result.ErrorMessage ?? "Failed to send test email." });
 }).RequireAuthorization("Settings.Manage");
 
 // ─── Email Templates ──────────────────────────────────────────────────────────
@@ -1996,7 +2000,7 @@ app.MapGet("/api/departments", async (Guid? companyId, AppDbContext dbContext, C
         .ThenBy(x => x.Name)
         .ToListAsync(cancellationToken);
     var childCounts = await dbContext.Departments.Where(d => d.ParentId != null).GroupBy(d => d.ParentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
-    var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var empCounts = await dbContext.Employees.Where(e => e.Kind == PersonKind.Employee && e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     return Results.Ok(list.Select(d => new DepartmentResponse(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId,
         childCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0,
@@ -2010,7 +2014,7 @@ app.MapGet("/api/departments/tree", async (Guid? companyId, AppDbContext dbConte
     if (companyId.HasValue) query = query.Where(x => x.CompanyId == companyId);
 
     var list = await query.OrderBy(x => x.SortOrder).ThenBy(x => x.Name).ToListAsync(cancellationToken);
-    var empCounts = await dbContext.Employees.Where(e => e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var empCounts = await dbContext.Employees.Where(e => e.Kind == PersonKind.Employee && e.DepartmentId != null).GroupBy(e => e.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
     return Results.Ok(items);
@@ -2107,6 +2111,107 @@ app.MapDelete("/api/departments/{id:guid}", async (Guid id, AppDbContext dbConte
     return Results.NoContent();
 }).RequireAuthorization("Departments.Manage");
 
+// ─── Структура ЖКХ: комплекс → корпус → подъезд → этаж. Дерево произвольной глубины,
+// как у департаментов. К узлу привязывается жилец (Employee с Kind = Resident). ───
+app.MapGet("/api/housing-blocks", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var list = await dbContext.HousingBlocks.AsNoTracking()
+        .OrderBy(x => x.SortOrder).ThenBy(x => x.Name)
+        .ToListAsync(cancellationToken);
+    var counts = await dbContext.Employees
+        .Where(e => e.Kind == PersonKind.Resident && e.HousingBlockId != null)
+        .GroupBy(e => e.HousingBlockId)
+        .Select(g => new { g.Key, C = g.Count() })
+        .ToListAsync(cancellationToken);
+    return Results.Ok(list.Select(b => new HousingBlockResponse(
+        b.Id, b.Name, b.Description, b.SortOrder, b.ParentId,
+        counts.FirstOrDefault(c => c.Key == b.Id)?.C ?? 0)));
+}).RequireAuthorization("Housing.View");
+
+app.MapPost("/api/housing-blocks", async (CreateHousingBlockRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    if (request.ParentId.HasValue &&
+        !await dbContext.HousingBlocks.AnyAsync(x => x.Id == request.ParentId.Value, cancellationToken))
+        return Results.BadRequest(new { message = "Parent block not found." });
+
+    if (await dbContext.HousingBlocks.AnyAsync(x => x.Name == name && x.ParentId == request.ParentId, cancellationToken))
+        return Results.Conflict(new { message = "Block with this name already exists at the same level." });
+
+    var maxOrder = await dbContext.HousingBlocks
+        .Where(b => b.ParentId == request.ParentId)
+        .Select(b => (int?)b.SortOrder)
+        .MaxAsync(cancellationToken) ?? -1;
+
+    var entity = new HousingBlock
+    {
+        Id = Guid.NewGuid(),
+        Name = name,
+        Description = Trimmed(request.Description),
+        SortOrder = maxOrder + 1,
+        ParentId = request.ParentId,
+        CreatedUtc = DateTime.UtcNow
+    };
+    dbContext.HousingBlocks.Add(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Created($"/api/housing-blocks/{entity.Id}",
+        new HousingBlockResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0));
+}).RequireAuthorization("Housing.Manage");
+
+app.MapPut("/api/housing-blocks/{id:guid}", async (Guid id, UpdateHousingBlockRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.HousingBlocks.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    var name = (request.Name ?? "").Trim();
+    if (string.IsNullOrEmpty(name))
+        return Results.BadRequest(new { message = "Name is required." });
+
+    if (await dbContext.HousingBlocks.AnyAsync(x => x.Id != id && x.Name == name && x.ParentId == request.ParentId, cancellationToken))
+        return Results.Conflict(new { message = "Block with this name already exists at the same level." });
+
+    if (request.ParentId == id)
+        return Results.BadRequest(new { message = "Block cannot be its own parent." });
+
+    if (request.ParentId.HasValue)
+    {
+        if (!await dbContext.HousingBlocks.AnyAsync(x => x.Id == request.ParentId.Value, cancellationToken))
+            return Results.BadRequest(new { message = "Parent block not found." });
+        // Переносить узел внутрь собственного поддерева нельзя: дерево замкнулось бы в цикл.
+        if (await IsHousingDescendantAsync(dbContext, request.ParentId.Value, id, cancellationToken))
+            return Results.BadRequest(new { message = "Cannot move a block into its own subtree." });
+    }
+
+    entity.Name = name;
+    entity.Description = Trimmed(request.Description);
+    entity.SortOrder = request.SortOrder ?? entity.SortOrder;
+    entity.ParentId = request.ParentId;
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new HousingBlockResponse(entity.Id, entity.Name, entity.Description, entity.SortOrder, entity.ParentId, 0));
+}).RequireAuthorization("Housing.Manage");
+
+app.MapDelete("/api/housing-blocks/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.HousingBlocks
+        .Include(x => x.Children)
+        .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+    if (entity is null)
+        return Results.NotFound();
+
+    if (entity.Children.Count > 0)
+        return Results.BadRequest(new { message = "Cannot delete a block that has nested blocks. Move or delete them first." });
+
+    // Жильцов не трогаем: внешний ключ стоит на SetNull, они останутся без блока.
+    dbContext.HousingBlocks.Remove(entity);
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.NoContent();
+}).RequireAuthorization("Housing.Manage");
+
 // Positions (должности / vəzifə) — плоский справочник, часть орг-структуры,
 // поэтому переиспользуем permissions Departments.View / Departments.Manage.
 app.MapGet("/api/positions", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2114,7 +2219,7 @@ app.MapGet("/api/positions", async (AppDbContext dbContext, CancellationToken ca
     var list = await dbContext.Positions.AsNoTracking()
         .OrderBy(x => x.SortOrder).ThenBy(x => x.Name)
         .ToListAsync(cancellationToken);
-    var empCounts = await dbContext.Employees.Where(e => e.PositionId != null).GroupBy(e => e.PositionId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
+    var empCounts = await dbContext.Employees.Where(e => e.Kind == PersonKind.Employee && e.PositionId != null).GroupBy(e => e.PositionId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     return Results.Ok(list.Select(p => new PositionResponse(p.Id, p.Name, p.Description, p.SortOrder,
         empCounts.FirstOrDefault(c => c.Key == p.Id)?.C ?? 0)));
 }).RequireAuthorization("Departments.View");
@@ -2184,6 +2289,9 @@ app.MapDelete("/api/positions/{id:guid}", async (Guid id, AppDbContext dbContext
 app.MapGet("/api/employees", async (
     string? search,
     bool? isActive,
+    // Вкладки «Работники» и «Жильцы» — один и тот же список, разделённый этим фильтром.
+    // Без параметра отдаём только работников: так старые вызовы не увидят жильцов.
+    string? kind,
     AppDbContext dbContext,
     CancellationToken cancellationToken) =>
 {
@@ -2192,11 +2300,17 @@ app.MapGet("/api/employees", async (
         .ThenInclude(a => a.AccessLevel)
         .Include(e => e.Department)
         .Include(e => e.Position)
+        .Include(e => e.HousingBlock)
         .Include(e => e.Cards)
         .Include(e => e.Faces)
         .Include(e => e.Fingerprints)
         .Include(e => e.Irises)
         .AsQueryable();
+    query = ParsePersonKind(kind) switch
+    {
+        PersonKind.Resident => query.Where(e => e.Kind == PersonKind.Resident),
+        _ => query.Where(e => e.Kind == PersonKind.Employee),
+    };
     if (isActive.HasValue)
         query = query.Where(e => e.IsActive == isActive.Value);
     if (!string.IsNullOrWhiteSpace(search))
@@ -2205,7 +2319,9 @@ app.MapGet("/api/employees", async (
         query = query.Where(e =>
             (e.FirstName != null && e.FirstName.ToLower().Contains(s)) ||
             (e.LastName != null && e.LastName.ToLower().Contains(s)) ||
-            (e.EmployeeNo != null && e.EmployeeNo.ToLower().Contains(s)));
+            (e.EmployeeNo != null && e.EmployeeNo.ToLower().Contains(s)) ||
+            (e.Apartment != null && e.Apartment.ToLower().Contains(s)) ||
+            (e.HousingBlock != null && e.HousingBlock.Name.ToLower().Contains(s)));
     }
     var list = await query.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToListAsync(cancellationToken);
     return Results.Ok(list.Select(MapEmployeeResponse));
@@ -2224,6 +2340,7 @@ app.MapGet("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, C
         .ThenInclude(a => a.AccessLevel)
         .Include(x => x.Department)
         .Include(x => x.Position)
+        .Include(x => x.HousingBlock)
         .Include(x => x.WorkSchedule)
         .Include(x => x.Cards)
         .Include(x => x.Faces)
@@ -2258,9 +2375,15 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
         }
     }
 
+    var kind = ParsePersonKind(request.Kind) ?? PersonKind.Employee;
     var entity = new Employee
     {
         Id = entityId,
+        Kind = kind,
+        // Квартира и блок имеют смысл только у жильца — у работника чистим, чтобы
+        // случайно присланные поля не оседали в базе.
+        Apartment = kind == PersonKind.Resident ? Trimmed(request.Apartment) : null,
+        HousingBlockId = kind == PersonKind.Resident ? request.HousingBlockId : null,
         FirstName = firstName,
         LastName = lastName,
         EmployeeNo = employeeNo,
@@ -2359,6 +2482,19 @@ app.MapPut("/api/employees/{id:guid}", async (
     if (request.DepartmentId.HasValue) entity.DepartmentId = request.DepartmentId.Value;
     else if (request.DepartmentId == null) entity.DepartmentId = null;
     entity.PositionId = request.PositionId;
+    // Вид записи можно переключать (работник ⇄ жилец): на устройствах это ничего не меняет,
+    // человек и там и там normal user — меняется только вкладка и доступный набор функций.
+    if (ParsePersonKind(request.Kind) is PersonKind newKind) entity.Kind = newKind;
+    if (entity.Kind == PersonKind.Resident)
+    {
+        if (request.Apartment != null) entity.Apartment = Trimmed(request.Apartment);
+        entity.HousingBlockId = request.HousingBlockId;
+    }
+    else
+    {
+        entity.Apartment = null;
+        entity.HousingBlockId = null;
+    }
     if (request.CompanyId.HasValue) entity.CompanyId = request.CompanyId.Value;
     else if (request.CompanyId == null) entity.CompanyId = null;
     // When clearing the default schedule, also remove all day-pattern assignments
@@ -3510,7 +3646,7 @@ app.MapGet("/api/work-schedules/{id:guid}/assignment", async (Guid id, AppDbCont
 {
     // Employees assigned via default WorkScheduleId
     var empWithDefault = await dbContext.Employees.AsNoTracking()
-        .Where(e => e.IsActive && e.WorkScheduleId == id)
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && e.WorkScheduleId == id)
         .Select(e => e.Id)
         .ToListAsync(cancellationToken);
 
@@ -3560,7 +3696,7 @@ app.MapPut("/api/employees/bulk-schedule", async (
     if (request.EmployeeIds is null || request.EmployeeIds.Length == 0)
         return Results.BadRequest(new { message = "No employee IDs provided." });
     var employees = await dbContext.Employees
-        .Where(e => request.EmployeeIds.Contains(e.Id))
+        .Where(e => e.Kind == PersonKind.Employee && request.EmployeeIds.Contains(e.Id))
         .ToListAsync(cancellationToken);
     foreach (var emp in employees)
     {
@@ -3676,7 +3812,7 @@ app.MapGet("/api/schedule-planner", async (DateOnly? from, DateOnly? to, AppDbCo
     }).ToList();
 
     var employees = await dbContext.Employees.AsNoTracking()
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.Date >= fromDate && dp.Date <= toDate)))
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.Date >= fromDate && dp.Date <= toDate)))
         .Include(e => e.WorkSchedule)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate))
             .ThenInclude(dp => dp.WorkSchedule)
@@ -3774,6 +3910,7 @@ app.MapPut("/api/schedule-planner/{employeeId:guid}/days", async (
 {
     var employee = await dbContext.Employees.FirstOrDefaultAsync(e => e.Id == employeeId, cancellationToken);
     if (employee is null) return Results.NotFound();
+    if (employee.Kind != PersonKind.Employee) return Results.BadRequest(new { message = "Жилец не участвует в учёте рабочего времени." });
 
     var dates = request.Select(r => r.Date).ToArray();
     var existing = await dbContext.EmployeeDayPatterns
@@ -3830,6 +3967,7 @@ app.MapPost("/api/leaves", async (CreateLeaveRequest req, AppDbContext db, Claim
         return Results.BadRequest(new { message = "Invalid leaveType. Use Vacation or DayOff." });
     var emp = await db.Employees.FirstOrDefaultAsync(e => e.Id == req.EmployeeId, ct);
     if (emp is null) return Results.NotFound(new { message = "Employee not found." });
+    if (emp.Kind != PersonKind.Employee) return Results.BadRequest(new { message = "Жилец не участвует в учёте рабочего времени." });
     if (req.EndDate < req.StartDate) return Results.BadRequest(new { message = "EndDate must be >= StartDate." });
     // An admin assigning a leave IS the approval, so it is granted immediately and
     // shows up in the attendance table right away (unlike a self-service request,
@@ -3935,6 +4073,83 @@ app.MapGet("/api/attendance", async (Guid? employeeId, DateTime? from, DateTime?
     return Results.Ok(records);
 }).RequireAuthorization("Attendance.View");
 
+// Записи аутентификации («Authentication record») за ОДИН день: сырые логи
+// устройств, сопоставленные с людьми из базы по табельному номеру (EmployeeNo).
+// Логи с номером, которого нет ни у кого, в выдачу не попадают.
+// Сутки считаются по локальному времени сервера — в том же виде, в каком время
+// показывается в таблице.
+app.MapGet("/api/authentication-records", async (
+    string? date,
+    Guid? employeeId,
+    Guid? departmentId,
+    Guid? housingBlockId,
+    string? kind,
+    AppDbContext dbContext,
+    CancellationToken cancellationToken) =>
+{
+    var day = DateOnly.TryParse(date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDay)
+        ? parsedDay
+        : DateOnly.FromDateTime(DateTime.Now);
+    var tz = TimeZoneInfo.Local;
+    var fromUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(day.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified), tz);
+    var toUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(day.AddDays(1).ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified), tz);
+
+    var peopleQuery = dbContext.Employees.AsNoTracking()
+        .Where(e => e.EmployeeNo != null && e.EmployeeNo != "");
+    // Без параметра отдаём работников: жильцы живут в модуле ЖКХ и запрашиваются явно.
+    peopleQuery = ParsePersonKind(kind) switch
+    {
+        PersonKind.Resident => peopleQuery.Where(e => e.Kind == PersonKind.Resident),
+        _ => peopleQuery.Where(e => e.Kind == PersonKind.Employee),
+    };
+    if (employeeId.HasValue) peopleQuery = peopleQuery.Where(e => e.Id == employeeId.Value);
+    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    if (deptScope is not null)
+        peopleQuery = peopleQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
+    var housingScope = await BuildHousingScopeAsync(housingBlockId, dbContext, cancellationToken);
+    if (housingScope is not null)
+        peopleQuery = peopleQuery.Where(e => e.HousingBlockId != null && housingScope.Contains(e.HousingBlockId.Value));
+
+    var people = await peopleQuery
+        .Select(e => new { e.Id, e.FirstName, e.LastName, e.EmployeeNo })
+        .ToListAsync(cancellationToken);
+    if (people.Count == 0) return Results.Ok(Array.Empty<AuthenticationRecordResponse>());
+
+    // Один и тот же табельный номер может стоять у нескольких карточек — берём
+    // первую, иначе строка лога задвоилась бы.
+    var byEmpNo = people
+        .GroupBy(p => p.EmployeeNo!.Trim(), StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+    var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
+        .Where(l => l.EventTimeUtc >= fromUtc && l.EventTimeUtc < toUtc)
+        .OrderByDescending(l => l.EventTimeUtc)
+        .Select(l => new
+        {
+            l.Id,
+            l.EmployeeNoString,
+            l.EventTimeUtc,
+            l.DeviceId,
+            DeviceName = l.Device != null ? l.Device.Name : null,
+        })
+        .ToListAsync(cancellationToken);
+
+    var records = logs
+        .Select(l => new { Log = l, Person = byEmpNo.GetValueOrDefault(l.EmployeeNoString.Trim()) })
+        .Where(x => x.Person is not null)
+        .Select(x => new AuthenticationRecordResponse(
+            x.Log.Id,
+            x.Person!.Id,
+            x.Person.FirstName,
+            x.Person.LastName,
+            x.Person.EmployeeNo,
+            x.Log.EventTimeUtc,
+            x.Log.DeviceId,
+            x.Log.DeviceName))
+        .ToList();
+    return Results.Ok(records);
+}).RequireAuthorization("Attendance.View");
+
 // Daily report за ОДИН день. Показывает сотрудников у которых назначен WorkSchedule
 // или есть хотя бы один день в Schedule Planner.
 app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -3946,7 +4161,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Gui
     var employeesQuery = dbContext.Employees.AsNoTracking()
         .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
     var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
     if (deptScope is not null)
@@ -4077,7 +4292,7 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
     var employeesQuery = dbContext.Employees.AsNoTracking()
         .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
     var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
     if (deptScope is not null)
@@ -4230,7 +4445,7 @@ static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int m
         .Include(e => e.Position)
         .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
         .Where(e => employeeId == null || e.Id == employeeId)
         .Where(e => deptScope == null || (e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value)))
         .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
@@ -4613,7 +4828,8 @@ app.MapPost("/api/attendance/permission", async (
         return Results.BadRequest(new { message = "fromTime/toTime must be HH:mm" });
     if (toTime <= fromTime)
         return Results.BadRequest(new { message = "toTime must be after fromTime" });
-    var empExists = await dbContext.Employees.AnyAsync(e => e.Id == req.EmployeeId, cancellationToken);
+    // Только работник: у жильца учёта рабочего времени нет, значит и разрешений быть не может.
+    var empExists = await dbContext.Employees.AnyAsync(e => e.Id == req.EmployeeId && e.Kind == PersonKind.Employee, cancellationToken);
     if (!empExists) return Results.NotFound(new { message = "Employee not found." });
 
     var existing = await dbContext.AttendancePermissions
@@ -4835,6 +5051,7 @@ app.MapPost("/api/attendance-requests", async (CreateAttendanceRequestBody reque
 
     var employee = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == employeeId, cancellationToken);
     if (employee is null) return Results.NotFound(new { message = "Сотрудник не найден." });
+    if (employee.Kind != PersonKind.Employee) return Results.BadRequest(new { message = "Жилец не участвует в учёте рабочего времени." });
 
     var entity = new AttendanceRequest
     {
@@ -4953,6 +5170,25 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
 // ─── Report Exports ────────────────────────────────────────────────────────────
 
 // Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
+/// <summary>Блок ЖКХ вместе со всеми вложенными: выбрав корпус, видим и его подъезды.</summary>
+static async Task<HashSet<Guid>?> BuildHousingScopeAsync(Guid? housingBlockId, AppDbContext dbContext, CancellationToken ct)
+{
+    if (housingBlockId is null) return null;
+    var all = await dbContext.HousingBlocks.AsNoTracking()
+        .Select(b => new { b.Id, b.ParentId })
+        .ToListAsync(ct);
+    var scope = new HashSet<Guid> { housingBlockId.Value };
+    var grew = true;
+    while (grew)
+    {
+        grew = false;
+        foreach (var b in all)
+            if (b.ParentId.HasValue && scope.Contains(b.ParentId.Value) && scope.Add(b.Id))
+                grew = true;
+    }
+    return scope;
+}
+
 static async Task<HashSet<Guid>?> BuildDepartmentScopeAsync(Guid? departmentId, AppDbContext dbContext, CancellationToken ct)
 {
     if (departmentId is null) return null;
@@ -4981,7 +5217,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
         .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Include(e => e.Department)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) empQuery = empQuery.Where(e => e.Id == employeeId.Value);
     var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, ct);
     if (deptScope is not null)
@@ -5108,7 +5344,7 @@ static async Task<List<SchedulePlannerRow>> BuildSchedulePlannerRowsAsync(
         .Include(e => e.WorkSchedule)
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate))
             .ThenInclude(dp => dp.WorkSchedule)
-        .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
         .OrderBy(e => e.FirstName).ThenBy(e => e.LastName)
         .ToListAsync(ct);
 
@@ -5993,7 +6229,7 @@ app.MapGet("/api/payroll/employees", async (AppDbContext db, CancellationToken c
 {
     var employees = await db.Employees
         .AsNoTracking()
-        .Where(e => e.IsActive)
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive)
         .Include(e => e.Department)
         .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
         .ToListAsync(ct);
@@ -6036,6 +6272,7 @@ app.MapPut("/api/payroll/employees/{employeeId:guid}/salary", async (
 {
     var employee = await db.Employees.FirstOrDefaultAsync(e => e.Id == employeeId, ct);
     if (employee is null) return Results.NotFound();
+    if (employee.Kind != PersonKind.Employee) return Results.BadRequest(new { message = "Жилец не участвует в учёте рабочего времени." });
     if (!Enum.TryParse<SalaryType>(req.SalaryType, true, out var salType))
         return Results.BadRequest(new { message = "Invalid salaryType." });
 
@@ -6542,7 +6779,7 @@ app.MapPost("/api/reports/attendance/send-email", async (
     var employees = await dbContext.Employees.AsNoTracking()
         .Include(e => e.Department)
         .Include(e => e.WorkSchedule)
-        .Where(e => e.IsActive && e.WorkScheduleId != null)
+        .Where(e => e.Kind == PersonKind.Employee && e.IsActive && e.WorkScheduleId != null)
         .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
         .ToListAsync(cancellationToken);
 
@@ -9608,8 +9845,9 @@ app.MapPost("/api/parking/exit", async (ParkingExitRequest req, AppDbContext db,
     var res = await access.RegisterExitAsync(req.Plate, null, null, force: true, ct);
 
     // Сессию закрыл оператор, а не проезд, поэтому шлагбаум нужно открыть отдельно —
-    // иначе водитель оплатил, а выехать не может.
-    var open = res.Closed > 0
+    // иначе водитель оплатил, а выехать не может. В подрежиме «выезд по списку» закрывать
+    // может быть нечего, но выпустить всё равно надо — это решает BarrierAllowed.
+    var open = res.BarrierAllowed
         ? await barrier.OpenAsync(ParkingCameraDirection.Exit, zoneId, req.Plate, user.Identity?.Name, ct)
         : ParkingBarrierResult.NoDevice;
 
@@ -10503,6 +10741,37 @@ static string NTitle(string key, object? p = null) =>
 static string NBody(string key, object? p = null) =>
     System.Text.Json.JsonSerializer.Serialize(new { k = key, p });
 
+/// <summary>Разбирает вид записи, присланный фронтендом («employee» / «resident»).
+/// null — параметр не пришёл: вызывающий сам решает, что это значит.</summary>
+static PersonKind? ParsePersonKind(string? kind) => kind?.Trim().ToLowerInvariant() switch
+{
+    "resident" => PersonKind.Resident,
+    "employee" => PersonKind.Employee,
+    _ => null,
+};
+
+/// <summary>Является ли candidateId потомком ancestorId в дереве ЖКХ.
+/// Нужен, чтобы узел не переехал внутрь самого себя.</summary>
+static async Task<bool> IsHousingDescendantAsync(AppDbContext dbContext, Guid candidateId, Guid ancestorId, CancellationToken ct)
+{
+    var parents = await dbContext.HousingBlocks.AsNoTracking()
+        .Select(b => new { b.Id, b.ParentId })
+        .ToDictionaryAsync(b => b.Id, b => b.ParentId, ct);
+    var current = (Guid?)candidateId;
+    // Дерево небольшое, но от битых данных страхуемся счётчиком шагов.
+    for (var step = 0; current is not null && step <= parents.Count; step++)
+    {
+        if (current == ancestorId) return true;
+        current = parents.TryGetValue(current.Value, out var parent) ? parent : null;
+    }
+    return false;
+}
+
+static string PersonKindName(PersonKind kind) => kind == PersonKind.Resident ? "resident" : "employee";
+
+/// <summary>Пустая строка от формы означает «поле очищено», а не «пробелы».</summary>
+static string? Trimmed(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
 static EmployeeResponse MapEmployeeResponse(Employee e)
 {
     var accessNames = e.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
@@ -10511,7 +10780,8 @@ static EmployeeResponse MapEmployeeResponse(Employee e)
     var primaryFaceId = (e.Faces ?? []).OrderBy(f => f.CreatedUtc).Select(f => (Guid?)f.Id).FirstOrDefault();
     return new EmployeeResponse(
         e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify,
-        accessNames, dept, e.CompanyId, primaryFaceId, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0, e.Irises?.Count ?? 0, e.WorkScheduleId, e.ExternalId, pos);
+        accessNames, dept, e.CompanyId, primaryFaceId, e.Cards?.Count ?? 0, e.Faces?.Count ?? 0, e.Fingerprints?.Count ?? 0, e.Irises?.Count ?? 0, e.WorkScheduleId, e.ExternalId, pos,
+        PersonKindName(e.Kind), e.Apartment, e.HousingBlockId, e.HousingBlock?.Name);
 }
 
 static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
@@ -10523,7 +10793,7 @@ static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
     var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
     var irises = (e.Irises ?? []).Select(i => new IrisRef(i.Id, i.IrisIndex)).ToArray();
-    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, e.CompanyId, accessLevels, cards, faces, fingerprints, irises, e.SelfServiceEnabled, e.SelfServiceEmail, e.WorkScheduleId, e.WorkSchedule?.Name, e.ExternalId, pos);
+    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, e.CompanyId, accessLevels, cards, faces, fingerprints, irises, e.SelfServiceEnabled, e.SelfServiceEmail, e.WorkScheduleId, e.WorkSchedule?.Name, e.ExternalId, pos, PersonKindName(e.Kind), e.Apartment, e.HousingBlockId, e.HousingBlock?.Name);
 }
 
 static VisitorResponse MapVisitorResponse(Visitor v)
@@ -10767,8 +11037,12 @@ public sealed record DoorControlRequest(string? Action, int? CallNumber = null, 
 public sealed record DeviceTimeSyncRequest(string TimeZone);
 public sealed record TimeSyncScheduleRequest(bool AutoEnabled, string DailyTimeLocal, string? TimeZone);
 public sealed record TimeSyncScheduleResponse(bool AutoEnabled, string DailyTimeLocal, string? TimeZone, DateTime? LastRunUtc, int? LastSuccessCount, int? LastTotal, string? LastRunKind);
-public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, string? ExternalId = null, Guid? PositionId = null);
-public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId, string? ExternalId = null, Guid? PositionId = null);
+public sealed record HousingBlockResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, int ResidentCount);
+public sealed record CreateHousingBlockRequest(string Name, string? Description, Guid? ParentId);
+public sealed record UpdateHousingBlockRequest(string Name, string? Description, Guid? ParentId, int? SortOrder);
+
+public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
+public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
@@ -10779,8 +11053,8 @@ public sealed record CaptureFingerprintRequest(string? PersonId, string? PersonT
 public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds, Guid? CompanyId);
 public sealed record DepartmentRef(Guid Id, string Name);
 public sealed record PositionRef(Guid Id, string Name);
-public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, Guid? WorkScheduleId = null, string? ExternalId = null, PositionRef? Position = null);
-public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null, string? ExternalId = null, PositionRef? Position = null);
+public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, Guid? WorkScheduleId = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
+public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
 public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount);
 public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises);
 public sealed record AccessLevelRef(Guid Id, string Name);
@@ -10826,6 +11100,7 @@ public sealed record SchedulePlannerDayRequest(DateOnly Date, Guid? ScheduleId, 
 public sealed record BulkAssignScheduleRequest(Guid[] EmployeeIds, Guid? ScheduleId);
 public sealed record BulkSchedulePlannerRequest(Guid[] EmployeeIds, SchedulePlannerDayRequest[] Days, Guid? ReplaceScheduleId = null);
 public sealed record CreateWorkScheduleRequest(string Name, string Type, TimeSpan? ShiftStart, TimeSpan? ShiftEnd, decimal? RequiredHoursPerDay, string? Color, WorkScheduleShiftDto[]? Shifts = null, bool? CountEarlyArrival = null, int? OvertimeDailyThresholdMinutes = null, bool? LunchBreakDeductionEnabled = null, int? LunchBreakMinutes = null, int? LateToleranceMinutes = null);
+public sealed record AuthenticationRecordResponse(Guid Id, Guid PersonId, string FirstName, string LastName, string? EmployeeNo, DateTime EventTimeUtc, Guid? DeviceId, string? DeviceName);
 public sealed record AttendanceRecordResponse(Guid Id, Guid EmployeeId, string EmployeeName, DateTime EventTimeUtc, string EventType, Guid? DeviceId, string Source, DateTime CreatedUtc);
 public sealed record AttendanceRequestResponse(Guid Id, Guid EmployeeId, string EmployeeName, string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, string Status, Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewComment, DateTime CreatedUtc, double? Latitude, double? Longitude, string? GeoZoneName);
 public sealed record CreateAttendanceRequestBody(string Type, DateTime RequestedTimeUtc, DateTime? RequestedEndTimeUtc, string? Comment, Guid? EmployeeId, double? Latitude = null, double? Longitude = null);
@@ -11118,7 +11393,7 @@ internal static class AttendanceCalculator
             .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
             .Include(e => e.DayPatterns.Where(dp => dp.Date >= rangeStart && dp.Date <= rangeEnd))
                 .ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
-            .Where(e => e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
+            .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)))
             .ToListAsync(ct);
 
         var logs = await db.DeviceAuthLogs.AsNoTracking()
@@ -11209,7 +11484,16 @@ public sealed record CreateLeaveRequest(Guid EmployeeId, string LeaveType, bool 
 public sealed record UpdateLeaveRequest(string LeaveType, bool IsPaid, DateOnly StartDate, DateOnly EndDate, string? Reason, string? Notes);
 public sealed record VaultSecondaryDbRequest(string? ConnectionString);
 public sealed record SmtpSettingsRequest(bool Enabled, string? Host, int Port, string? Username, string? Password, string? FromAddress, string? FromName, bool EnableSsl);
-public sealed record SmtpTestRequest(string? To);
+public sealed record SmtpTestRequest(
+    string? To,
+    bool Enabled,
+    string? Host,
+    int Port,
+    string? Username,
+    string? Password,
+    string? FromAddress,
+    string? FromName,
+    bool EnableSsl);
 public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody);
 public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
 public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2);

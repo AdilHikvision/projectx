@@ -1,0 +1,8 @@
+{
+  // Редактор должен разбирать код тем же компилятором, что и сборка. Со встроенной
+  // версией VS Code запись "types": ["vite/client"] в tsconfig.app.json резолвится
+  // по другим правилам (через exports-карту пакета) и даёт ложную ошибку
+  // «Cannot find type definition file for 'vite/client'», хотя npm run build проходит.
+  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}

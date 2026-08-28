@@ -279,6 +279,42 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         return new ParkingAccessDecision(allow, reason, Mode: mode, SubMode: isPaidMode ? null : subMode, SessionId: openedSessionId);
     }
 
+    /// <summary>
+    /// Подрежим выезда в бесплатном режиме «по белому списку» (parking.listExitMode):
+    /// Session — как раньше, выпускаем только машину с открытой сессией;
+    /// List — выпускаем по списку, факт въезда не важен.
+    /// В платном режиме и в режиме «по местам» подрежима нет: там выезд всегда идёт по сессии,
+    /// иначе нечего тарифицировать.
+    /// </summary>
+    private async Task<bool> ListExitWithoutSessionAllowedAsync(string plateNormalized, CancellationToken ct)
+    {
+        var settings = await db.SystemSettings.AsNoTracking()
+            .Where(x => x.Key == "parking.mode" || x.Key == "parking.freeSubMode" || x.Key == "parking.listExitMode")
+            .ToListAsync(ct);
+        string? Get(string key) => settings.FirstOrDefault(x => x.Key == key)?.Value;
+
+        if (string.Equals(Get("parking.mode") ?? "Free", "Paid", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(Get("parking.freeSubMode") ?? "Capacity", "List", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(Get("parking.listExitMode") ?? "Session", "List", StringComparison.OrdinalIgnoreCase)) return false;
+
+        // Чёрный список закрывает шлагбаум в обе стороны: раз машина не числится внутри,
+        // выпускать «наружу» её тоже незачем — это чужой номер перед выездным шлагбаумом.
+        var blocked = await db.ParkingPlates.AsNoTracking()
+            .AnyAsync(x => x.IsActive && x.ListType == ParkingPlateList.Block && x.PlateNormalized == plateNormalized, ct);
+        if (blocked) return false;
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hasSubscription = await db.ParkingSubscriptions.AsNoTracking()
+            .AnyAsync(s => s.IsActive && s.PlateNormalized == plateNormalized && s.StartDate <= today && s.EndDate >= today, ct);
+        if (hasSubscription) return true;
+
+        // Тот же критерий, что и на въезде: активная запись с непросроченной лицензией.
+        // Зону здесь не проверяем — на выезде она уже ничего не ограничивает.
+        return await db.ParkingVehicles.AsNoTracking()
+            .AnyAsync(v => v.IsActive && v.PlateNormalized == plateNormalized
+                && (v.AccessValidTo == null || v.AccessValidTo >= today), ct);
+    }
+
     /// <summary>Сколько минут даётся на выезд после оплаты; 0 — окно не ограничено.</summary>
     public async Task<int> GetExitGraceMinutesAsync(CancellationToken ct)
     {
@@ -295,6 +331,23 @@ public sealed class ParkingAccessService(AppDbContext db, ILogger<ParkingAccessS
         var open = await db.ParkingSessions.Where(x => x.ExitedUtc == null && x.PlateNormalized == norm).ToListAsync(ct);
         if (open.Count == 0)
         {
+            // Подрежим «выезд по списку»: машины из белого списка выпускаем, даже если въезд
+            // за ними не записан. Нужно там, где въезд идёт мимо камеры (второй заезд, ручной
+            // шлагбаум, потерянная сессия), а выездной шлагбаум всё равно должен открываться.
+            if (await ListExitWithoutSessionAllowedAsync(norm, ct))
+            {
+                db.ParkingEvents.Add(new ParkingEvent
+                {
+                    Type = "barrier_open",
+                    Message = "exit (whitelist, no session)",
+                    Plate = plate.Trim(),
+                    Source = camera ?? "system"
+                });
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation("Parking: {Plate} released by whitelist without an open session", plate);
+                return new ParkingExitResult(0, 0m, Reason: "list-exit", AllowedWithoutSession: true);
+            }
+
             db.ParkingEvents.Add(new ParkingEvent
             {
                 Type = "denied",

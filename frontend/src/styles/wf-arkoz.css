@@ -168,3 +168,4 @@
 
 /* Loading spinner accent */
 .wf-arkoz .animate-spin.text-primary { color: var(--wf-accent) !important; }
+.wf-arkoz .spinner-ring.text-primary { color: var(--wf-accent) !important; }

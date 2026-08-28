@@ -87,10 +87,11 @@
     "pickerSubtitle": "Platformanın hansı hissəsində işləmək istədiyinizi seçin",
     "soon": "Tezliklə",
     "active": "Aktiv",
-    "workforce": "Workforce Management",
+    "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Housing & Utility Management"
+    "housing": "Aktiv MTK",
+    "workforceSubtitle": "Attendance Management"
   },
   "parking": {
     "subtitle": "Zonalar, mərtəbələr, sıralar və parklanma yerləri",
@@ -401,6 +402,8 @@
       "whitelisted": "Ağ siyahıda",
       "permitActive": "Ağ siyahıda, lisenziya qüvvədədir",
       "unknownVehicle": "Bu nömrə bazada yoxdur — naməlum avtomobil.",
+      "notInWhitelist": "Ağ siyahıda yoxdur",
+      "acceptPayment": "Ödənişi qəbul et",
       "insideNow": "Hazırda parkinqdədir",
       "notInside": "Hazırda parkinqdə deyil.",
       "recentVisits": "Son ziyarətlər",
@@ -417,8 +420,9 @@
         "full": "boş yer yoxdur",
         "empty-plate": "nömrə göstərilməyib",
         "holder-spaces-busy": "sahibin bütün yerləri doludur",
-        "no-permit": "qüvvədə olan buraxılış yoxdur",
-        "not-in-vehicles": "maşın bazada yoxdur",
+        "not-in-whitelist": "maşın ağ siyahıda yoxdur",
+        "license-expired": "lisenziyanın müddəti bitib",
+        "wrong-zone": "bu zonaya girişi yoxdur",
         "already-inside": "artıq parkinqdədir"
       },
       "debt": "Borc",
@@ -443,6 +447,11 @@
       "subModeCapacity": "Tutum",
       "subModeListHint": "«Ağ siyahı üzrə» — yalnız lisenziyası bitməmiş ağ siyahı maşınları keçir",
       "subModeCapacityHint": "«Tutum» — boş yer olduqca bütün nömrələr keçir",
+      "listExitMode": "«Ağ siyahı üzrə» rejimində çıxış",
+      "listExitSession": "Sessiya üzrə",
+      "listExitList": "Siyahı üzrə",
+      "listExitSessionHint": "«Sessiya üzrə» — yalnız içəridə qeydə alınmış maşın buraxılır",
+      "listExitListHint": "«Siyahı üzrə» — ağ siyahıdakı istənilən maşın buraxılır, girişi qeydə alınıb-alınmamasından asılı olmayaraq",
       "commonSpaces": "Ümumi yerlər (boş / cəmi)",
       "vipSpaces": "VIP yerlər (boş / cəmi)",
       "reasonAny": "Səbəb —",
@@ -1171,6 +1180,7 @@
     "monitoring": "Monitorinq",
     "accessLevels": "Giriş səviyyələri",
     "workHours": "Davamiyyət hesabatı",
+    "authRecords": "Autentifikasiya qeydləri",
     "schedulePlanner": "Cədvəl planlayıcısı",
     "approvals": "Təsdiqlər",
     "geoZones": "Geo-zonalar",
@@ -1179,7 +1189,8 @@
     "systemStatus": "Sistem statusu",
     "system": "SİSTEM",
     "devices": "Cihazlar",
-    "access": "GİRİŞ"
+    "access": "GİRİŞ",
+    "peopleAndResidents": "Sakinlər və işçilər"
   },
   "topBar": {
     "searchPages": "Səhifələri axtar...",
@@ -1208,7 +1219,16 @@
       "geoZones": "geo zonalar yer geofence radius",
       "payroll": "əmək haqqı hesablama dövrlər iş üstü çıxılmalar",
       "settings": "parametrlər konfiqurasiya sistem ümumi",
-      "systemStatus": "sistem statusu cihazlar loglar sağlamlıq"
+      "systemStatus": "sistem statusu cihazlar loglar sağlamlıq",
+      "parkingManagement": "parklanma idarəetmə yerlər zonalar",
+      "parkingVehicles": "ağ siyahı nəqliyyat avtomobil nömrə",
+      "parkingHolders": "yer sahibləri sakinlər abonentlər",
+      "parkingBlacklist": "qara siyahı bloklanmış nəqliyyat",
+      "parkingPos": "pos kassa ödəniş hesablaşma",
+      "parkingTariffs": "tariflər qiymətlər saatlıq abunə",
+      "parkingHistory": "tarixçə giriş çıxış jurnal hadisələr",
+      "parkingReports": "hesabatlar statistika parklanma gəlir",
+      "residents": "sakinlər mənzil blok korpus ev"
     }
   },
   "auth": {
@@ -1546,7 +1566,8 @@
       "deviceSyncErrors": "Cihaz sinxronizasiyası xətaları:",
       "saveFailed": "Yadda saxlanılmadı",
       "importFailed": "İdxal alınmadı",
-      "firstNameRequired": "Əvvəlcə adı daxil edin."
+      "firstNameRequired": "Əvvəlcə adı daxil edin.",
+      "loadResidents": "Sakinlər yüklənə bilmədi"
     },
     "createPageHint": "Məlumatları doldurun, şəkil və biometriyanı əlavə edin.",
     "finish": "Bitir",
@@ -1576,7 +1597,21 @@
       "terminals": "Terminallar",
       "enrollers": "Qeydiyyat stansiyaları",
       "readCardFromDevice": "Kartı cihazdan oxu"
-    }
+    },
+    "titleHousing": "Sakinlərin və işçilərin idarə edilməsi",
+    "descriptionHousing": "Sakinləri, MTK işçilərini, qonaqları və onların etimadnamələrini idarə edin.",
+    "residents": "Sakinlər",
+    "searchResidents": "Sakin axtarışı...",
+    "addResident": "Sakin əlavə et",
+    "personKind": "Qeydin növü",
+    "kindEmployee": "İşçi",
+    "kindResident": "Sakin",
+    "kindVisitor": "Qonaq",
+    "apartment": "Mənzil",
+    "block": "Blok / korpus",
+    "apartmentPlaceholder": "Məs. 42",
+    "apartmentShort": "mən. {{value}}",
+    "noHousingBlocks": "Struktur boşdur — parametrlərdə blok əlavə edin."
   },
   "schedulePlanner": {
     "searchEmployees": "İşçi axtarışı…",
@@ -2581,7 +2616,8 @@
       "users": "İstifadəçilər",
       "roles": "Rollar",
       "debugLogs": "Debug jurnalları",
-      "criteria": "Tabel qaydaları"
+      "criteria": "Tabel qaydaları",
+      "housing": "MTK strukturu"
     },
     "criteria": {
       "heading": "Tabel qaydaları / Davamiyyət kriteriyaları",
@@ -2938,5 +2974,50 @@
     "parkingPaid": "Ödənişli",
     "parkingFreeHint": "Ödəniş alınmır, giriş siyahılar və ya boş yerlər üzrədir. Tarif və kassa səhifələri gizlidir.",
     "parkingPaidHint": "Dayanma tarifə görə ödənilir; tariflər, abunələr və kassa əlçatandır."
+  },
+  "housing": {
+    "subtitle": "Yaşayış kompleksi",
+    "structureTitle": "MTK strukturu",
+    "structureHint": "Kompleks → korpus → giriş → mərtəbə. Sakin kartında blok bu ağacdan seçilir.",
+    "addBlock": "Blok əlavə et",
+    "addChild": "Daxilinə blok əlavə et",
+    "editBlock": "Bloku redaktə et",
+    "deleteBlock": "Bloku sil",
+    "deleteConfirm": "«{{name}}» bloku silinsin?",
+    "deleteResidentsWarning": "Bu blokda {{count}} sakin var — onlar bloksuz qalacaq.",
+    "blockName": "Blokun adı",
+    "blockNamePlaceholder": "Məs. Korpus A",
+    "blockDescription": "Təsvir",
+    "parentBlock": "Yuxarı blok",
+    "parentLabel": "Daxilində: {{name}}",
+    "noParent": "Kökdə",
+    "residentsInBlock": "Blokdakı sakinlər",
+    "empty": "Struktur hələ boşdur — ilk bloku əlavə edin.",
+    "errors": {
+      "load": "Struktur yüklənə bilmədi",
+      "save": "Blok yadda saxlanıla bilmədi",
+      "delete": "Blok silinə bilmədi"
+    }
+  },
+  "authRecords": {
+    "pageTitle": "Autentifikasiya qeydləri",
+    "pageDescription": "Seçilmiş gün üçün cihazlardakı autentifikasiyalar.",
+    "person": "Şəxs",
+    "refresh": "Yenilə",
+    "recordsCount": "{{count}} qeyd",
+    "empty": "Seçilmiş gün üçün qeyd yoxdur.",
+    "colName": "Ad Soyad",
+    "colDate": "Tarix",
+    "colDevice": "Cihaz",
+    "colTime": "Vaxt",
+    "pickPersonTitle": "Şəxs seçimi",
+    "allResidents": "Bütün sakinlər",
+    "allBlocks": "Bütün bloklar",
+    "wholeBlock": "bütün blok",
+    "selectWholeBlock": "Bütün bloku seç ({{count}})",
+    "blockSearchPlaceholder": "Blok axtar…",
+    "residentSearchPlaceholder": "Sakin axtar…",
+    "noResidentsInBlock": "Bu blokda sakin yoxdur.",
+    "apartmentShort": "mənzil"
   }
 }

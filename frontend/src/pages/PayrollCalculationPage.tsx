@@ -572,7 +572,7 @@ export function PayrollCalculationPage() {
 
                             {periodLoading && (
                                 <div className="flex items-center justify-center py-16">
-                                    <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                    <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                 </div>
                             )}
                             {filtered.length === 0 && !periodLoading && (
@@ -836,7 +836,7 @@ export function PayrollCalculationPage() {
                             </div>
                             {empLoading && (
                                 <div className="flex items-center justify-center py-16">
-                                    <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                    <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                 </div>
                             )}
                             <div className="bg-surface rounded-2xl shadow-md overflow-hidden border-none">
@@ -907,7 +907,7 @@ export function PayrollCalculationPage() {
                         <div className="space-y-4">
                             {compLoading && (
                                 <div className="flex items-center justify-center py-16">
-                                    <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                    <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                 </div>
                             )}
                             <div className="bg-surface rounded-2xl shadow-md overflow-hidden border-none">

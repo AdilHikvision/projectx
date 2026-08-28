@@ -8,6 +8,8 @@ import { Badge, Button } from '../components/atoms'
 import { ConfirmDialog } from '../components/molecules'
 import { ErrorDialog } from '../components/organisms'
 import { PersonBiometricsStep } from './PersonBiometricsStep'
+import { useModule } from '../context/ModuleContext'
+import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
 import { PM_CARD, PM_INPUT, PM_TITLE, PmField } from './personFormUi'
 
 import { apiRequest, getHubUrl } from '../lib/api'
@@ -62,6 +64,11 @@ interface PersonDetail {
   selfServiceTempPassword?: string | null
   workScheduleId?: string | null
   workScheduleName?: string | null
+  /** 'employee' | 'resident' — жилец хранится в той же таблице, что и работник. */
+  kind?: string
+  apartment?: string | null
+  housingBlockId?: string | null
+  housingBlockName?: string | null
 }
 
 interface WorkSchedule {
@@ -106,6 +113,9 @@ interface AccessLevel {
 export function PersonDetailPage() {
   const { t } = useTranslation()
   const { type, id } = useParams<{ type: 'employee' | 'visitor'; id: string }>()
+  const { activeModule } = useModule()
+  // Переключать работника в жильца можно только в модуле ЖКХ.
+  const isHousingModule = activeModule === 'housing'
   const navigate = useNavigate()
   const { token } = useAuth()
 
@@ -127,7 +137,14 @@ export function PersonDetailPage() {
     selfServiceEnabled: false,
     selfServiceEmail: '',
     workScheduleId: null as string | null,
+    kind: 'employee',
+    apartment: '',
+    housingBlockId: null as string | null,
   })
+  const [housingBlocks, setHousingBlocks] = useState<HousingBlockItem[]>([])
+  // Жилец лежит в тех же записях, что и работник (type === 'employee'),
+  // отличает его поле kind — оно же прячет отдел, должность, табель и смены.
+  const isResident = formData.kind === 'resident'
   const [workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
   const [selfServiceTempPassword, setSelfServiceTempPassword] = useState<string | null>(null)
   const [companies, setCompanies] = useState<Company[]>([])
@@ -233,7 +250,11 @@ export function PersonDetailPage() {
     loadCompanies()
     loadCompanyMode()
     if (type === 'employee') { loadWorkSchedules(); loadPositions() }
-  }, [loadDetail, loadAccessLevels, loadCompanies, loadCompanyMode, loadWorkSchedules, loadPositions, type])
+    // Структура ЖКХ нужна только там, где блок вообще можно выбрать.
+    if (type === 'employee' && isHousingModule) {
+      loadHousingBlocks(token).then(setHousingBlocks).catch(() => setHousingBlocks([]))
+    }
+  }, [loadDetail, loadAccessLevels, loadCompanies, loadCompanyMode, loadWorkSchedules, loadPositions, type, isHousingModule, token])
 
   useEffect(() => {
     loadDepartments(formData.companyId)
@@ -265,6 +286,9 @@ export function PersonDetailPage() {
       selfServiceEnabled: detail.selfServiceEnabled ?? false,
       selfServiceEmail: detail.selfServiceEmail ?? '',
       workScheduleId: detail.workScheduleId ?? null,
+      kind: detail.kind ?? 'employee',
+      apartment: detail.apartment ?? '',
+      housingBlockId: detail.housingBlockId ?? null,
     })
     if (detail.selfServiceTempPassword) {
       setSelfServiceTempPassword(detail.selfServiceTempPassword)
@@ -364,7 +388,10 @@ export function PersonDetailPage() {
             companyId: formData.companyId || null,
             selfServiceEnabled: formData.selfServiceEnabled,
             selfServiceEmail: formData.selfServiceEnabled && formData.selfServiceEmail ? formData.selfServiceEmail.trim() : null,
-            workScheduleId: formData.workScheduleId || null,
+            workScheduleId: isResident ? null : formData.workScheduleId || null,
+            kind: formData.kind,
+            apartment: isResident ? formData.apartment.trim() : null,
+            housingBlockId: isResident ? formData.housingBlockId : null,
           }),
         })
         showSyncWarnings(res)
@@ -518,6 +545,57 @@ export function PersonDetailPage() {
                     />
                   </PmField>
 
+                  {/* Работника и жильца можно переключать: на устройствах это ничего не меняет,
+                      меняется только вкладка и набор доступных полей. */}
+                  {type === 'employee' && isHousingModule && (
+                    <PmField label={t('people.personKind')}>
+                      <div className="flex h-12 rounded-xl border border-[#E6E6F0] overflow-hidden">
+                        {([
+                          { v: 'employee', label: t('people.kindEmployee') },
+                          { v: 'resident', label: t('people.kindResident') },
+                        ] as const).map((opt) => (
+                          <button
+                            key={opt.v}
+                            type="button"
+                            onClick={() => setFormData((p) => ({ ...p, kind: opt.v }))}
+                            className={`flex-1 min-w-0 px-2 text-[13px] font-bold truncate transition-colors ${formData.kind === opt.v ? 'bg-primary/10 text-primary' : 'bg-white text-text-light hover:text-text-dark'}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </PmField>
+                  )}
+
+                  {type === 'employee' && isResident && (
+                    <>
+                      <PmField label={t('people.block')}>
+                        <select
+                          value={formData.housingBlockId ?? ''}
+                          onChange={(e) => setFormData((p) => ({ ...p, housingBlockId: e.target.value || null }))}
+                          className={PM_INPUT}
+                        >
+                          <option value="">{t('personDetail.notAssigned')}</option>
+                          {flattenHousingBlocks(housingBlocks).map((b) => (
+                            <option key={b.id} value={b.id}>{b.label}</option>
+                          ))}
+                        </select>
+                        {housingBlocks.length === 0 && (
+                          <span className="text-[11px] text-text-light">{t('people.noHousingBlocks')}</span>
+                        )}
+                      </PmField>
+                      <PmField label={t('people.apartment')}>
+                        <input
+                          type="text"
+                          value={formData.apartment}
+                          onChange={(e) => setFormData((p) => ({ ...p, apartment: e.target.value }))}
+                          placeholder={t('people.apartmentPlaceholder')}
+                          className={PM_INPUT}
+                        />
+                      </PmField>
+                    </>
+                  )}
+
                   {type === 'employee' && (
                     <>
                       <PmField label="ID">
@@ -588,6 +666,7 @@ export function PersonDetailPage() {
                     </PmField>
                   )}
 
+                  {!isResident && (
                   <PmField label={t('personDetail.department')}>
                     <select
                       value={formData.departmentId ?? ''}
@@ -600,8 +679,9 @@ export function PersonDetailPage() {
                       ))}
                     </select>
                   </PmField>
+                  )}
 
-                  {type === 'employee' && (
+                  {type === 'employee' && !isResident && (
                     <PmField label={t('personDetail.position')}>
                       <select
                         value={formData.positionId ?? ''}
@@ -659,7 +739,7 @@ export function PersonDetailPage() {
                     </Badge>
                   </div>
                 </label>
-                {type === 'employee' && (
+                {type === 'employee' && !isResident && (
                   <label className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors">
                     <input
                       type="checkbox"
@@ -675,8 +755,8 @@ export function PersonDetailPage() {
                 )}
               </div>
 
-              {/* Work Schedule & Self-Service */}
-              {type === 'employee' && (
+              {/* Work Schedule & Self-Service — жилец не работает, ни того ни другого ему не нужно. */}
+              {type === 'employee' && !isResident && (
                 <div className={`${PM_CARD} p-[22px] space-y-4`}>
                   <span className={PM_TITLE}>{t('personDetail.scheduleAndSelfService')}</span>
 

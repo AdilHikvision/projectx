@@ -97,8 +97,11 @@ public sealed class ParkingAnprHandler(
                     device.Name, plateEvent.Plate, exit.Reason, exit.SurchargeDue);
                 return;
             }
-            logger.LogInformation("ANPR {Device}: exit {Plate}, closed {Closed} session(s)", device.Name, plateEvent.Plate, exit.Closed);
-            if (exit.Closed > 0) await barrier.TriggerAsync(device.Id, "exit", plateEvent.Plate, ct);
+            logger.LogInformation("ANPR {Device}: exit {Plate}, closed {Closed} session(s){Note}",
+                device.Name, plateEvent.Plate, exit.Closed,
+                exit.AllowedWithoutSession ? " — released by whitelist" : "");
+            // В подрежиме «выезд по списку» сессии может не быть вовсе, но шлагбаум открыть нужно.
+            if (exit.BarrierAllowed) await barrier.TriggerAsync(device.Id, "exit", plateEvent.Plate, ct);
             return;
         }
 

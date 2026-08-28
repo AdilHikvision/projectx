@@ -15,14 +15,16 @@ interface BottomNavItem {
     end?: boolean;
     /** Вкладка страницы настроек: пункт ведёт на /settings?tab=… и подсвечивается только на ней. */
     tab?: string;
+    /** Название в модуле ЖКХ. Без поля название одинаково во всех модулях. */
+    housingLabelKey?: string;
 }
 
 const NAV_ITEMS: BottomNavItem[] = [
     { to: '/', icon: 'grid_view', labelKey: 'nav.dashboard', end: true },
     // Отдельной страницы устройств нет — они живут вкладкой в настройках.
     { to: '/settings?tab=devices', icon: 'router', labelKey: 'nav.devices', anyOf: ['Devices.View'], modules: ['workforce'], tab: 'devices' },
-    { to: '/access-levels', icon: 'key', labelKey: 'nav.access', anyOf: ['AccessLevels.View'], modules: ['workforce'] },
-    { to: '/people', icon: 'group', labelKey: 'nav.people', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce'] },
+    { to: '/access-levels', icon: 'key', labelKey: 'nav.access', anyOf: ['AccessLevels.View'], modules: ['workforce', 'housing'] },
+    { to: '/people', icon: 'group', labelKey: 'nav.people', housingLabelKey: 'nav.peopleAndResidents', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce', 'housing'] },
     { to: '/settings', icon: 'settings', labelKey: 'nav.settings', anyOf: ['Settings.Manage', 'Companies.Manage', 'Users.Manage', 'Roles.Manage', 'Audit.View'] },
 ];
 
@@ -66,7 +68,7 @@ export function BottomBar() {
                             {item.icon}
                         </span>
                         <span className="text-[9px] font-extrabold tracking-[0.14em] uppercase">
-                            {t(item.labelKey)}
+                            {t(activeModule === 'housing' && item.housingLabelKey ? item.housingLabelKey : item.labelKey)}
                         </span>
                     </Link>
                 );

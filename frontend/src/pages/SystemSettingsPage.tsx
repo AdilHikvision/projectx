@@ -5,6 +5,8 @@ import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
 import { Modal, PageHeader } from '../components/organisms'
 import { CompanyTab } from './CompanyTab'
+import { HousingTab } from './HousingTab'
+import { useModule } from '../context/ModuleContext'
 import { DevicesTab } from './DevicesTab'
 import { useAuth } from '../auth/AuthContext'
 import { apiRequest, getApiBaseUrl } from '../lib/api'
@@ -29,7 +31,7 @@ const STG_RESTYLE = `
 .stg-page .shadow-primary{box-shadow:0 6px 16px rgba(108,92,231,.28)!important}
 `
 
-type SettingsTab = 'global' | 'criteria' | 'devices' | 'company' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
+type SettingsTab = 'global' | 'criteria' | 'devices' | 'company' | 'housing' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
 
 // Davamiyyət kriteriyaları (GET/PUT /api/attendance-criteria)
 interface AttCriterion { key: string; label: string; letter: string; color: string; enabled: boolean; sortOrder: number; displayMode: string }
@@ -53,6 +55,9 @@ export function SystemSettingsPage() {
             : 'global'
 
     const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
+    // Структура дома нужна только в модуле ЖКХ — в остальных вкладка лишняя.
+    const { activeModule } = useModule()
+    const isHousing = activeModule === 'housing'
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
     const { token, user: currentUser } = useAuth()
     const { startLoading, stopLoading } = useLoading()
@@ -66,6 +71,7 @@ export function SystemSettingsPage() {
         const tab = new URLSearchParams(location.search).get('tab')
         if (tab === 'devices') setActiveTab('devices')
         else if (tab === 'company') setActiveTab('company')
+        else if (tab === 'housing') setActiveTab('housing')
         else if (tab === 'log-sync') setActiveTab('logSync')
         else if (tab === 'global') setActiveTab('global')
         else if (tab === 'email') setActiveTab('email')
@@ -547,7 +553,11 @@ export function SystemSettingsPage() {
         setSmtpTesting(true)
         setSmtpTestResult(null)
         try {
-            const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', { method: 'POST', token, body: JSON.stringify({ to: smtpTestTo }) })
+            const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', {
+                method: 'POST',
+                token,
+                body: JSON.stringify({ ...smtp, to: smtpTestTo }),
+            })
             setSmtpTestResult({ ok: true, message: res.message })
         } catch (e) {
             setSmtpTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.testFailed') })
@@ -1041,6 +1051,15 @@ export function SystemSettingsPage() {
                         >
                             {t('systemSettings.tabs.company')}
                         </button>
+                        {isHousing && (
+                            <button
+                                onClick={() => setActiveTab('housing')}
+                                className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'housing' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                    }`}
+                            >
+                                {t('systemSettings.tabs.housing')}
+                            </button>
+                        )}
                         <button
                             onClick={() => setActiveTab('devices')}
                             className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'devices' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
@@ -1333,7 +1352,7 @@ export function SystemSettingsPage() {
 
                                             {backupsLoading ? (
                                                 <div className="flex justify-center py-8">
-                                                    <span className="material-symbols-outlined animate-spin text-2xl text-primary">progress_activity</span>
+                                                    <span className="spinner-ring text-2xl text-primary" aria-hidden="true" />
                                                 </div>
                                             ) : backups.length === 0 ? (
                                                 <div className="flex flex-col items-center justify-center py-8 gap-2 text-text-light">
@@ -1362,7 +1381,7 @@ export function SystemSettingsPage() {
                                                                 className="text-text-muted hover:text-amber-600 transition-colors shrink-0 disabled:opacity-40"
                                                             >
                                                                 {restoring === b.filename
-                                                                    ? <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+                                                                    ? <span className="spinner-ring text-base" aria-hidden="true" />
                                                                     : <span className="material-symbols-outlined text-base">settings_backup_restore</span>
                                                                 }
                                                             </button>
@@ -1543,6 +1562,10 @@ export function SystemSettingsPage() {
                     ) : activeTab === 'company' ? (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <CompanyTab />
+                        </div>
+                    ) : activeTab === 'housing' ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <HousingTab />
                         </div>
                     ) : activeTab === 'devices' ? (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -1796,7 +1819,7 @@ export function SystemSettingsPage() {
                                                             disabled={tplPreviewLoading}
                                                             className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${tplView === 'preview' ? 'bg-white shadow-sm text-text-dark' : 'text-text-light hover:text-text-dark'}`}
                                                         >
-                                                            {tplPreviewLoading && <span className="material-symbols-outlined text-xs animate-spin">progress_activity</span>}
+                                                            {tplPreviewLoading && <span className="spinner-ring text-xs" aria-hidden="true" />}
                                                             {t('systemSettings.templates.preview')}
                                                         </button>
                                                     </div>
@@ -1877,7 +1900,7 @@ export function SystemSettingsPage() {
                             <div className="bg-surface rounded-3xl shadow-md overflow-hidden border-none">
                                 {usersLoading ? (
                                     <div className="flex items-center justify-center py-16">
-                                        <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                        <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                     </div>
                                 ) : users.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
@@ -2007,7 +2030,7 @@ export function SystemSettingsPage() {
 
                                 {auditLoading ? (
                                     <div className="flex items-center justify-center py-16">
-                                        <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                        <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                     </div>
                                 ) : auditLogs.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-16 gap-2 text-text-light">
@@ -2073,7 +2096,7 @@ export function SystemSettingsPage() {
                             <div className="bg-surface rounded-3xl shadow-md overflow-hidden border-none">
                                 {rolesLoading ? (
                                     <div className="flex items-center justify-center py-16">
-                                        <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                        <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                                     </div>
                                 ) : (
                                     <ul className="divide-y divide-border-light">
@@ -2342,7 +2365,7 @@ export function SystemSettingsPage() {
                 <Modal isOpen title={t('systemSettings.permissions.title', { name: permsModal.name })} onClose={() => setPermsModal(null)}>
                     {permsLoading ? (
                         <div className="flex items-center justify-center py-12">
-                            <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                            <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                         </div>
                     ) : (
                         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">

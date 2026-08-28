@@ -5,7 +5,8 @@
    SCOPED: hər selektor .ana-root altında (prefiks ana-) → qlobal
    index.css/@theme/Tailwind TOXUNULMUR.
    ═══════════════════════════════════════════════════════════════ */
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+/* Şrift lokal olaraq gəlir — bax: src/styles/fonts.css (Google Fonts yoxdur:
+   sistem internetsiz şəbəkədə işləyir). */
 
 .ana-root{
   --ana-accent:#6C5CE7; --ana-accent-hover:#5548C8; --ana-tint:#EFECFD; --ana-nav:#F1F0FB;
@@ -15,9 +16,24 @@
   --ana-orange:#D98324; --ana-orange-bg:#FEF4E6; --ana-orange-card:#FEF9F3; --ana-orange-bd:#F6E7D5;
   --ana-red:#D9534A; --ana-red-bg:#FDECEA; --ana-red-card:#FEF7F6; --ana-red-bd:#F7E2E0;
   font-family:'Plus Jakarta Sans',system-ui,sans-serif; color:var(--ana-text);
-  display:flex; flex-direction:column; gap:20px; padding:4px 2px 8px;
+  display:flex; flex-direction:column; gap:20px;
+  /* Те же поля, что и на остальных страницах (p-6 / md:p-8) — раньше содержимое
+     упиралось в края окна. */
+  padding:24px;
 }
-.ana-root *{box-sizing:border-box}
+@media(min-width:768px){ .ana-root{padding:32px} }
+.ana-root,.ana-root *{box-sizing:border-box}
+.ana-root{max-width:100%}
+
+/* ═══ Защита от горизонтальной прокрутки ═══
+   Ячейки grid и flex по умолчанию идут с min-width:auto и не сжимаются уже
+   своего содержимого: одна широкая строка распирает колонку, колонка — сетку,
+   а сетка — страницу. Разрешаем сжиматься всем контейнерам сразу. */
+.ana-root .ana-kpis>*,
+.ana-root .ana-grid3>*,
+.ana-root .ana-grid4>*,
+.ana-root .ana-trow>*,
+.ana-root .ana-thead>*{min-width:0}
 .ana-root h1,.ana-root h2,.ana-root h3,.ana-root p{margin:0}
 
 /* ═══ HERO ═══ */
@@ -29,14 +45,22 @@
 .ana-root .ana-hero h1{font-size:21px;font-weight:800;letter-spacing:-.6px}
 .ana-root .ana-hero p{font-size:13px;color:var(--ana-text2);margin-top:7px;font-weight:500}
 .ana-root .ana-hero-cards{display:flex;gap:12px;flex-wrap:wrap;position:relative;z-index:2}
-.ana-root .ana-float{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid var(--ana-border);border-radius:14px;padding:12px 15px;min-width:190px}
+.ana-root .ana-float{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid var(--ana-border);border-radius:14px;padding:12px 15px;min-width:min(190px,100%);max-width:100%;
+  transition:border-color .18s,box-shadow .18s,transform .18s}
+.ana-root .ana-float:hover{border-color:#DCD8F7;box-shadow:0 8px 22px -12px rgba(108,92,231,.3);transform:translateY(-1px)}
 .ana-root .ana-float .ic{width:38px;height:38px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
 .ana-root .ana-float .l1{font-size:14px;font-weight:800;letter-spacing:-.3px;line-height:1.1}
 .ana-root .ana-float .l2{font-size:11.5px;color:var(--ana-text3);margin-top:2px}
 
 /* ═══ KPI ═══ */
 .ana-root .ana-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
-.ana-root .ana-kpi{border:1px solid var(--ana-border);border-radius:18px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;background:#fff}
+.ana-root .ana-kpi{border:1px solid var(--ana-border);border-radius:18px;padding:20px 22px;display:flex;flex-direction:column;gap:14px;background:#fff;
+  transition:border-color .18s,box-shadow .18s,transform .18s}
+.ana-root .ana-kpi:hover{border-color:#DCD8F7;box-shadow:0 8px 24px -12px rgba(108,92,231,.28);transform:translateY(-1px)}
+/* У цветных KPI своя рамка — сохраняем их оттенок, иначе при наведении они посерели бы. */
+.ana-root .ana-kpi.green:hover{border-color:#C9E7D6;box-shadow:0 8px 24px -12px rgba(30,155,98,.26)}
+.ana-root .ana-kpi.orange:hover{border-color:#EFD6B4;box-shadow:0 8px 24px -12px rgba(217,131,36,.26)}
+.ana-root .ana-kpi.red:hover{border-color:#F0C9C5;box-shadow:0 8px 24px -12px rgba(217,83,74,.26)}
 .ana-root .ana-kpi.green{background:var(--ana-green-card);border-color:var(--ana-green-bd)}
 .ana-root .ana-kpi.orange{background:var(--ana-orange-card);border-color:var(--ana-orange-bd)}
 .ana-root .ana-kpi.red{background:var(--ana-red-card);border-color:var(--ana-red-bd)}
@@ -48,7 +72,11 @@
 
 /* ═══ 3-sütun grid ═══ */
 .ana-root .ana-grid3{display:grid;grid-template-columns:0.9fr 1.35fr 0.9fr;gap:20px;align-items:start}
-.ana-root .ana-card{border:1px solid var(--ana-border);border-radius:18px;padding:22px 24px;background:#fff}
+.ana-root .ana-card{border:1px solid var(--ana-border);border-radius:18px;padding:22px 24px;background:#fff;
+  transition:border-color .18s,box-shadow .18s,transform .18s}
+/* Дизайн-система держит карточки бесшовными, поэтому наведение показываем не тяжёлой
+   тенью, а подсветкой рамки и подъёмом на пиксель. */
+.ana-root .ana-card:hover{border-color:#DCD8F7;box-shadow:0 8px 24px -12px rgba(108,92,231,.28);transform:translateY(-1px)}
 .ana-root .ana-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
 .ana-root .ana-card-h .t{font-size:16px;font-weight:700;letter-spacing:-.4px}
 .ana-root .ana-link{font-size:12.5px;font-weight:600;color:var(--ana-accent);cursor:pointer;display:inline-flex;align-items:center;gap:4px;background:none;border:none;font-family:inherit;padding:0}
@@ -70,9 +98,9 @@
 .ana-root .ana-btn.ghost:hover{background:#E3DFFA}
 
 /* Son giriş edənlər — grid cədvəl (table YOX) */
-.ana-root .ana-thead{display:grid;grid-template-columns:1.6fr 88px 96px;padding-bottom:10px;font-size:11px;color:var(--ana-faint);letter-spacing:.4px;text-transform:uppercase}
+.ana-root .ana-thead{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,88px) minmax(0,96px);padding-bottom:10px;font-size:11px;color:var(--ana-faint);letter-spacing:.4px;text-transform:uppercase}
 .ana-root .ana-thead .r{text-align:right}
-.ana-root .ana-trow{display:grid;grid-template-columns:1.6fr 88px 96px;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--ana-row)}
+.ana-root .ana-trow{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,88px) minmax(0,96px);align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--ana-row)}
 .ana-root .ana-person{display:flex;align-items:center;gap:11px;min-width:0}
 .ana-root .ana-av{width:36px;height:36px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
 .ana-root .ana-av.sm{width:34px;height:34px;font-size:11.5px}
@@ -120,13 +148,31 @@
 .ana-root .ana-chev{color:var(--ana-faint);font-size:18px;flex:0 0 auto}
 
 /* Bu həftəlik statistika */
-.ana-root .ana-chart{display:flex;gap:12px;height:180px}
-.ana-root .ana-yaxis{display:flex;flex-direction:column;justify-content:space-between;font-size:10.5px;color:var(--ana-faint);padding-bottom:20px;text-align:right}
-.ana-root .ana-bars{flex:1;display:flex;align-items:stretch;gap:8px}
-.ana-root .ana-bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px}
+.ana-root .ana-chart{display:flex;gap:12px;height:180px;padding-top:12px}
+.ana-root .ana-yaxis{flex:0 0 auto;display:flex;flex-direction:column;justify-content:space-between;font-size:10.5px;color:var(--ana-faint);padding-bottom:20px;text-align:right}
+.ana-root .ana-bars{flex:1;min-width:0;display:flex;align-items:stretch;gap:8px}
+/* Колонка целиком — зона наведения: попасть курсором в 22-пиксельный столбик трудно. */
+.ana-root .ana-bar-col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;
+  border-radius:10px;padding:4px 2px;transition:background .18s}
+.ana-root .ana-bar-col:hover{background:var(--ana-nav)}
 .ana-root .ana-bar-track{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center}
-.ana-root .ana-bar{width:100%;max-width:22px;border-radius:8px;min-height:6px}
-.ana-root .ana-bar-lbl{font-size:10.5px;color:var(--ana-faint)}
+.ana-root .ana-bar{position:relative;width:100%;max-width:22px;border-radius:8px;min-height:6px;
+  background:var(--ana-accent);transition:background .18s}
+/* Дни без данных приглушены, но при наведении тоже отзываются. */
+.ana-root .ana-bar.dim{background:#E9E7F9}
+.ana-root .ana-bar-col:hover .ana-bar{background:var(--ana-accent-hover)}
+.ana-root .ana-bar-col:hover .ana-bar.dim{background:#D6D1F1}
+.ana-root .ana-bar-lbl{font-size:10.5px;color:var(--ana-faint);transition:color .18s;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ana-root .ana-bar-col:hover .ana-bar-lbl{color:var(--ana-text2);font-weight:600}
+/* Значение всплывает над столбиком — вместо медленной системной подсказки title. */
+.ana-root .ana-bar-tip{position:absolute;bottom:100%;left:50%;margin-bottom:7px;
+  transform:translate(-50%,3px);background:var(--ana-text);color:#fff;font-size:11px;font-weight:700;
+  line-height:1;padding:5px 8px;border-radius:7px;white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .18s,transform .18s;font-variant-numeric:tabular-nums}
+.ana-root .ana-bar-tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:4px solid transparent;border-top-color:var(--ana-text)}
+.ana-root .ana-bar-col:hover .ana-bar-tip{opacity:1;transform:translate(-50%,0)}
 
 @media(max-width:1200px){
   .ana-root .ana-kpis{grid-template-columns:repeat(2,1fr)}

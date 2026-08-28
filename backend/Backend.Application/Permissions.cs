@@ -50,6 +50,10 @@ public static class Permissions
     public const string ParkingManage = "Parking.Manage";
     public const string ParkingOperate = "Parking.Operate";
 
+    // Housing (ЖКХ)
+    public const string HousingView = "Housing.View";
+    public const string HousingManage = "Housing.Manage";
+
     // System administration
     public const string UsersManage = "Users.Manage";
     public const string RolesManage = "Roles.Manage";
@@ -100,6 +104,9 @@ public static class Permissions
         new(ParkingManage, "Parking", "Manage parking", "Edit zones and spaces, tariffs, subscriptions, permits, allow/block lists and the vehicle database."),
         new(ParkingOperate, "Parking", "Operate parking", "Barrier decisions, manual entry, exit and taking payments at the POS."),
 
+        new(HousingView, "Housing", "View housing", "See residents and the housing structure (blocks, entrances, floors)."),
+        new(HousingManage, "Housing", "Manage housing", "Create / edit / delete housing structure nodes and assign residents to them."),
+
         new(UsersManage, "System", "Manage users", "Create / edit / delete system users, reset passwords."),
         new(RolesManage, "System", "Manage roles", "Create / delete roles and assign permissions."),
         new(AuditView, "System", "View audit logs", "Read the system audit log."),
@@ -129,6 +136,8 @@ public static class Permissions
                 CredentialsManage,
                 // Охрана работает со шлагбаумом и справочниками парковки, но не с кассой.
                 ParkingView, ParkingManage, ParkingOperate,
+                // Жильцов охрана видит, но структуру дома не правит.
+                HousingView,
             ],
             [SystemRoles.HrOperator] =
             [
@@ -142,6 +151,7 @@ public static class Permissions
                 GeoZonesManage,
                 PayrollView, PayrollManage,
                 ReportsView,
+                HousingView, HousingManage,
             ],
             // Employee role's access is granted through dedicated /api/self-service/* endpoints,
             // not through the permission catalog.

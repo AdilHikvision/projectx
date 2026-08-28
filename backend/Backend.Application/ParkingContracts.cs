@@ -33,7 +33,19 @@ public sealed record ParkingExitResult(
     Guid? SessionId = null,
     bool Refused = false,
     string? Reason = null,
-    decimal SurchargeDue = 0m);
+    decimal SurchargeDue = 0m,
+    /// <summary>
+    /// Выпустили по белому списку, хотя открытой сессии не было — подрежим
+    /// «выезд по списку». Закрывать нечего, но шлагбаум открыть нужно.
+    /// </summary>
+    bool AllowedWithoutSession = false)
+{
+    /// <summary>
+    /// Открывать ли шлагбаум: закрыта хотя бы одна сессия либо выезд разрешён по списку.
+    /// Одно место вместо повторов «Closed &gt; 0» у каждого вызывающего.
+    /// </summary>
+    public bool BarrierAllowed => !Refused && (Closed > 0 || AllowedWithoutSession);
+}
 
 /// <summary>Единая точка принятия решений о въезде/выезде — общая для API, POS и камер ANPR.</summary>
 public interface IParkingAccessService

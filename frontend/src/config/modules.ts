@@ -36,6 +36,14 @@ export const MODULE_LIST: ModuleDef[] = [
         gradient: 'from-amber-500 to-orange-600',
         available: true,
     },
+    {
+        key: 'housing',
+        nameKey: 'modules.housing',
+        image: '/modules/housing.svg',
+        icon: 'apartment',
+        gradient: 'from-teal-500 to-emerald-600',
+        available: true,
+    },
 ]
 
 export const MODULES: Record<ModuleKey, ModuleDef> = Object.fromEntries(

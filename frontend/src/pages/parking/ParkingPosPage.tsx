@@ -230,6 +230,18 @@ export function ParkingPosPage() {
                   {v.company && <p className="text-xs text-text-light">{t('parking.veh.company')}: <span className="font-bold text-text-dark">{v.company}</span></p>}
                 </div>
               </div>
+            ) : result.found ? (
+              /* Номер известен (стоит внутри, есть визиты, абонемент или запрет), но карточки
+                 в белом списке нет. Писать «не найден» здесь нельзя — кассир только что его нашёл. */
+              <div className="bg-surface rounded-2xl shadow-sm p-5 flex gap-4">
+                <span className="w-28 h-28 rounded-xl bg-background-light flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-4xl text-text-light">directions_car</span>
+                </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="font-mono text-lg font-black text-text-dark">{result.plate}</p>
+                  <p className="text-xs text-text-light">{t('parking.pos.notInWhitelist')}</p>
+                </div>
+              </div>
             ) : (
               <div className="bg-surface rounded-2xl shadow-sm p-5 text-center text-sm text-text-light">
                 {t('parking.pos.unknownVehicle')}
@@ -266,8 +278,10 @@ export function ParkingPosPage() {
                       {['cash', 'card', 'online'].map((m) => <option key={m} value={m}>{t(`parking.hist.pay.${m}`)}</option>)}
                     </select>
                   )}
-                  <Button fullWidth isLoading={paying} onClick={() => void pay()}>
-                    {os.requiresPayment ? t('parking.hist.payAndOpen') : t('parking.hist.openBarrier')}
+                  {/* Касса принимает деньги; шлагбаум на выезде открывает камера, поэтому
+                      кнопка говорит про оплату, а не про шлагбаум. */}
+                  <Button fullWidth icon="payments" isLoading={paying} onClick={() => void pay()}>
+                    {t('parking.pos.acceptPayment')}
                   </Button>
                   {/* Выпуск руками: когда камера не сработала или водитель встал перед шлагбаумом. */}
                   <Button variant="outline" icon="logout" isLoading={releasing} onClick={() => setConfirmRelease(true)}>

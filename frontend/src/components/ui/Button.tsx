@@ -43,7 +43,7 @@ export function Button({
     return (
         <button className={combinedClassName} disabled={disabled || isLoading} {...props}>
             {isLoading ? (
-                <span className="material-symbols-outlined animate-spin text-[13px]">progress_activity</span>
+                <span className="spinner-ring text-[13px]" aria-hidden="true" />
             ) : (
                 icon && <span className="material-symbols-outlined text-[15px]">{icon}</span>
             )}

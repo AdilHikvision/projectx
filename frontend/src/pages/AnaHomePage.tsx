@@ -429,7 +429,11 @@ export function AnaHomePage() {
                 {weekBars.map((w) => (
                   <div className="ana-bar-col" key={w.label}>
                     <div className="ana-bar-track">
-                      <div className="ana-bar" style={{ height: (w.value / weekMax * 100) + '%', background: w.dim ? '#E9E7F9' : '#6C5CE7' }} title={String(w.value)}></div>
+                      {/* Цвет задаётся классом, а не inline-стилем: иначе :hover из CSS
+                          не смог бы его перебить без !important. */}
+                      <div className={`ana-bar${w.dim ? ' dim' : ''}`} style={{ height: (w.value / weekMax * 100) + '%' }}>
+                        <span className="ana-bar-tip">{w.value}</span>
+                      </div>
                     </div>
                     <span className="ana-bar-lbl">{w.label}</span>
                   </div>

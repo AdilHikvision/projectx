@@ -8,11 +8,17 @@ import { PageHeader, Modal } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 import { FaceThumbnail } from '../components/FaceThumbnail'
+import { useModule } from '../context/ModuleContext'
 
 interface EmployeeResponse {
   id: string
   firstName: string
   lastName: string
+  /** 'employee' | 'resident' — жильцы лежат в той же таблице, отличаются только этим полем. */
+  kind?: string
+  apartment?: string | null
+  housingBlockId?: string | null
+  housingBlockName?: string | null
   employeeNo?: string | null
   gender?: string | null
   validFromUtc?: string | null
@@ -52,7 +58,14 @@ interface DepartmentTreeItem {
   companyId?: string | null
 }
 
-type TabType = 'employees' | 'visitors'
+type TabType = 'employees' | 'residents' | 'visitors'
+
+/** Жильцы приходят с того же эндпоинта, что и работники, — разделяет их параметр kind. */
+const TAB_KIND: Record<'employees' | 'residents', string> = { employees: 'employee', residents: 'resident' }
+
+/** Порядок вкладок: в ЖКХ первыми идут жильцы, в остальных модулях их нет вовсе. */
+const TAB_ORDER = (isHousing: boolean): TabType[] =>
+  isHousing ? ['residents', 'employees', 'visitors'] : ['employees', 'visitors']
 
 export function PeopleManagementPage() {
   const { t } = useTranslation()
@@ -60,10 +73,21 @@ export function PeopleManagementPage() {
   const location = useLocation()
   const { token } = useAuth()
   const { startLoading, stopLoading } = useLoading()
-  const [tab, setTab] = useState<TabType>('employees')
+  const { activeModule } = useModule()
+  // Жильцы живут только в модуле ЖКХ: в Workforce их вкладки нет вовсе.
+  const isHousing = activeModule === 'housing'
+  const [selectedTab, setTab] = useState<TabType | null>(null)
+  // Модуль могли переключить, пока открыта вкладка «Жильцы».
+  // Пока пользователь не выбрал вкладку сам, показываем главную для модуля:
+  // в ЖКХ это жильцы, в остальных — работники.
+  const defaultTab: TabType = isHousing ? 'residents' : 'employees'
+  const tab: TabType = selectedTab === null || (!isHousing && selectedTab === 'residents')
+    ? defaultTab
+    : selectedTab
   const [statusFilterEmployees, setStatusFilterEmployees] = useState({ active: true, dismissed: false })
   const [statusFilterVisitors, setStatusFilterVisitors] = useState({ active: true, blocked: false })
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
+  const [residents, setResidents] = useState<EmployeeResponse[]>([])
   const [visitors, setVisitors] = useState<VisitorResponse[]>([])
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -103,12 +127,28 @@ export function PeopleManagementPage() {
     try {
       const params = new URLSearchParams()
       if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      params.set('kind', TAB_KIND.employees)
       const list = await apiRequest<EmployeeResponse[]>(`/api/employees?${params}`, { token })
       setEmployees(list)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('people.errors.loadEmployees'))
     }
   }, [token, searchQuery, t])
+
+  /** Жильцы есть только в режиме ЖКХ — в режиме компании запрос не шлём вовсе. */
+  const loadResidents = useCallback(async () => {
+    if (!token || !isHousing) { setResidents([]); return }
+    setError(null)
+    try {
+      const params = new URLSearchParams()
+      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      params.set('kind', TAB_KIND.residents)
+      const list = await apiRequest<EmployeeResponse[]>(`/api/employees?${params}`, { token })
+      setResidents(list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('people.errors.loadResidents'))
+    }
+  }, [token, searchQuery, isHousing, t])
 
   const loadVisitors = useCallback(async () => {
     if (!token) return
@@ -163,12 +203,13 @@ export function PeopleManagementPage() {
   useEffect(() => {
     if (!token) return
     startLoading()
-    // Always load both on initial or tab change to keep stats accurate
+    // Always load all groups on initial or tab change to keep stats accurate
     Promise.all([
       loadEmployees(),
+      loadResidents(),
       loadVisitors()
     ]).finally(stopLoading)
-  }, [token, loadEmployees, loadVisitors, startLoading, stopLoading])
+  }, [token, loadEmployees, loadResidents, loadVisitors, startLoading, stopLoading])
 
   useEffect(() => {
     const state = location.state as { syncWarning?: string; syncError?: string }
@@ -180,12 +221,15 @@ export function PeopleManagementPage() {
   }, [location.state, location.pathname, navigate])
 
   const activeCount = useMemo(() => {
-    return employees.filter((e) => e.isActive).length + visitors.filter((v) => v.isActive).length
-  }, [employees, visitors])
+    return employees.filter((e) => e.isActive).length
+      + residents.filter((r) => r.isActive).length
+      + visitors.filter((v) => v.isActive).length
+  }, [employees, residents, visitors])
 
   // Добавление вынесено на отдельную страницу /people/new/:type
+  // Вид берём из активной вкладки: с вкладки «Жильцы» заводится жилец.
   function openCreatePage() {
-    navigate(`/people/new/${tab === 'employees' ? 'employee' : 'visitor'}`)
+    navigate(`/people/new/${tab === 'employees' ? 'employee' : tab === 'residents' ? 'resident' : 'visitor'}`)
   }
 
   async function openImportModal() {
@@ -263,7 +307,7 @@ export function PeopleManagementPage() {
         }),
       })
       setImportResult(res)
-      await Promise.all([loadEmployees(), loadVisitors()])
+      await Promise.all([loadEmployees(), loadResidents(), loadVisitors()])
     } catch (e) {
       setError(e instanceof Error ? e.message : t('people.errors.importFailed'))
     } finally {
@@ -273,26 +317,31 @@ export function PeopleManagementPage() {
 
   useEffect(() => { setCurrentPage(1) }, [tab, searchQuery, deptFilter, statusFilterEmployees, statusFilterVisitors])
 
+
   const filteredList = useMemo(() => {
+    // Жилец в маршрутах — тот же 'employee': карточка, биометрия и запись на
+    // устройства у него общие с работником, разделение живёт только в вкладках.
     const raw = tab === 'employees'
       ? employees.map(e => ({ ...e, type: 'employee' as const }))
-      : visitors.map(v => ({ ...v, type: 'visitor' as const }))
-    let result = tab === 'employees'
+      : tab === 'residents'
+        ? residents.map(r => ({ ...r, type: 'employee' as const }))
+        : visitors.map(v => ({ ...v, type: 'visitor' as const }))
+    let result = tab === 'visitors'
       ? raw.filter((item) => {
-          if (item.isActive && statusFilterEmployees.active) return true
-          if (!item.isActive && statusFilterEmployees.dismissed) return true
+          if (item.isActive && statusFilterVisitors.active) return true
+          if (!item.isActive && statusFilterVisitors.blocked) return true
           return false
         })
       : raw.filter((item) => {
-          if (item.isActive && statusFilterVisitors.active) return true
-          if (!item.isActive && statusFilterVisitors.blocked) return true
+          if (item.isActive && statusFilterEmployees.active) return true
+          if (!item.isActive && statusFilterEmployees.dismissed) return true
           return false
         })
     if (deptFilter) {
       result = result.filter(item => item.department?.id === deptFilter)
     }
     return result
-  }, [tab, employees, visitors, statusFilterEmployees, statusFilterVisitors, deptFilter])
+  }, [tab, employees, residents, visitors, statusFilterEmployees, statusFilterVisitors, deptFilter])
 
   const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE))
 
@@ -307,8 +356,8 @@ export function PeopleManagementPage() {
         <div className="p-6 md:p-8 space-y-6">
           <PageHeader
             className="hidden md:flex"
-            title={t('people.title')}
-            description={t('people.description')}
+            title={t(isHousing ? 'people.titleHousing' : 'people.title')}
+            description={t(isHousing ? 'people.descriptionHousing' : 'people.description')}
             actions={
               <div className="flex gap-2">
                 <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
@@ -343,6 +392,12 @@ export function PeopleManagementPage() {
               <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.employees')}</p>
               <p className="text-2xl font-black text-primary leading-none">{employees.length}</p>
             </div>
+            {isHousing && (
+              <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.residents')}</p>
+                <p className="text-2xl font-black text-primary leading-none">{residents.length}</p>
+              </div>
+            )}
             <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
               <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.visitors')}</p>
               <p className="text-2xl font-black text-primary leading-none">{visitors.length}</p>
@@ -352,7 +407,7 @@ export function PeopleManagementPage() {
           <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
             <div className="relative flex-1 max-w-md">
               <Input
-                placeholder={tab === 'employees' ? t('people.searchEmployees') : t('people.searchVisitors')}
+                placeholder={tab === 'employees' ? t('people.searchEmployees') : tab === 'residents' ? t('people.searchResidents') : t('people.searchVisitors')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 icon="search"
@@ -364,8 +419,8 @@ export function PeopleManagementPage() {
             </div>
           </div>
 
-          {/* Department filter */}
-          {departments.length > 0 && (
+          {/* Department filter — у жильца отдела нет, фильтр обнулил бы список. */}
+          {tab !== 'residents' && departments.length > 0 && (
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-black text-text-light uppercase tracking-widest shrink-0">{t('people.departmentLabel')}</span>
               <select
@@ -384,7 +439,7 @@ export function PeopleManagementPage() {
           {/* Status filter */}
           <div className="flex flex-wrap items-center gap-4">
             <span className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('people.statusLabel')}</span>
-            {tab === 'employees' ? (
+            {tab !== 'visitors' ? (
               <>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -429,22 +484,19 @@ export function PeopleManagementPage() {
             )}
           </div>
 
-          {/* Tabs */}
+          {/* Tabs. Вкладка жильцов есть только в модуле ЖКХ и стоит там первой:
+              жильцов в доме больше, чем работников МТК. */}
           <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-border-light">
-            <button
-              onClick={() => setTab('employees')}
-              className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'employees' ? 'border-primary text-primary' : 'border-transparent text-text-light'
-                }`}
-            >
-              {t('people.employees')}
-            </button>
-            <button
-              onClick={() => setTab('visitors')}
-              className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === 'visitors' ? 'border-primary text-primary' : 'border-transparent text-text-light'
-                }`}
-            >
-              {t('people.visitors')}
-            </button>
+            {TAB_ORDER(isHousing).map((key) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === key ? 'border-primary text-primary' : 'border-transparent text-text-light'
+                  }`}
+              >
+                {t(`people.${key}`)}
+              </button>
+            ))}
           </div>
 
           {/* List Layout */}
@@ -463,8 +515,14 @@ export function PeopleManagementPage() {
                   fingerprints: item.fingerprintsCount,
                   irises: item.irisesCount ?? 0,
                 })
+                const address = [
+                  'housingBlockName' in item && item.housingBlockName ? item.housingBlockName : null,
+                  'apartment' in item && item.apartment ? t('people.apartmentShort', { value: item.apartment }) : null,
+                ].filter(Boolean).join(' · ')
                 const subtitle =
-                  item.type === 'employee'
+                  tab === 'residents'
+                    ? (address ? `${address} · ${credLine}` : credLine)
+                    : item.type === 'employee'
                     ? credLine
                     : t('people.validSubtitle', {
                         from: item.validFromUtc?.slice(0, 10) || '—',

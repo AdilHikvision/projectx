@@ -87,10 +87,11 @@
     "pickerSubtitle": "Выберите, с какой частью платформы вы хотите работать",
     "soon": "Скоро",
     "active": "Активен",
-    "workforce": "Workforce Management",
+    "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Housing & Utility Management"
+    "housing": "Aktiv MTK",
+    "workforceSubtitle": "Attendance Management"
   },
   "parking": {
     "subtitle": "Зоны, этажи, ряды и парковочные места",
@@ -403,6 +404,8 @@
       "whitelisted": "В белом списке",
       "permitActive": "В белом списке, лицензия действует",
       "unknownVehicle": "Номер не найден в базе — неизвестный автомобиль.",
+      "notInWhitelist": "Нет в белом списке",
+      "acceptPayment": "Принять оплату",
       "insideNow": "Сейчас на парковке",
       "notInside": "Сейчас не на парковке.",
       "recentVisits": "Последние визиты",
@@ -419,8 +422,9 @@
         "full": "нет свободных мест",
         "empty-plate": "номер не указан",
         "holder-spaces-busy": "все места владельца заняты",
-        "no-permit": "нет действующего пропуска",
-        "not-in-vehicles": "машины нет в базе",
+        "not-in-whitelist": "машины нет в белом списке",
+        "license-expired": "лицензия истекла",
+        "wrong-zone": "нет доступа в эту зону",
         "already-inside": "уже на парковке"
       },
       "debt": "Долг",
@@ -445,6 +449,11 @@
       "subModeCapacity": "По местам",
       "subModeListHint": "«По белому списку» — проезжают только машины из белого списка с непросроченной лицензией",
       "subModeCapacityHint": "«По местам» — проезжают все, пока есть свободные места",
+      "listExitMode": "Выезд в режиме «по белому списку»",
+      "listExitSession": "По сессии",
+      "listExitList": "По списку",
+      "listExitSessionHint": "«По сессии» — выпускаем только машину, которая числится заехавшей",
+      "listExitListHint": "«По списку» — выпускаем любую машину из белого списка, заехала она или нет",
       "commonSpaces": "Обычные места (свободно / всего)",
       "vipSpaces": "VIP-места (свободно / всего)",
       "reasonAny": "Причина —",
@@ -1178,6 +1187,7 @@
     "monitoring": "Мониторинг",
     "accessLevels": "Уровни доступа",
     "workHours": "Отчет по рабочему времени",
+    "authRecords": "Записи аутентификации",
     "schedulePlanner": "Планировщик смен",
     "approvals": "Согласования",
     "geoZones": "Гео-зоны",
@@ -1186,7 +1196,8 @@
     "systemStatus": "Статус системы",
     "system": "СИСТЕМА",
     "devices": "Устройства",
-    "access": "ДОСТУП"
+    "access": "ДОСТУП",
+    "peopleAndResidents": "Жильцы и работники"
   },
   "topBar": {
     "searchPages": "Поиск страниц...",
@@ -1215,7 +1226,16 @@
       "geoZones": "гео зоны местоположение геозабор радиус",
       "payroll": "зарплата расчёт периоды переработка вычеты",
       "settings": "настройки конфигурация система общие",
-      "systemStatus": "статус системы устройства логи здоровье"
+      "systemStatus": "статус системы устройства логи здоровье",
+      "parkingManagement": "управление парковкой места зоны",
+      "parkingVehicles": "белый список транспорт машины номера",
+      "parkingHolders": "владельцы мест жильцы абоненты",
+      "parkingBlacklist": "чёрный список заблокированные транспорт",
+      "parkingPos": "касса пос оплата расчёт",
+      "parkingTariffs": "тарифы цены ставки почасовой абонемент",
+      "parkingHistory": "история въезды выезды журнал события",
+      "parkingReports": "отчёты статистика парковка выручка",
+      "residents": "жильцы жители квартира блок корпус дом жкх"
     }
   },
   "auth": {
@@ -1557,7 +1577,8 @@
       "deviceSyncErrors": "Ошибки синхронизации устройств:",
       "saveFailed": "Не удалось сохранить",
       "importFailed": "Не удалось импортировать",
-      "firstNameRequired": "Сначала введите имя."
+      "firstNameRequired": "Сначала введите имя.",
+      "loadResidents": "Не удалось загрузить жильцов"
     },
     "createPageHint": "Заполните данные, добавьте фото и биометрию.",
     "finish": "Готово",
@@ -1587,7 +1608,21 @@
       "terminals": "Терминалы",
       "enrollers": "Станции регистрации",
       "readCardFromDevice": "Считать карту с устройства"
-    }
+    },
+    "titleHousing": "Жильцы и работники",
+    "descriptionHousing": "Управляйте жильцами, работниками МТК, посетителями и их учётными данными доступа.",
+    "residents": "Жильцы",
+    "searchResidents": "Поиск жильцов...",
+    "addResident": "Добавить жильца",
+    "personKind": "Тип записи",
+    "kindEmployee": "Работник",
+    "kindResident": "Жилец",
+    "kindVisitor": "Посетитель",
+    "apartment": "Квартира",
+    "block": "Блок / корпус",
+    "apartmentPlaceholder": "Напр. 42",
+    "apartmentShort": "кв. {{value}}",
+    "noHousingBlocks": "Структура пуста — добавьте блоки в настройках."
   },
   "schedulePlanner": {
     "searchEmployees": "Поиск сотрудников…",
@@ -2604,7 +2639,8 @@
       "users": "Пользователи",
       "roles": "Роли",
       "debugLogs": "Журналы отладки",
-      "criteria": "Правила табеля"
+      "criteria": "Правила табеля",
+      "housing": "Структура ЖКХ"
     },
     "criteria": {
       "heading": "Правила табеля / Критерии посещаемости",
@@ -2961,5 +2997,53 @@
     "parkingPaid": "Платная",
     "parkingFreeHint": "Оплата не взимается, въезд по спискам или по свободным местам. Страницы тарифов и кассы скрыты.",
     "parkingPaidHint": "Стоянка тарифицируется, доступны тарифы, абонементы и касса."
+  },
+  "housing": {
+    "subtitle": "Жилой комплекс",
+    "structureTitle": "Структура ЖКХ",
+    "structureHint": "Комплекс → корпус → подъезд → этаж. Блок жильца выбирается из этого дерева.",
+    "addBlock": "Добавить блок",
+    "addChild": "Добавить вложенный блок",
+    "editBlock": "Изменить блок",
+    "deleteBlock": "Удалить блок",
+    "deleteConfirm": "Удалить блок «{{name}}»?",
+    "deleteResidentsWarning": "В блоке {{count}} жильц(ев) — они останутся без блока.",
+    "blockName": "Название блока",
+    "blockNamePlaceholder": "Напр. Корпус A",
+    "blockDescription": "Описание",
+    "parentBlock": "Родительский блок",
+    "parentLabel": "Внутри: {{name}}",
+    "noParent": "В корне",
+    "residentsInBlock": "Жильцов в блоке",
+    "empty": "Структура пуста — добавьте первый блок.",
+    "errors": {
+      "load": "Не удалось загрузить структуру",
+      "save": "Не удалось сохранить блок",
+      "delete": "Не удалось удалить блок"
+    }
+  },
+  "authRecords": {
+    "pageTitle": "Записи аутентификации",
+    "pageDescription": "Аутентификации на устройствах за выбранный день.",
+    "person": "Человек",
+    "refresh": "Обновить",
+    "recordsCount": "{{count}} записей",
+    "recordsCount_one": "{{count}} запись",
+    "recordsCount_few": "{{count}} записи",
+    "recordsCount_many": "{{count}} записей",
+    "empty": "За выбранный день записей нет.",
+    "colName": "Имя и фамилия",
+    "colDate": "Дата",
+    "colDevice": "Устройство",
+    "colTime": "Время",
+    "pickPersonTitle": "Выбор человека",
+    "allResidents": "Все жильцы",
+    "allBlocks": "Все блоки",
+    "wholeBlock": "весь блок",
+    "selectWholeBlock": "Выбрать весь блок ({{count}})",
+    "blockSearchPlaceholder": "Поиск блока…",
+    "residentSearchPlaceholder": "Поиск жильца…",
+    "noResidentsInBlock": "В этом блоке нет жильцов.",
+    "apartmentShort": "кв."
   }
 }

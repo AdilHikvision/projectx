@@ -64,10 +64,13 @@ public sealed class EmailService(IServiceScopeFactory scopeFactory, ILogger<Emai
         }
     }
 
-    public async Task<bool> TestConnectionAsync(string to, CancellationToken cancellationToken = default)
+    public async Task<EmailTestResult> TestConnectionAsync(string to, SmtpTestOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var cfg = await LoadSettingsAsync(cancellationToken);
-        if (cfg is null) return false;
+        var cfg = options is null
+            ? await LoadSettingsAsync(cancellationToken)
+            : ToSmtpSettings(options);
+        if (cfg is null)
+            return new EmailTestResult(false, "SMTP is disabled or not configured. Check Enabled, Host, and From address.");
         try
         {
             using var client = BuildClient(cfg);
@@ -80,13 +83,37 @@ public sealed class EmailService(IServiceScopeFactory scopeFactory, ILogger<Emai
             };
             msg.To.Add(to);
             await client.SendMailAsync(msg, cancellationToken);
-            return true;
+            return new EmailTestResult(true);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "SMTP test failed");
-            return false;
+            return new EmailTestResult(false, GetSafeErrorMessage(ex));
         }
+    }
+
+    private static SmtpSettings? ToSmtpSettings(SmtpTestOptions options)
+    {
+        if (!options.Enabled || string.IsNullOrWhiteSpace(options.Host) || string.IsNullOrWhiteSpace(options.FromAddress))
+            return null;
+        return new SmtpSettings
+        {
+            Host = options.Host,
+            Port = options.Port > 0 ? options.Port : 587,
+            Username = options.Username ?? "",
+            Password = options.Password ?? "",
+            FromAddress = options.FromAddress,
+            FromName = string.IsNullOrWhiteSpace(options.FromName) ? "ProjectX" : options.FromName,
+            EnableSsl = options.EnableSsl
+        };
+    }
+
+    private static string GetSafeErrorMessage(Exception ex)
+    {
+        var message = ex is SmtpException smtpException && smtpException.InnerException is not null
+            ? smtpException.InnerException.Message
+            : ex.Message;
+        return $"SMTP send failed: {message}";
     }
 
     private static SmtpClient BuildClient(SmtpSettings cfg)

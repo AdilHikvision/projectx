@@ -1234,7 +1234,7 @@ function Empty({ icon, text }: { icon: string; text: string }) {
 function Spinner() {
     return (
         <div className="flex items-center justify-center py-16">
-            <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+            <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
         </div>
     )
 }

@@ -766,7 +766,7 @@ function Empty({ icon, text }: { icon: string; text: string }) {
     )
 }
 function Spinner() {
-    return <div className="flex items-center justify-center py-16"><span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span></div>
+    return <div className="flex items-center justify-center py-16"><span className="spinner-ring text-3xl text-primary" aria-hidden="true" /></div>
 }
 function Pill({ children, className = '' }: { children: React.ReactNode; className?: string }) {
     return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${className}`}>{children}</span>

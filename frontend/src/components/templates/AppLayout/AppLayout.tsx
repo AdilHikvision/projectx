@@ -27,6 +27,7 @@ const ROUTE_META: Record<string, RouteMeta> = {
     '/people': { titleKey: 'nav.people', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.addPeople', actionIcon: 'person_add', searchPlaceholderKey: 'topBar.searchPeople' },
     '/access-levels': { titleKey: 'nav.accessLevels', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.createPolicy', actionIcon: 'add', searchPlaceholderKey: 'topBar.searchPolicies' },
     '/work-hours': { titleKey: 'nav.workHours', breadcrumbKey: 'nav.dashboard', actionTextKey: 'topBar.exportReport', actionIcon: 'download', searchPlaceholderKey: 'topBar.searchAttendance' },
+    '/authentication-records': { titleKey: 'nav.authRecords', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/approvals': { titleKey: 'nav.approvals', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchRequests' },
     '/schedule-planner': { titleKey: 'nav.schedulePlanner', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/geo-zones': { titleKey: 'nav.geoZones', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'topBar.searchZones' },

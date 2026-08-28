@@ -26,6 +26,7 @@ const PersonCreatePage = lazy(() => named(import('./pages/PersonCreatePage'), 'P
 const SystemSettingsPage = lazy(() => named(import('./pages/SystemSettingsPage'), 'SystemSettingsPage'))
 const SystemStatusPage = lazy(() => named(import('./pages/SystemStatusPage'), 'SystemStatusPage'))
 const WorkHoursTrackingPage = lazy(() => named(import('./pages/WorkHoursTrackingPage'), 'WorkHoursTrackingPage'))
+const AuthenticationRecordsPage = lazy(() => named(import('./pages/AuthenticationRecordsPage'), 'AuthenticationRecordsPage'))
 const SchedulePlannerPage = lazy(() => named(import('./pages/SchedulePlannerPage'), 'SchedulePlannerPage'))
 const AttendanceApprovalsPage = lazy(() => named(import('./pages/AttendanceApprovalsPage'), 'AttendanceApprovalsPage'))
 const GeoZonesPage = lazy(() => named(import('./pages/GeoZonesPage'), 'GeoZonesPage'))
@@ -100,6 +101,7 @@ function App() {
           <Route path="/access-levels" element={<AccessLevelsPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/work-hours" element={<WorkHoursTrackingPage />} />
+          <Route path="/authentication-records" element={<AuthenticationRecordsPage />} />
           <Route path="/schedule-planner" element={<SchedulePlannerPage />} />
           <Route path="/approvals" element={<AttendanceApprovalsPage />} />
           <Route path="/geo-zones" element={<GeoZonesPage />} />

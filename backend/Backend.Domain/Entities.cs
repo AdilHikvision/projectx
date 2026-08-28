@@ -99,6 +99,21 @@ public sealed class Department : BaseEntity
     public ICollection<Visitor> Visitors { get; set; } = new List<Visitor>();
 }
 
+/// <summary>Узел структуры ЖКХ: комплекс, корпус, подъезд, этаж — глубина произвольная,
+/// как у департаментов. Жилец привязывается к листу или к любому узлу выше.</summary>
+public sealed class HousingBlock : BaseEntity
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public int SortOrder { get; set; }
+
+    public Guid? ParentId { get; set; }
+    public HousingBlock? Parent { get; set; }
+    public ICollection<HousingBlock> Children { get; set; } = new List<HousingBlock>();
+
+    public ICollection<Employee> Residents { get; set; } = new List<Employee>();
+}
+
 /// <summary>Должность (vəzifə) — плоский справочник, назначается сотруднику.</summary>
 public sealed class Position : BaseEntity
 {
@@ -132,8 +147,26 @@ public sealed class AccessLevelDoor
     public int DoorIndex { get; set; }
 }
 
+/// <summary>Кто эта запись в таблице Employees. Жилец живёт здесь же, а не отдельной
+/// сущностью: на устройство он уходит тем же normal user, что и работник, и пользуется
+/// теми же картами, лицами, отпечатками и уровнями доступа. Отличает их только вкладка.</summary>
+public enum PersonKind
+{
+    /// <summary>Штатный работник — режим «Компания» и обычный набор функций.</summary>
+    Employee = 0,
+    /// <summary>Жилец — только режим ЖКХ. В табель, смены и зарплату не попадает.</summary>
+    Resident = 1,
+}
+
 public sealed class Employee : BaseEntity
 {
+    /// <summary>Работник или жилец. Разделение вкладок «Работники»/«Жильцы» идёт по этому полю.</summary>
+    public PersonKind Kind { get; set; } = PersonKind.Employee;
+    /// <summary>ЖКХ: номер квартиры. Только для Kind = Resident.</summary>
+    public string? Apartment { get; set; }
+    /// <summary>ЖКХ: узел структуры (корпус/подъезд). Только для Kind = Resident.</summary>
+    public Guid? HousingBlockId { get; set; }
+    public HousingBlock? HousingBlock { get; set; }
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Генерируется системой автоматически из Id.</summary>

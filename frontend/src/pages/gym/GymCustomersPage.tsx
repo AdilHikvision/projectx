@@ -396,7 +396,7 @@ export function GymCustomersPage() {
 
                         {loading ? (
                             <div className="flex items-center justify-center py-16">
-                                <span className="material-symbols-outlined animate-spin text-3xl text-primary">progress_activity</span>
+                                <span className="spinner-ring text-3xl text-primary" aria-hidden="true" />
                             </div>
                         ) : filtered.length === 0 ? (
                             <div className="flex flex-col items-center justify-center gap-2 py-16 text-text-light">
@@ -550,7 +550,7 @@ export function GymCustomersPage() {
                         <p className="text-[10px] font-black uppercase tracking-widest text-text-light">{t('gym.memberships.title')}</p>
                         {mLoading ? (
                             <div className="flex items-center justify-center py-8">
-                                <span className="material-symbols-outlined animate-spin text-2xl text-primary">progress_activity</span>
+                                <span className="spinner-ring text-2xl text-primary" aria-hidden="true" />
                             </div>
                         ) : memberships.length === 0 ? (
                             <p className="py-4 text-center text-sm text-text-light">{t('gym.memberships.none')}</p>

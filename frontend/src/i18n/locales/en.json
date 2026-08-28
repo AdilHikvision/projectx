@@ -87,10 +87,11 @@
     "pickerSubtitle": "Choose which part of the platform you want to work in",
     "soon": "Soon",
     "active": "Active",
-    "workforce": "Workforce Management",
+    "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Housing & Utility Management"
+    "housing": "Aktiv MTK",
+    "workforceSubtitle": "Attendance Management"
   },
   "parking": {
     "subtitle": "Zones, floors, rows and parking spaces",
@@ -401,6 +402,8 @@
       "whitelisted": "Whitelisted",
       "permitActive": "Whitelisted, licence valid",
       "unknownVehicle": "Plate not in database — unknown vehicle.",
+      "notInWhitelist": "Not in the whitelist",
+      "acceptPayment": "Accept payment",
       "insideNow": "Currently parked",
       "notInside": "Not currently parked.",
       "recentVisits": "Recent visits",
@@ -417,8 +420,9 @@
         "full": "no free spaces",
         "empty-plate": "plate is empty",
         "holder-spaces-busy": "all holder spaces are taken",
-        "no-permit": "no valid permit",
-        "not-in-vehicles": "vehicle is not in the database",
+        "not-in-whitelist": "vehicle is not in the whitelist",
+        "license-expired": "licence has expired",
+        "wrong-zone": "no access to this zone",
         "already-inside": "already inside"
       },
       "debt": "Debt",
@@ -443,6 +447,11 @@
       "subModeCapacity": "By capacity",
       "subModeListHint": "“By whitelist” — only whitelisted vehicles with a valid licence get in",
       "subModeCapacityHint": "“By capacity” — everyone gets in while spaces last",
+      "listExitMode": "Exit in “By whitelist” mode",
+      "listExitSession": "By session",
+      "listExitList": "By list",
+      "listExitSessionHint": "“By session” — only a car recorded as being inside is let out",
+      "listExitListHint": "“By list” — any car on the whitelist is let out, whether it entered or not",
       "commonSpaces": "Regular spaces (free / total)",
       "vipSpaces": "VIP spaces (free / total)",
       "reasonAny": "Reason —",
@@ -1171,6 +1180,7 @@
     "monitoring": "Monitoring",
     "accessLevels": "Access Levels",
     "workHours": "Attendance report",
+    "authRecords": "Authentication records",
     "schedulePlanner": "Schedule Planner",
     "approvals": "Approvals",
     "geoZones": "Geo-zones",
@@ -1179,7 +1189,8 @@
     "systemStatus": "System Status",
     "system": "SYSTEM",
     "devices": "Devices",
-    "access": "ACCESS"
+    "access": "ACCESS",
+    "peopleAndResidents": "Residents & staff"
   },
   "topBar": {
     "searchPages": "Search pages...",
@@ -1208,7 +1219,16 @@
       "geoZones": "geo zones location geofence radius",
       "payroll": "payroll salary calculation periods overtime deductions",
       "settings": "settings configuration system global",
-      "systemStatus": "system status devices logs health"
+      "systemStatus": "system status devices logs health",
+      "parkingManagement": "parking management spaces zones lots",
+      "parkingVehicles": "whitelist vehicles cars plates",
+      "parkingHolders": "space holders residents subscribers",
+      "parkingBlacklist": "blacklist blocked vehicles banned",
+      "parkingPos": "pos checkout cashier payment",
+      "parkingTariffs": "tariffs prices rates hourly subscription",
+      "parkingHistory": "history entries exits log events",
+      "parkingReports": "reports statistics parking revenue",
+      "residents": "residents tenants apartment flat block building"
     }
   },
   "auth": {
@@ -1546,7 +1566,8 @@
       "deviceSyncErrors": "Device synchronization errors:",
       "saveFailed": "Save failed",
       "importFailed": "Import failed",
-      "firstNameRequired": "Enter the first name first."
+      "firstNameRequired": "Enter the first name first.",
+      "loadResidents": "Failed to load residents"
     },
     "createPageHint": "Fill in the details, add a photo and biometrics.",
     "finish": "Finish",
@@ -1576,7 +1597,21 @@
       "terminals": "Terminals",
       "enrollers": "Enrollment stations",
       "readCardFromDevice": "Read card from device"
-    }
+    },
+    "titleHousing": "Residents & staff",
+    "descriptionHousing": "Manage residents, building staff, visitors, and their security credentials.",
+    "residents": "Residents",
+    "searchResidents": "Search residents...",
+    "addResident": "Add resident",
+    "personKind": "Record type",
+    "kindEmployee": "Employee",
+    "kindResident": "Resident",
+    "kindVisitor": "Visitor",
+    "apartment": "Apartment",
+    "block": "Block / building",
+    "apartmentPlaceholder": "e.g. 42",
+    "apartmentShort": "apt. {{value}}",
+    "noHousingBlocks": "The structure is empty — add blocks in settings."
   },
   "schedulePlanner": {
     "searchEmployees": "Search employees…",
@@ -2589,7 +2624,8 @@
       "users": "Users",
       "roles": "Roles",
       "debugLogs": "Debug Logs",
-      "criteria": "Timesheet rules"
+      "criteria": "Timesheet rules",
+      "housing": "Housing structure"
     },
     "criteria": {
       "heading": "Timesheet rules / Attendance criteria",
@@ -2946,5 +2982,51 @@
     "parkingPaid": "Paid",
     "parkingFreeHint": "No charge; entry by lists or free spaces. Tariff and POS pages stay hidden.",
     "parkingPaidHint": "Parking is charged; tariffs, subscriptions and the POS are available."
+  },
+  "housing": {
+    "subtitle": "Residential complex",
+    "structureTitle": "Housing structure",
+    "structureHint": "Complex → building → entrance → floor. A resident’s block is picked from this tree.",
+    "addBlock": "Add block",
+    "addChild": "Add a nested block",
+    "editBlock": "Edit block",
+    "deleteBlock": "Delete block",
+    "deleteConfirm": "Delete the block “{{name}}”?",
+    "deleteResidentsWarning": "This block has {{count}} resident(s) — they will be left without a block.",
+    "blockName": "Block name",
+    "blockNamePlaceholder": "e.g. Building A",
+    "blockDescription": "Description",
+    "parentBlock": "Parent block",
+    "parentLabel": "Inside: {{name}}",
+    "noParent": "At the root",
+    "residentsInBlock": "Residents in this block",
+    "empty": "The structure is empty — add the first block.",
+    "errors": {
+      "load": "Failed to load the housing structure",
+      "save": "Failed to save the block",
+      "delete": "Failed to delete the block"
+    }
+  },
+  "authRecords": {
+    "pageTitle": "Authentication records",
+    "pageDescription": "Device authentications for the selected day.",
+    "person": "Person",
+    "refresh": "Refresh",
+    "recordsCount": "{{count}} records",
+    "recordsCount_one": "{{count}} record",
+    "empty": "No authentications for the selected day.",
+    "colName": "Name",
+    "colDate": "Date",
+    "colDevice": "Device",
+    "colTime": "Time",
+    "pickPersonTitle": "Select person",
+    "allResidents": "All residents",
+    "allBlocks": "All blocks",
+    "wholeBlock": "whole block",
+    "selectWholeBlock": "Select whole block ({{count}})",
+    "blockSearchPlaceholder": "Search block…",
+    "residentSearchPlaceholder": "Search resident…",
+    "noResidentsInBlock": "No residents in this block.",
+    "apartmentShort": "apt."
   }
 }
