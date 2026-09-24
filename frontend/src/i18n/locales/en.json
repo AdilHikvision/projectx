@@ -1361,7 +1361,8 @@
       "latitude": "Latitude",
       "longitude": "Longitude",
       "radiusMeters": "Radius (m)"
-    }
+    },
+    "insecureContextHint": "Over http on a network address the browser blocks geolocation: enter the coordinates manually or open the site over https."
   },
   "systemStatus": {
     "title": "Operational Integrity",
@@ -1579,9 +1580,12 @@
       "source": {
         "file": "File",
         "webcam": "Camera",
-        "device": "Terminal"
+        "device": "Device"
       },
-      "selectDevice": "Select terminal",
+      "device": "Device",
+      "selectDevice": "Select device",
+      "fingerprintDevice": "Device to enrol fingerprint",
+      "cardDevice": "Device to read card",
       "selectDeviceHint": "Pick a terminal or enrollment station first to capture from a device.",
       "addFace": "Add face",
       "dataTitle": "Biometric data",
@@ -1596,7 +1600,44 @@
       "noAccessLevelNote": "No access level yet: biometrics are stored in the database only. They will be pushed to terminals once an access level is assigned.",
       "terminals": "Terminals",
       "enrollers": "Enrollment stations",
-      "readCardFromDevice": "Read card from device"
+      "readCardFromDevice": "Read card from device",
+      "capture": {
+        "status": {
+          "starting": "Starting capture…",
+          "capturing": "Capturing…",
+          "completed": "Done",
+          "failed": "Failed",
+          "idle": "No active capture session"
+        },
+        "deviceNotFound": "Device not found.",
+        "employeeNotFound": "Employee not found.",
+        "visitorNotFound": "Visitor not found.",
+        "customerNotFound": "Customer not found.",
+        "sessionNotFound": "Capture session not found. Start the capture again.",
+        "captureTimeout": "Capture timed out.",
+        "faceCaptured": "Face captured. Save the profile to send it to the devices.",
+        "faceCapturedNoImage": "Face captured on the device, but no image was returned — add a photo from the computer.",
+        "fingerprintCaptured": "Fingerprint captured.",
+        "cardCaptured": "Card read and added.",
+        "enrollerFacePrompt": "Look into the enrollment station camera…",
+        "enrollerCardPrompt": "Hold the card to the enrollment station reader…",
+        "enrollerFingerPrompt": "Put your finger on the enrollment station scanner…",
+        "enrollerFaceTimeout": "Timed out: the enrollment station did not capture a face.",
+        "enrollerCardTimeout": "Timed out: no card was presented to the reader.",
+        "enrollerFingerTimeout": "Timed out: no finger was placed on the scanner.",
+        "enrollerRestarted": "Capture interrupted: a new capture was started on the station.",
+        "faceCaptureFailed": "Face capture failed.",
+        "faceStartFailed": "Could not start face capture.",
+        "cardReadFailed": "Could not read the card.",
+        "cardNotRead": "The card was not read. Present the card and try again.",
+        "cardCaptureUnsupported": "This device cannot capture cards. Add the card manually.",
+        "fingerprintPrompt": "Put your finger on the device reader…",
+        "fingerprintReadFailed": "Could not read the fingerprint. Try again.",
+        "fingerprintBadFormat": "Invalid fingerprint data format.",
+        "fingerprintEmptyTemplate": "Empty fingerprint template.",
+        "fingerprintTimeout": "Capture timed out (120 seconds). Place your finger faster.",
+        "fingerprintNoResponse": "The device did not respond to the fingerprint capture request."
+      }
     },
     "titleHousing": "Residents & staff",
     "descriptionHousing": "Manage residents, building staff, visitors, and their security credentials.",
@@ -2379,7 +2420,8 @@
       "namesRequired": "First and last name are required",
       "saveFailed": "Save failed",
       "deleteProfileFailed": "Failed to delete profile",
-      "cameraAccess": "Could not access the camera"
+      "cameraAccess": "Could not access the camera",
+      "cameraInsecureContext": "The camera works only over a secure connection (https or localhost). Over http on a network address the browser denies camera access — add the photo from the computer or capture it on the enrollment station."
     },
     "employeeProfileHint": "Employee card: details, photo and biometrics.",
     "visitorProfileHint": "Visitor card: details, photo and biometrics.",
@@ -3099,5 +3141,38 @@
       "telegram": "Telegram",
       "email": "Email"
     }
+  },
+  "peoplePicker": {
+    "multiSelect": "Multiple",
+    "singleHint": "Pick a person or tick groups. To pick several people turn on \"Multiple\".",
+    "multiHint": "Tick people and groups — people from different groups can be combined.",
+    "groupSearch": "Search group…",
+    "personSearch": "Search person…",
+    "allGroups": "All groups",
+    "allPeople": "All",
+    "noneInGroup": "Nobody in this group",
+    "selectWholeGroup": "Select whole group ({{count}})",
+    "unselectWholeGroup": "Unselect this group",
+    "selected": "Selected: {{people}} people, {{groups}} groups",
+    "nothingSelected": "Nothing selected",
+    "clear": "Clear"
+  },
+  "accessLevelPeople": {
+    "title": "People on \"{{name}}\"",
+    "open": "People",
+    "edit": "Edit",
+    "count": "People: {{count}}",
+    "empty": "Nobody is assigned to this level yet.",
+    "add": "Add people",
+    "addTitle": "Who gets this access level",
+    "remove": "Remove level",
+    "removeConfirm": "Remove this access level from \"{{name}}\"?",
+    "added": "Added: {{count}}",
+    "alreadyAssigned": "Already assigned: {{count}}",
+    "syncWarnings": "Device sync warnings:",
+    "loadFailed": "Failed to load the people list",
+    "saveFailed": "Failed to change the assignments",
+    "kindEmployee": "Employee",
+    "kindResident": "Student"
   }
 }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
-import { PageHeader, Modal } from '../components/organisms'
+import { PageHeader, Modal, PeoplePicker } from '../components/organisms'
 import { Pagination, usePageReset, pageSlice, PAGE_SIZE } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
@@ -49,7 +49,8 @@ function mhMonthLabel(ym: string, lang: string): string {
   } catch { return ym }
 }
 
-function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string; employeeId?: string; departmentId?: string }) {
+// filterQuery — готовый фильтр людей страницы: employeeIds и departmentIds.
+function MonthlyHoursTable({ month, filterQuery }: { month: string; filterQuery: string }) {
   const { t, i18n } = useTranslation()
   const { token } = useAuth()
   const mhMonth = month
@@ -57,7 +58,7 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
   const [mhLoading, setMhLoading] = useState(true)
   const [mhError, setMhError] = useState('')
   // Ay və ya filtr dəyişəndə səhifə birinciyə qayıdır.
-  const [mhPage, setMhPage] = usePageReset(`${month}|${employeeId ?? ''}|${departmentId ?? ''}`)
+  const [mhPage, setMhPage] = usePageReset(`${month}|${filterQuery}`)
   const [mhCrit, setMhCrit] = useState<AttCriterion[]>(() => {
     try { const c = localStorage.getItem('projectx.attCriteria'); if (c) { const p = JSON.parse(c); if (Array.isArray(p) && p.length) return p } } catch { /* noop */ }
     return MH_CRIT_DEFAULTS
@@ -82,10 +83,9 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
     let cancelled = false
     setMhLoading(true)
     setMhError('')
-    // Фильтр уходит на сервер: отдел разворачивается в поддерево, как в других отчётах.
-    const params = new URLSearchParams({ month: mhMonth })
-    if (employeeId) params.set('employeeId', employeeId)
-    else if (departmentId) params.set('departmentId', departmentId)
+    // Фильтр уходит на сервер: каждый отдел разворачивается в поддерево, как в других отчётах.
+    const params = new URLSearchParams(filterQuery)
+    params.set('month', mhMonth)
     apiRequest<MhApiResponse>(`/api/reports/work-hours/monthly?${params}`, { token })
       .then((res) => {
         if (cancelled) return
@@ -98,7 +98,7 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
       })
       .finally(() => { if (!cancelled) setMhLoading(false) })
     return () => { cancelled = true }
-  }, [mhMonth, token, t, employeeId, departmentId])
+  }, [mhMonth, token, t, filterQuery])
 
   const nDays = mhDaysInMonth(mhMonth)
   const rows = mhData
@@ -613,24 +613,31 @@ export function WorkHoursTrackingPage() {
 
   // Filters
   const [employees, setEmployees] = useState<Employee[]>([])
-  const [filterEmployee, setFilterEmployee] = useState('')
-  // Фильтр «весь отдел» (id отдела): взаимоисключающ с filterEmployee.
-  const [filterDepartment, setFilterDepartment] = useState('')
+  // Люди и отделы выбираются вместе: сервер объединяет списки, поэтому можно взять
+  // отдел целиком и вдобавок отдельных людей из других отделов.
+  const [filterEmployees, setFilterEmployees] = useState<string[]>([])
+  const [filterDepartments, setFilterDepartments] = useState<string[]>([])
   // Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела.
   const [deptTree, setDeptTree] = useState<WhDept[]>([])
+  // Стабильные строки для запросов и ключей: порядок выбора на результат не влияет.
+  const employeesParam = useMemo(() => [...filterEmployees].sort().join(','), [filterEmployees])
+  const departmentsParam = useMemo(() => [...filterDepartments].sort().join(','), [filterDepartments])
+  /** Фильтр людей для всех запросов отчёта: выбранные люди плюс выбранные отделы. */
+  const peopleFilterQuery = (() => {
+    const p = new URLSearchParams()
+    if (employeesParam) p.set('employeeIds', employeesParam)
+    if (departmentsParam) p.set('departmentIds', departmentsParam)
+    return p.toString()
+  })()
   const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
   /** Параметры выгрузок табеля: месяц плюс тот же фильтр, что и на экране. */
   const tabelParams = () => {
-    const params = new URLSearchParams({ month: mhMonth })
-    if (filterEmployee) params.set('employeeId', filterEmployee)
-    else if (filterDepartment) params.set('departmentId', filterDepartment)
+    const params = new URLSearchParams(peopleFilterQuery)
+    params.set('month', mhMonth)
     return params.toString()
   }
 
   const [empPickerOpen, setEmpPickerOpen] = useState(false)
-  const [pickerDeptId, setPickerDeptId] = useState<string | null>(null)
-  const [pickerDeptSearch, setPickerDeptSearch] = useState('')
-  const [pickerEmpSearch, setPickerEmpSearch] = useState('')
   const [filterFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10)
   })
@@ -657,7 +664,7 @@ export function WorkHoursTrackingPage() {
 
   // Səhifələmə (50 sətir/səhifə) — hesabat cədvəllərinin hər birinin öz səhifəsi var;
   // açar dəyişəndə (tab, alt-tab, filtr, tarix) səhifə birinciyə qayıdır.
-  const reportPageKey = `${tab}|${subTab}|${filterEmployee}|${filterDepartment}|${filterDailyDate}|${weeklyAnchor}|${monthlyAnchor}`
+  const reportPageKey = `${tab}|${subTab}|${peopleFilterQuery}|${filterDailyDate}|${weeklyAnchor}|${monthlyAnchor}`
   const [dailyPage, setDailyPage] = usePageReset(reportPageKey)
   const [periodPage, setPeriodPage] = usePageReset(reportPageKey)
   const [schedulesPage, setSchedulesPage] = usePageReset(tab)
@@ -722,8 +729,8 @@ export function WorkHoursTrackingPage() {
           method: 'POST', token,
           body: JSON.stringify({
             to: emailReportTo.trim(), month: mhMonth,
-            employeeId: filterEmployee || null,
-            departmentId: filterEmployee ? null : (filterDepartment || null),
+            employeeIds: employeesParam || null,
+            departmentIds: departmentsParam || null,
           }),
         })
         alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
@@ -771,7 +778,7 @@ useEffect(() => {
   useEffect(() => {
     if (tab === 'daily') loadDaily()
     else if (tab === 'weekly' || tab === 'monthly') loadPeriod()
-  }, [tab, filterEmployee, filterDepartment, filterFrom, filterTo, filterDailyDate, weeklyAnchor, monthlyAnchor])
+  }, [tab, peopleFilterQuery, filterFrom, filterTo, filterDailyDate, weeklyAnchor, monthlyAnchor])
 
   const loadSchedules = useCallback(async () => {
     if (!token) return
@@ -925,9 +932,7 @@ useEffect(() => {
     setLoading(true)
     try {
       const range = tab === 'weekly' ? weekRange(weeklyAnchor) : monthRange(monthlyAnchor)
-      const params = new URLSearchParams()
-      if (filterEmployee) params.set('employeeId', filterEmployee)
-      else if (filterDepartment) params.set('departmentId', filterDepartment)
+      const params = new URLSearchParams(peopleFilterQuery)
       params.set('from', new Date(range.from + 'T00:00:00').toISOString())
       params.set('to', new Date(range.to + 'T00:00:00').toISOString())
       const data = await apiRequest<PeriodRow[]>(`/api/attendance/period?${params}`, authOpts)
@@ -940,9 +945,7 @@ useEffect(() => {
   const loadDaily = async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams()
-      if (filterEmployee) params.set('employeeId', filterEmployee)
-      else if (filterDepartment) params.set('departmentId', filterDepartment)
+      const params = new URLSearchParams(peopleFilterQuery)
       if (filterDailyDate) params.set('date', new Date(filterDailyDate).toISOString())
       const data = await apiRequest<DailySummary[]>(`/api/attendance/daily?${params}`, authOpts)
       setDaily(data)
@@ -1356,15 +1359,21 @@ useEffect(() => {
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.employee')}</label>
               <button
                 type="button"
-                onClick={() => { setPickerDeptSearch(''); setPickerEmpSearch(''); setEmpPickerOpen(true) }}
+                onClick={() => setEmpPickerOpen(true)}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2"
               >
                 <span className="truncate">
                   {(() => {
-                    const sel = employees.find((e) => e.id === filterEmployee)
-                    if (sel) return `${sel.firstName} ${sel.lastName}`
-                    const dept = deptTree.find((d) => d.id === filterDepartment)
-                    return dept ? `${dept.name} · ${t('workHours.wholeDept')}` : t('workHours.allEmployees')
+                    // Один-два выбора показываем именами, дальше — счётчиком.
+                    const names = [
+                      ...filterEmployees.map((id) => employees.find((e) => e.id === id)).filter((e) => !!e)
+                        .map((e) => `${e.firstName} ${e.lastName}`),
+                      ...filterDepartments.map((id) => deptTree.find((d) => d.id === id)).filter((d) => !!d)
+                        .map((d) => `${d.name} · ${t('workHours.wholeDept')}`),
+                    ]
+                    if (names.length === 0) return t('workHours.allEmployees')
+                    if (names.length <= 2) return names.join(', ')
+                    return t('peoplePicker.selected', { people: filterEmployees.length, groups: filterDepartments.length })
                   })()}
                 </span>
                 <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
@@ -1481,9 +1490,9 @@ useEffect(() => {
                       : tab === 'weekly'
                         ? weekRange(weeklyAnchor)
                         : monthRange(monthlyAnchor)
-                    const params = new URLSearchParams({ from: range.from, to: range.to })
-                    if (filterEmployee) params.set('employeeId', filterEmployee)
-                    else if (filterDepartment) params.set('departmentId', filterDepartment)
+                    const params = new URLSearchParams(peopleFilterQuery)
+                    params.set('from', range.from)
+                    params.set('to', range.to)
                     params.set('columns', columnsParam)
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
@@ -1501,9 +1510,9 @@ useEffect(() => {
                       : tab === 'weekly'
                         ? weekRange(weeklyAnchor)
                         : monthRange(monthlyAnchor)
-                    const params = new URLSearchParams({ from: range.from, to: range.to })
-                    if (filterEmployee) params.set('employeeId', filterEmployee)
-                    else if (filterDepartment) params.set('departmentId', filterDepartment)
+                    const params = new URLSearchParams(peopleFilterQuery)
+                    params.set('from', range.from)
+                    params.set('to', range.to)
                     params.set('columns', columnsParam)
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
@@ -1515,125 +1524,16 @@ useEffect(() => {
           </div>
           )}
 
-          {/* Employee picker popup: слева дерево отделов, справа сотрудники выбранного отдела */}
+          {/* Выбор людей: слева дерево отделов, справа сотрудники; «Несколько» — накопительный выбор */}
           {empPickerOpen && (
-            <Modal isOpen title={t('workHours.pickEmployeeTitle')} onClose={() => setEmpPickerOpen(false)}>
-              {(() => {
-                const closePick = (id: string) => { setFilterEmployee(id); setFilterDepartment(''); setEmpPickerOpen(false) }
-                const pickWholeDept = (deptId: string) => { setFilterDepartment(deptId); setFilterEmployee(''); setEmpPickerOpen(false) }
-                // Множество отделов-потомков выбранного (включая его самого) — сотрудники подотделов тоже видны.
-                const descendants = (rootId: string): Set<string> => {
-                  const set = new Set<string>([rootId])
-                  let grew = true
-                  while (grew) {
-                    grew = false
-                    for (const d of deptTree) {
-                      if (d.parentId && set.has(d.parentId) && !set.has(d.id)) { set.add(d.id); grew = true }
-                    }
-                  }
-                  return set
-                }
-                const deptScope = pickerDeptId ? descendants(pickerDeptId) : null
-                const empQ = pickerEmpSearch.trim().toLowerCase()
-                const pickerEmps = employees.filter((e) => {
-                  if (deptScope && !(e.department && deptScope.has(e.department.id))) return false
-                  if (empQ && !(`${e.firstName} ${e.lastName}`.toLowerCase().includes(empQ) || (e.employeeNo ?? '').toLowerCase().includes(empQ))) return false
-                  return true
-                })
-                const deptQ = pickerDeptSearch.trim().toLowerCase()
-                const deptBtnCls = (active: boolean) =>
-                  `w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`
-                const renderDept = (parentId: string | null, depth: number): ReactNode[] =>
-                  deptTree
-                    .filter((d) => (d.parentId ?? null) === parentId)
-                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-                    .flatMap((d) => [
-                      <button key={d.id} type="button" onClick={() => setPickerDeptId(d.id)} className={deptBtnCls(pickerDeptId === d.id)} style={{ paddingLeft: 12 + depth * 16 }}>
-                        {d.name}
-                      </button>,
-                      ...renderDept(d.id, depth + 1),
-                    ])
-                return (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Departments tree */}
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={pickerDeptSearch}
-                        onChange={(e) => setPickerDeptSearch(e.target.value)}
-                        placeholder={t('workHours.deptSearchPlaceholder')}
-                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
-                        <button type="button" onClick={() => setPickerDeptId(null)} className={deptBtnCls(pickerDeptId === null)}>
-                          {t('people.allDepartments')}
-                        </button>
-                        {deptQ
-                          ? deptTree
-                              .filter((d) => d.name.toLowerCase().includes(deptQ))
-                              .sort((a, b) => a.name.localeCompare(b.name))
-                              .map((d) => (
-                                <button key={d.id} type="button" onClick={() => setPickerDeptId(d.id)} className={deptBtnCls(pickerDeptId === d.id)}>
-                                  {d.name}
-                                </button>
-                              ))
-                          : renderDept(null, 0)}
-                      </div>
-                    </div>
-                    {/* Employees of selected department */}
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={pickerEmpSearch}
-                        onChange={(e) => setPickerEmpSearch(e.target.value)}
-                        placeholder={t('workHours.empSearchPlaceholder')}
-                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
-                        <button
-                          type="button"
-                          onClick={() => closePick('')}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterEmployee === '' && filterDepartment === '' ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
-                        >
-                          {t('workHours.allEmployees')}
-                        </button>
-                        {pickerDeptId && (() => {
-                          const deptCount = employees.filter((e) => e.department && deptScope!.has(e.department.id)).length
-                          const active = filterDepartment === pickerDeptId && !filterEmployee
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => pickWholeDept(pickerDeptId)}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
-                            >
-                              <span className="flex items-center gap-2">
-                                <span className="material-symbols-outlined text-base shrink-0">groups</span>
-                                <span className="truncate">{t('workHours.selectWholeDept', { count: deptCount })}</span>
-                              </span>
-                            </button>
-                          )
-                        })()}
-                        {pickerEmps.length === 0 ? (
-                          <p className="px-3 py-4 text-xs text-text-light">{t('workHours.noEmployeesInDept')}</p>
-                        ) : (
-                          pickerEmps.map((e) => (
-                            <button
-                              key={e.id}
-                              type="button"
-                              onClick={() => closePick(e.id)}
-                              className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${filterEmployee === e.id ? 'bg-primary text-white' : 'hover:bg-background-light'}`}
-                            >
-                              <span className={`block text-sm font-bold truncate ${filterEmployee === e.id ? 'text-white' : 'text-text-dark'}`}>{e.firstName} {e.lastName}</span>
-                              {e.department && <span className={`block text-[10px] truncate ${filterEmployee === e.id ? 'text-white/80' : 'text-text-light'}`}>{e.department.name}</span>}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
-            </Modal>
+            <PeoplePicker
+              title={t('workHours.pickEmployeeTitle')}
+              groups={deptTree}
+              people={employees.map((e) => ({ ...e, groupId: e.department?.id ?? null, groupName: e.department?.name ?? null }))}
+              selection={{ personIds: filterEmployees, groupIds: filterDepartments }}
+              onApply={(sel) => { setFilterEmployees(sel.personIds); setFilterDepartments(sel.groupIds) }}
+              onClose={() => setEmpPickerOpen(false)}
+            />
           )}
 
           {/* Schedules — company work time templates */}
@@ -1736,7 +1636,7 @@ useEffect(() => {
           })()}
 
           {/* Daily Report — one day, only employees with assigned schedule */}
-          {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} employeeId={filterEmployee || undefined} departmentId={filterDepartment || undefined} />}
+          {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} filterQuery={peopleFilterQuery} />}
 
           {tab === 'daily' && (() => {
             const filteredDaily = daily.filter(d => {

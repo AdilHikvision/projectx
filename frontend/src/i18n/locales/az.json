@@ -1361,7 +1361,8 @@
       "latitude": "Enlik",
       "longitude": "Uzunluq",
       "radiusMeters": "Radius (m)"
-    }
+    },
+    "insecureContextHint": "Şəbəkə ünvanı ilə http üzərindən brauzer geolokasiyanı bloklayır: koordinatları əl ilə daxil edin və ya saytı https ilə açın."
   },
   "systemStatus": {
     "title": "Əməliyyat bütövlüyü",
@@ -1579,9 +1580,12 @@
       "source": {
         "file": "Fayl",
         "webcam": "Kamera",
-        "device": "Terminal"
+        "device": "Cihaz"
       },
-      "selectDevice": "Terminal seçin",
+      "device": "Cihaz",
+      "selectDevice": "Cihaz seçin",
+      "fingerprintDevice": "Barmaq izinin qeydi üçün cihaz",
+      "cardDevice": "Kartın oxunması üçün cihaz",
       "selectDeviceHint": "Cihazdan tutma üçün əvvəlcə terminal və ya qeydiyyat stansiyası seçin.",
       "addFace": "Üz əlavə et",
       "dataTitle": "Biometrik məlumatlar",
@@ -1596,7 +1600,44 @@
       "noAccessLevelNote": "Giriş səviyyəsi hələ təyin edilməyib: biometriya yalnız bazada saxlanılır. Terminala isə giriş səviyyəsi təyin ediləndən sonra yazılacaq.",
       "terminals": "Terminallar",
       "enrollers": "Qeydiyyat stansiyaları",
-      "readCardFromDevice": "Kartı cihazdan oxu"
+      "readCardFromDevice": "Kartı cihazdan oxu",
+      "capture": {
+        "status": {
+          "starting": "Çəkiliş başlayır…",
+          "capturing": "Çəkiliş gedir…",
+          "completed": "Hazırdır",
+          "failed": "Alınmadı",
+          "idle": "Aktiv çəkiliş sessiyası yoxdur"
+        },
+        "deviceNotFound": "Qurğu tapılmadı.",
+        "employeeNotFound": "İşçi tapılmadı.",
+        "visitorNotFound": "Qonaq tapılmadı.",
+        "customerNotFound": "Müştəri tapılmadı.",
+        "sessionNotFound": "Çəkiliş sessiyası tapılmadı. Çəkilişi yenidən başladın.",
+        "captureTimeout": "Çəkiliş vaxtı bitdi.",
+        "faceCaptured": "Üz çəkildi. Qurğulara göndərmək üçün profili yadda saxlayın.",
+        "faceCapturedNoImage": "Üz qurğuda çəkildi, lakin şəkil alınmadı — şəkli kompüterdən əlavə edin.",
+        "fingerprintCaptured": "Barmaq izi çəkildi.",
+        "cardCaptured": "Kart oxundu və əlavə edildi.",
+        "enrollerFacePrompt": "Qeydiyyat stansiyasının kamerasına baxın…",
+        "enrollerCardPrompt": "Kartı qeydiyyat stansiyasının oxuyucusuna yaxınlaşdırın…",
+        "enrollerFingerPrompt": "Barmağınızı qeydiyyat stansiyasının skanerinə qoyun…",
+        "enrollerFaceTimeout": "Vaxt bitdi: qeydiyyat stansiyası üzü çəkmədi.",
+        "enrollerCardTimeout": "Vaxt bitdi: kart oxuyucuya yaxınlaşdırılmadı.",
+        "enrollerFingerTimeout": "Vaxt bitdi: barmaq skanerə qoyulmadı.",
+        "enrollerRestarted": "Çəkiliş dayandırıldı: stansiyada yeni çəkiliş başladı.",
+        "faceCaptureFailed": "Üzü çəkmək alınmadı.",
+        "faceStartFailed": "Üz çəkilişini başlatmaq alınmadı.",
+        "cardReadFailed": "Kartı oxumaq alınmadı.",
+        "cardNotRead": "Kart oxunmadı. Kartı yaxınlaşdırıb yenidən cəhd edin.",
+        "cardCaptureUnsupported": "Bu qurğu kart çəkilişini dəstəkləmir. Kartı əl ilə əlavə edin.",
+        "fingerprintPrompt": "Barmağınızı qurğunun oxuyucusuna qoyun…",
+        "fingerprintReadFailed": "Barmaq izi məlumatı alınmadı. Yenidən cəhd edin.",
+        "fingerprintBadFormat": "Barmaq izi məlumatının formatı yanlışdır.",
+        "fingerprintEmptyTemplate": "Barmaq izi şablonu boşdur.",
+        "fingerprintTimeout": "Çəkiliş vaxtı bitdi (120 saniyə). Barmağı daha tez qoyun.",
+        "fingerprintNoResponse": "Qurğu barmaq izi çəkilişi sorğusuna cavab vermədi."
+      }
     },
     "titleHousing": "Sakinlərin və işçilərin idarə edilməsi",
     "descriptionHousing": "Sakinləri, MTK işçilərini, qonaqları və onların etimadnamələrini idarə edin.",
@@ -2379,7 +2420,8 @@
       "namesRequired": "Ad və soyad tələb olunur",
       "saveFailed": "Saxlamaq alınmadı",
       "deleteProfileFailed": "Profili silmək alınmadı",
-      "cameraAccess": "Kameraya giriş alına bilmədi"
+      "cameraAccess": "Kameraya giriş alına bilmədi",
+      "cameraInsecureContext": "Kamera yalnız təhlükəsiz bağlantıda işləyir (https və ya localhost). Şəbəkə ünvanı ilə http üzərindən brauzer kameraya icazə vermir — şəkli kompüterdən əlavə edin və ya qeydiyyat stansiyasından çəkin."
     },
     "employeeProfileHint": "İşçi kartı: məlumatlar, şəkil və biometriya.",
     "visitorProfileHint": "Ziyarətçi kartı: məlumatlar, şəkil və biometriya.",
@@ -3090,5 +3132,38 @@
       "telegram": "Telegram",
       "email": "E-poçt"
     }
+  },
+  "peoplePicker": {
+    "multiSelect": "Bir neçə",
+    "singleHint": "Bir nəfər seçin və ya qrupları işarələyin. Bir neçə nəfər üçün «Bir neçə» rejimini açın.",
+    "multiHint": "İnsanları və qrupları qeyd qutuları ilə seçin — müxtəlif qruplardan da olar.",
+    "groupSearch": "Qrup axtar…",
+    "personSearch": "Şəxs axtar…",
+    "allGroups": "Bütün qruplar",
+    "allPeople": "Hamısı",
+    "noneInGroup": "Bu qrupda heç kim yoxdur",
+    "selectWholeGroup": "Bütün qrupu seç ({{count}})",
+    "unselectWholeGroup": "Qrup seçimini ləğv et",
+    "selected": "Seçilib: {{people}} nəfər, {{groups}} qrup",
+    "nothingSelected": "Heç nə seçilməyib",
+    "clear": "Təmizlə"
+  },
+  "accessLevelPeople": {
+    "title": "«{{name}}» səviyyəsindəki insanlar",
+    "open": "İnsanlar",
+    "edit": "Redaktə et",
+    "count": "İnsanlar: {{count}}",
+    "empty": "Bu səviyyəyə hələ heç kim təyin edilməyib.",
+    "add": "İnsan əlavə et",
+    "addTitle": "Giriş səviyyəsi kimə verilsin",
+    "remove": "Səviyyəni ləğv et",
+    "removeConfirm": "«{{name}}» üçün giriş səviyyəsi ləğv edilsin?",
+    "added": "Əlavə edildi: {{count}}",
+    "alreadyAssigned": "Artıq təyin edilmişdi: {{count}}",
+    "syncWarnings": "Qurğularla sinxronizasiya xəbərdarlıqları:",
+    "loadFailed": "İnsanların siyahısı yüklənə bilmədi",
+    "saveFailed": "Təyinatları dəyişmək alınmadı",
+    "kindEmployee": "İşçi",
+    "kindResident": "Tələbə"
   }
 }
