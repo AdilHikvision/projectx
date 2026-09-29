@@ -3332,6 +3332,8 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "structureHousing": "Housing structure",
+    "structureCompany": "Company structure",
     "title": "People on \"{{name}}\"",
     "open": "People",
     "edit": "Edit",
