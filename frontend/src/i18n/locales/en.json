@@ -3334,6 +3334,8 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "syncIncomplete": "Writing to devices did not finish: {{done}} of {{total}} — check the device log.",
+    "addingProgress": "Written: {{done}} of {{total}}",
     "structureHousing": "Housing structure",
     "structureCompany": "Company structure",
     "title": "People on \"{{name}}\"",

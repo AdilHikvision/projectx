@@ -3351,6 +3351,8 @@
     "clear": "Очистить"
   },
   "accessLevelPeople": {
+    "syncIncomplete": "Запись на устройства завершена не полностью: {{done}} из {{total}} — проверьте журнал устройств.",
+    "addingProgress": "Записано: {{done}} из {{total}}",
     "structureHousing": "Структура дома",
     "structureCompany": "Структура компании",
     "title": "Люди на уровне «{{name}}»",
