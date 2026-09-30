@@ -1774,6 +1774,12 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     // на турникете, хотя в базе уровень уже стоял. Поэтому отвечаем сразу, а запись идёт
     // в фоне со своим скоупом и докладывает о себе событиями PersonSyncProgress.
     var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    // Только устройства этого уровня: на остальных набор дверей человека не меняется.
+    var levelDeviceIds = await dbContext.AccessLevelDoors.AsNoTracking()
+        .Where(d => d.AccessLevelId == id)
+        .Select(d => d.DeviceId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
     if (toAdd.Count > 0)
     {
         var peopleToSync = toAdd.ToList();
@@ -1793,7 +1799,8 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
                     sp.GetRequiredService<IDeviceArpStatusService>(),
                     sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                     backgroundLogger,
-                    appLifetime.ApplicationStopping);
+                    appLifetime.ApplicationStopping,
+                    levelDeviceIds);
             }
             catch (Exception ex)
             {
@@ -1916,7 +1923,8 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
                     sp.GetRequiredService<IDeviceArpStatusService>(),
                     broadcaster,
                     backgroundLogger,
-                    appLifetime.ApplicationStopping);
+                    appLifetime.ApplicationStopping,
+                    levelDeviceIds);
         }
         catch (Exception ex)
         {
@@ -1965,7 +1973,15 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
         var token = appLifetime.ApplicationStopping;
         try
         {
-            // Стираем только с тех устройств, где человек и должен быть по своим уровням.
+            var levelDeviceIds = await db.AccessLevelDoors.AsNoTracking()
+                .Where(d => d.AccessLevelId == id)
+                .Select(d => d.DeviceId)
+                .Distinct()
+                .ToListAsync(token);
+            var levelDeviceSet = levelDeviceIds.ToHashSet();
+
+            // Стираем только с устройств этого уровня: перезапись касается его, а не всех
+            // уровней человека.
             var people = await db.Employees
                 .AsNoTracking()
                 .Include(e => e.AccessLevels)
@@ -1980,6 +1996,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                     return p.AccessLevels
                         .Where(a => a.AccessLevel is not null)
                         .SelectMany(a => a.AccessLevel!.Doors)
+                        .Where(d => levelDeviceSet.Contains(d.DeviceId))
                         .Select(d => new DevicePersonDeleteTarget(d.DeviceId, no));
                 })
                 .Distinct()
@@ -1999,7 +2016,8 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                 sp.GetRequiredService<IDeviceArpStatusService>(),
                 sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                 backgroundLogger,
-                token);
+                token,
+                levelDeviceIds);
         }
         catch (Exception ex)
         {
@@ -11372,10 +11390,14 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
     IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster activityBroadcaster,
     Microsoft.Extensions.Logging.ILogger logger,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    // Устройства, которыми ограничиваемся. Назначая уровень, незачем трогать устройства
+    // других уровней человека: там его набор дверей не изменился. null — без ограничения.
+    IReadOnlyCollection<Guid>? restrictToDeviceIds = null)
 {
     var warnings = new List<string>();
     if (personIds.Count == 0) return warnings;
+    var deviceLimit = restrictToDeviceIds is null ? null : restrictToDeviceIds.ToHashSet();
 
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
 
@@ -11391,6 +11413,7 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
         .Select(d => d.DeviceId)
         .Distinct()
         .ToListAsync(cancellationToken);
+    if (deviceLimit is not null) batchDeviceIds = batchDeviceIds.Where(deviceLimit.Contains).ToList();
     var answeringDevices = batchDeviceIds.Count == 0
         ? new HashSet<Guid>()
         : (await syncService.FilterAnsweringDevicesAsync(batchDeviceIds, cancellationToken)).ToHashSet();
@@ -11418,6 +11441,7 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
                 .Distinct()
                 .ToListAsync(cancellationToken)
             : [];
+        if (deviceLimit is not null) deviceIds = deviceIds.Where(deviceLimit.Contains).ToList();
 
         var faces = await dbContext.Faces.Where(f => f.EmployeeId == personId).ToListAsync(cancellationToken);
         var fingerprints = await dbContext.Fingerprints.Where(f => f.EmployeeId == personId).ToListAsync(cancellationToken);
